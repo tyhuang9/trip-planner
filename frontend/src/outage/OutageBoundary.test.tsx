@@ -29,6 +29,8 @@ describe('<OutageBoundary>', () => {
     expect(alert).toHaveTextContent(/monthly render free-tier allowance has been reached/i)
     expect(alert).not.toHaveAttribute('aria-live')
     expect(within(alert).getByRole('heading')).toHaveFocus()
+    expect(within(alert).queryByRole('button')).not.toBeInTheDocument()
+    expect(within(alert).queryByRole('status')).not.toBeInTheDocument()
     expect(screen.getAllByRole('status')).toHaveLength(1)
   })
 
@@ -85,6 +87,26 @@ describe('<OutageBoundary>', () => {
 
     reportAmbiguousBackendFailure()
     await waitFor(() => expect(screen.getByRole('alert')).toHaveAttribute('data-kind', 'database'))
+    expect(screen.getByRole('status')).toBeEmptyDOMElement()
+  })
+
+  it('clears feedback after recovery before the same incident kind recurs', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(app())
+
+    reportAmbiguousBackendFailure()
+    await screen.findByRole('alert')
+    await userEvent.click(screen.getByRole('button', { name: /try again/i }))
+    await screen.findByText('Trip planner')
+
+    reportAmbiguousBackendFailure()
+    await screen.findByRole('alert')
+    expect(screen.getByRole('alert')).toHaveAttribute('data-kind', 'server')
     expect(screen.getByRole('status')).toBeEmptyDOMElement()
   })
 })

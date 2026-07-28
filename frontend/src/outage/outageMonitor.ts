@@ -22,7 +22,7 @@ function healthUrl(path: string): string {
 }
 
 function setOutage(next: OutageKind | null): void {
-  if (outage === next) return
+  if (outage === next && next === null) return
   outage = next
   listeners.forEach((listener) => listener(outage))
 }

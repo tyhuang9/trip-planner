@@ -178,20 +178,28 @@ class RateLimitFilterTest {
     }
 
     @Test
-    void databaseHealthGetIsRateLimitedByClientIp() throws Exception {
+    void everyDatabaseBearingHealthGetSharesOneRateLimitBucketPerClientIp() throws Exception {
         RateLimitRegistry registry = new RateLimitRegistry();
         RateLimitFilter filter = new RateLimitFilter(registry, new AppProperties());
         AtomicInteger passed = new AtomicInteger();
         FilterChain chain = (_request, _response) -> passed.incrementAndGet();
+        String[] paths = {
+            "/actuator/health",
+            "/actuator/health/database",
+            "/actuator/health/database/db",
+            "/actuator/health/db",
+            "/actuator/health/db/details"
+        };
 
         for (int i = 0; i < 30; i++) {
             MockHttpServletResponse response = new MockHttpServletResponse();
-            filter.doFilter(request("GET", "/actuator/health/database"), response, chain);
+            filter.doFilter(request("GET", paths[i % paths.length]), response, chain);
             assertThat(response.getStatus()).isEqualTo(200);
         }
+        assertThat(registry.size()).isEqualTo(1);
 
         MockHttpServletResponse limited = new MockHttpServletResponse();
-        filter.doFilter(request("GET", "/actuator/health/database"), limited, chain);
+        filter.doFilter(request("GET", "/actuator/health/database/db"), limited, chain);
 
         assertThat(passed.get()).isEqualTo(30);
         assertThat(limited.getStatus()).isEqualTo(429);

@@ -277,7 +277,7 @@ The browser outage boundary also reads the public, sanitized database group:
 GET https://<backend-origin>/actuator/health/database
 ```
 
-It returns only an overall status and contains only the JDBC `db` indicator. A `503` database response is meaningful only after liveness is `UP`; arbitrary API `5xx` responses never identify a Neon outage. Browser CORS accepts the public health paths only from exact `ALLOWED_ORIGINS` values and does not allow credentials, but CORS does not restrict non-browser clients. To protect the JDBC check itself, `GET /actuator/health/database` is limited to 30 requests per minute per resolved client IP and returns `429` with `Retry-After` when exhausted. Liveness and health preflights are not included in that bucket.
+It returns only an overall status and contains only the JDBC `db` indicator. A `503` database response is meaningful only after liveness is `UP`; arbitrary API `5xx` responses never identify a Neon outage. Browser CORS accepts the public health paths only from exact `ALLOWED_ORIGINS` values and does not allow credentials, but CORS does not restrict non-browser clients. To protect the JDBC check itself, database-bearing health GETs share a limit of 30 requests per minute per resolved client IP: `/actuator/health`, the `/actuator/health/database` group and its descendants, and the direct `/actuator/health/db` indicator and its descendants. Exhaustion returns `429` with `Retry-After`. Liveness and health preflights are not included in that bucket.
 
 Any external keep-warm monitor must use this contract:
 

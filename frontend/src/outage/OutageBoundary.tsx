@@ -51,7 +51,10 @@ export function OutageBoundary({ children }: OutageBoundaryProps) {
   const headingRef = useRef<HTMLHeadingElement>(null)
   const previousOutageRef = useRef<OutageKind | null>(null)
 
-  useEffect(() => subscribeToOutage(setOutage), [])
+  useEffect(() => subscribeToOutage((next) => {
+    setRetryFeedback(null)
+    setOutage(next)
+  }), [])
 
   useEffect(() => {
     if (outage !== null) {
@@ -79,7 +82,7 @@ export function OutageBoundary({ children }: OutageBoundaryProps) {
     const result = await checkHealth()
     setIsRetrying(false)
     if (result === null) {
-      setRetryFeedback({ kind: outage, message: 'Dupert is back. Restoring your trip planner…' })
+      setRetryFeedback(null)
     } else {
       setRetryFeedback({
         kind: result,
@@ -90,18 +93,20 @@ export function OutageBoundary({ children }: OutageBoundaryProps) {
 
   return (
     <main className={styles.page} id="main">
-      <section className={styles.card} role="alert" aria-atomic="true" data-kind={outage}>
-        <div className={`${styles.icon} ${styles[tone]}`}><Icon aria-hidden="true" /></div>
-        <p className={styles.eyebrow}>A tiny travel detour</p>
-        <p className={styles.service}><span aria-hidden="true" />{service}</p>
-        <h1 ref={headingRef} tabIndex={-1}>{title}</h1>
-        <p className={styles.body}>{body}</p>
+      <div className={styles.card} data-kind={outage}>
+        <section role="alert" aria-atomic="true" data-kind={outage}>
+          <div className={`${styles.icon} ${styles[tone]}`}><Icon aria-hidden="true" /></div>
+          <p className={styles.eyebrow}>A tiny travel detour</p>
+          <p className={styles.service}><span aria-hidden="true" />{service}</p>
+          <h1 ref={headingRef} tabIndex={-1}>{title}</h1>
+          <p className={styles.body}>{body}</p>
+        </section>
         <button className={styles.retry} type="button" onClick={retry} disabled={isRetrying}>
           <RefreshCw aria-hidden="true" className={isRetrying ? styles.spinning : undefined} />
           {isRetrying ? 'Checking…' : 'Try again'}
         </button>
         <p className={styles.feedback} role="status" aria-atomic="true">{retryMessage}</p>
-      </section>
+      </div>
     </main>
   )
 }
