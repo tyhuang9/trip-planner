@@ -177,6 +177,46 @@ class RateLimitFilterTest {
         assertThat(registry.size()).isZero();
     }
 
+    @Test
+    void databaseHealthGetIsRateLimitedByClientIp() throws Exception {
+        RateLimitRegistry registry = new RateLimitRegistry();
+        RateLimitFilter filter = new RateLimitFilter(registry, new AppProperties());
+        AtomicInteger passed = new AtomicInteger();
+        FilterChain chain = (_request, _response) -> passed.incrementAndGet();
+
+        for (int i = 0; i < 30; i++) {
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            filter.doFilter(request("GET", "/actuator/health/database"), response, chain);
+            assertThat(response.getStatus()).isEqualTo(200);
+        }
+
+        MockHttpServletResponse limited = new MockHttpServletResponse();
+        filter.doFilter(request("GET", "/actuator/health/database"), limited, chain);
+
+        assertThat(passed.get()).isEqualTo(30);
+        assertThat(limited.getStatus()).isEqualTo(429);
+        assertThat(limited.getHeader("Retry-After")).isNotBlank();
+        assertThat(limited.getContentAsString()).isEqualTo(RateLimitFilter.RATE_LIMITED_BODY);
+    }
+
+    @Test
+    void livenessAndDatabaseHealthOptionsAreNotRateLimited() throws Exception {
+        RateLimitRegistry registry = new RateLimitRegistry();
+        RateLimitFilter filter = new RateLimitFilter(registry, new AppProperties());
+        AtomicInteger passed = new AtomicInteger();
+        FilterChain chain = (_request, _response) -> passed.incrementAndGet();
+
+        for (int i = 0; i < 40; i++) {
+            filter.doFilter(request("GET", "/actuator/health/liveness"),
+                new MockHttpServletResponse(), chain);
+            filter.doFilter(request("OPTIONS", "/actuator/health/database"),
+                new MockHttpServletResponse(), chain);
+        }
+
+        assertThat(passed.get()).isEqualTo(80);
+        assertThat(registry.size()).isZero();
+    }
+
     private static void assertPostPathLimited(String path, int capacity) throws Exception {
         RateLimitRegistry registry = new RateLimitRegistry();
         RateLimitFilter filter = new RateLimitFilter(registry, new AppProperties());

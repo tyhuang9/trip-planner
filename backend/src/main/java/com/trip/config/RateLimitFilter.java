@@ -63,6 +63,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private static final String SHARE_PATH_PREFIX = "/api/share/";
     private static final String PLACES_PATH_PREFIX = "/api/places/";
     private static final String MAPS_PATH_PREFIX = "/api/maps/";
+    private static final String DATABASE_HEALTH_PATH = "/actuator/health/database";
     /**
      * Shared with {@code AuthController}'s inner per-(ip, email) check so the two
      * layers emit byte-identical 429 bodies — a probing attacker cannot distinguish
@@ -85,6 +86,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         String path = request.getRequestURI();
         String clientIp = clientIp(request, trustProxy);
+        if (DATABASE_HEALTH_PATH.equals(path) && "GET".equalsIgnoreCase(request.getMethod())) {
+            if (!tryConsume(response, RateLimitRegistry.Named.HEALTH_DATABASE, clientIp)) {
+                return;
+            }
+        }
         if (isGoogleMapsProxyPath(path)
             && ("GET".equalsIgnoreCase(request.getMethod()) || "POST".equalsIgnoreCase(request.getMethod()))) {
             if (!tryConsume(response, RateLimitRegistry.Named.GOOGLE_MAPS, clientIp)) {
