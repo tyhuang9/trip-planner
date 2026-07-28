@@ -15,7 +15,6 @@ app:
   frontend-origin: http://localhost:3000
   jwt-secret: 00000000000000000000000000000000000000000000000000000000000000aa
   log-email-pepper: 000000000000000000000000000000aa
-  signup-enabled: true
 
 secure:
   hsts:
