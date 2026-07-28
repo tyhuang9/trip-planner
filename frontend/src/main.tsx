@@ -12,6 +12,7 @@ import { ColorModeProvider } from './theme/ColorModeProvider.tsx'
 import { applyColorMode, readStoredColorMode } from './theme/colorMode.ts'
 import { markPerformance } from './performance/timing.ts'
 import { SpeedInsights } from '@vercel/speed-insights/react'
+import { OutageBoundary } from './outage/OutageBoundary.tsx'
 
 applyColorMode(readStoredColorMode())
 markPerformance('app-mounted')
@@ -20,12 +21,14 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ColorModeProvider>
       <QueryClientProvider client={queryClient}>
-        <AppAccessGate>
-          <AuthProvider>
-            <App />
-            <SpeedInsights />
-          </AuthProvider>
-        </AppAccessGate>
+        <OutageBoundary>
+          <AppAccessGate>
+            <AuthProvider>
+              <App />
+              <SpeedInsights />
+            </AuthProvider>
+          </AppAccessGate>
+        </OutageBoundary>
       </QueryClientProvider>
     </ColorModeProvider>
   </StrictMode>,
