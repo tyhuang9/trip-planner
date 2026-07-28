@@ -186,9 +186,7 @@ class RateLimitFilterTest {
         String[] paths = {
             "/actuator/health",
             "/actuator/health/database",
-            "/actuator/health/database/db",
-            "/actuator/health/db",
-            "/actuator/health/db/details"
+            "/actuator/health/database/database"
         };
         String[] methods = {"GET", "HEAD"};
 
@@ -200,7 +198,7 @@ class RateLimitFilterTest {
         assertThat(registry.size()).isEqualTo(1);
 
         MockHttpServletResponse limited = new MockHttpServletResponse();
-        filter.doFilter(request("HEAD", "/actuator/health/database/db"), limited, chain);
+        filter.doFilter(request("HEAD", "/actuator/health/database/database"), limited, chain);
 
         assertThat(passed.get()).isEqualTo(30);
         assertThat(limited.getStatus()).isEqualTo(429);

@@ -65,7 +65,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private static final String MAPS_PATH_PREFIX = "/api/maps/";
     private static final String HEALTH_PATH = "/actuator/health";
     private static final String DATABASE_HEALTH_PATH = HEALTH_PATH + "/database";
-    private static final String DB_INDICATOR_HEALTH_PATH = HEALTH_PATH + "/db";
     /**
      * Shared with {@code AuthController}'s inner per-(ip, email) check so the two
      * layers emit byte-identical 429 bodies — a probing attacker cannot distinguish
@@ -155,8 +154,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private static boolean isDatabaseHealthPath(String path) {
         return HEALTH_PATH.equals(path)
-            || isPathOrDescendant(path, DATABASE_HEALTH_PATH)
-            || isPathOrDescendant(path, DB_INDICATOR_HEALTH_PATH);
+            || isPathOrDescendant(path, DATABASE_HEALTH_PATH);
     }
 
     private static boolean isHealthReadMethod(String method) {
