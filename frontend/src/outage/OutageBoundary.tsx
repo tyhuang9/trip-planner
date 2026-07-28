@@ -15,29 +15,29 @@ const COPY: Record<OutageKind, {
   Icon: typeof CloudOff
 }> = {
   server: {
-    title: 'Trip planner unavailable',
-    body: 'Dupert’s monthly Render free-tier allowance has been reached. Your browser is online, but the trip planner cannot respond right now.',
+    title: 'Our server ran out of road-trip snacks',
+    body: 'Dupert has used up its monthly Render free-tier allowance, so the trip planner is parked on the shoulder. Your browser is online; our server is the one taking the scenic route.',
     service: 'Render app service',
     tone: 'server',
     Icon: CloudOff,
   },
   'server-unreachable': {
-    title: 'We can’t reach Dupert',
-    body: 'Dupert’s monthly Render free-tier allowance may have been reached. Your browser is online, but the trip planner did not answer its status check.',
+    title: 'Our server wandered off the map',
+    body: 'We can’t reach Dupert’s Render service. Its monthly free-tier allowance may be empty—or the server may be sightseeing without us. Your browser is online.',
     service: 'Render app service',
     tone: 'server',
     Icon: CloudOff,
   },
   database: {
-    title: 'Trip data unavailable',
-    body: 'Dupert’s monthly Neon free-tier allowance has been reached. The planner is online, but trip data cannot respond right now.',
+    title: 'The database sat on the suitcase',
+    body: 'Dupert has used up its monthly Neon free-tier allowance. The planner is awake, but the database zipped up the trip details and refuses to hand them over.',
     service: 'Neon database',
     tone: 'database',
     Icon: DatabaseZap,
   },
   connectivity: {
-    title: 'You appear to be offline',
-    body: 'Check your connection, then we’ll gladly pick up where you left off.',
+    title: 'Your internet missed the bus',
+    body: 'Your connection seems to be enjoying an unscheduled layover. Give it a quick check, then we’ll get this trip moving again.',
     service: 'Internet connection',
     tone: 'connectivity',
     Icon: WifiOff,
@@ -78,7 +78,7 @@ export function OutageBoundary({ children }: OutageBoundaryProps) {
   const retryMessage = retryFeedback?.kind === outage ? retryFeedback.message : ''
   const retry = async () => {
     setIsRetrying(true)
-    setRetryFeedback({ kind: outage, message: 'Checking Dupert again…' })
+    setRetryFeedback({ kind: outage, message: 'Knocking on Dupert’s door…' })
     const result = await checkHealth()
     setIsRetrying(false)
     if (result === null) {
@@ -86,7 +86,7 @@ export function OutageBoundary({ children }: OutageBoundaryProps) {
     } else {
       setRetryFeedback({
         kind: result,
-        message: 'Still unavailable. You can try again whenever you’re ready.',
+        message: 'Still no answer. Give it another poke whenever you’re ready.',
       })
     }
   }
@@ -96,14 +96,14 @@ export function OutageBoundary({ children }: OutageBoundaryProps) {
       <div className={styles.card} data-kind={outage}>
         <section role="alert" aria-atomic="true" data-kind={outage}>
           <div className={`${styles.icon} ${styles[tone]}`}><Icon aria-hidden="true" /></div>
-          <p className={styles.eyebrow}>A tiny travel detour</p>
+          <p className={styles.eyebrow}>A tiny travel whoopsie</p>
           <p className={styles.service}><span aria-hidden="true" />{service}</p>
           <h1 ref={headingRef} tabIndex={-1}>{title}</h1>
           <p className={styles.body}>{body}</p>
         </section>
         <button className={styles.retry} type="button" onClick={retry} disabled={isRetrying}>
           <RefreshCw aria-hidden="true" className={isRetrying ? styles.spinning : undefined} />
-          {isRetrying ? 'Checking…' : 'Try again'}
+          {isRetrying ? 'Knocking…' : 'Try again'}
         </button>
         <p className={styles.feedback} role="status" aria-atomic="true">{retryMessage}</p>
       </div>

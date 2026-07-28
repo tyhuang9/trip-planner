@@ -15,6 +15,7 @@ function app() {
 afterEach(() => {
   __resetOutageMonitorForTests()
   vi.unstubAllGlobals()
+  Reflect.deleteProperty(navigator, 'onLine')
 })
 
 describe('<OutageBoundary>', () => {
@@ -26,7 +27,8 @@ describe('<OutageBoundary>', () => {
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(/render app service/i)
-    expect(alert).toHaveTextContent(/monthly render free-tier allowance has been reached/i)
+    expect(alert).toHaveTextContent(/used up its monthly render free-tier allowance/i)
+    expect(alert).toHaveTextContent(/ran out of road-trip snacks/i)
     expect(alert).not.toHaveAttribute('aria-live')
     expect(within(alert).getByRole('heading')).toHaveFocus()
     expect(within(alert).queryByRole('button')).not.toBeInTheDocument()
@@ -43,7 +45,8 @@ describe('<OutageBoundary>', () => {
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveAttribute('data-kind', 'server-unreachable')
     expect(alert).toHaveTextContent(/render app service/i)
-    expect(alert).toHaveTextContent(/monthly render free-tier allowance may have been reached/i)
+    expect(alert).toHaveTextContent(/monthly free-tier allowance may be empty/i)
+    expect(alert).toHaveTextContent(/wandered off the map/i)
   })
 
   it('shows a distinct Neon state and focuses the remounted main landmark after recovery', async () => {
@@ -58,7 +61,8 @@ describe('<OutageBoundary>', () => {
     reportAmbiguousBackendFailure({ response: { status: 500 } } as never)
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(/neon database/i)
-    expect(alert).toHaveTextContent(/monthly neon free-tier allowance has been reached/i)
+    expect(alert).toHaveTextContent(/used up its monthly neon free-tier allowance/i)
+    expect(alert).toHaveTextContent(/database sat on the suitcase/i)
     expect(screen.queryByText('Trip planner')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: /try again/i }))
@@ -82,7 +86,7 @@ describe('<OutageBoundary>', () => {
     await screen.findByRole('alert')
     await userEvent.click(screen.getByRole('button', { name: /try again/i }))
     expect(await screen.findByRole('status')).toHaveTextContent(
-      'Still unavailable. You can try again whenever you’re ready.',
+      'Still no answer. Give it another poke whenever you’re ready.',
     )
 
     reportAmbiguousBackendFailure()
@@ -108,5 +112,18 @@ describe('<OutageBoundary>', () => {
     await screen.findByRole('alert')
     expect(screen.getByRole('alert')).toHaveAttribute('data-kind', 'server')
     expect(screen.getByRole('status')).toBeEmptyDOMElement()
+  })
+
+  it('keeps the connectivity state clear while giving it a playful travel mishap', async () => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false })
+    vi.stubGlobal('fetch', vi.fn())
+    render(app())
+
+    reportAmbiguousBackendFailure()
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/internet connection/i)
+    expect(alert).toHaveTextContent(/internet missed the bus/i)
+    expect(alert).toHaveTextContent(/unscheduled layover/i)
   })
 })
