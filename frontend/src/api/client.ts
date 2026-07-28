@@ -10,6 +10,7 @@ import { reportAmbiguousBackendFailure } from '../outage/outageMonitor'
 
 export const AUTH_COOKIE_ACTION_HEADER = 'X-Dupert-Auth-Cookie-Action'
 export const AUTH_COOKIE_ACTION_VALUE = '1'
+export const API_REQUEST_TIMEOUT_MS = 60_000
 
 /**
  * Single shared axios instance for every backend call.
@@ -27,6 +28,7 @@ export const AUTH_COOKIE_ACTION_VALUE = '1'
 export const apiClient = axios.create({
   baseURL: backendApiBaseUrl,
   withCredentials: true,
+  timeout: API_REQUEST_TIMEOUT_MS,
 })
 
 /** Endpoints that must NOT carry a bearer token. */
@@ -264,6 +266,7 @@ async function performRefresh(): Promise<AuthResponse> {
       undefined,
       {
         withCredentials: true,
+        timeout: API_REQUEST_TIMEOUT_MS,
         headers: { [AUTH_COOKIE_ACTION_HEADER]: AUTH_COOKIE_ACTION_VALUE },
       },
     )
