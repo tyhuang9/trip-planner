@@ -18,9 +18,14 @@ import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.Mockito;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
+@ExtendWith(OutputCaptureExtension.class)
 class DatabaseMigrationCoordinatorTest {
 
     private DatabaseMigrationCoordinator coordinator;
@@ -144,5 +149,110 @@ class DatabaseMigrationCoordinatorTest {
         Thread.sleep(1_100L);
         coordinator.health();
         verify(flyway, times(1)).migrate();
+    }
+
+    @Test
+    void logsStartupDatabaseUnavailabilityOnceWithoutExceptionDetails(CapturedOutput output)
+            throws Exception {
+        DataSource dataSource = mock(DataSource.class);
+        when(dataSource.getConnection())
+            .thenThrow(new SQLException("jdbc:postgresql://private-host/trips?password=secret"));
+        coordinator = new DatabaseMigrationCoordinator(
+            dataSource, mock(Flyway.class), Duration.ofSeconds(1));
+
+        coordinator.refresh();
+        coordinator.refresh();
+
+        assertThat(occurrences(output.getAll(), "event=startup_db_unavailable")).isEqualTo(1);
+        assertThat(output.getAll())
+            .contains("retry_delay_ms=1000 exception_type=SQLException")
+            .doesNotContain("private-host", "password=secret");
+    }
+
+    @Test
+    void logsMigrationFailureOnceAndRecoveryWithoutExceptionDetails(CapturedOutput output)
+            throws Exception {
+        DataSource dataSource = mock(DataSource.class);
+        when(dataSource.getConnection()).thenReturn(mock(Connection.class));
+        Flyway flyway = mock(Flyway.class);
+        when(flyway.migrate())
+            .thenThrow(new org.flywaydb.core.api.FlywayException("migration SQL contained a secret"))
+            .thenThrow(new org.flywaydb.core.api.FlywayException("another private detail"))
+            .thenReturn(null);
+        coordinator = new DatabaseMigrationCoordinator(dataSource, flyway, Duration.ofSeconds(1));
+
+        coordinator.refresh();
+        coordinator.refresh();
+        coordinator.refresh();
+
+        assertThat(occurrences(output.getAll(), "event=migration_failed")).isEqualTo(1);
+        assertThat(occurrences(output.getAll(), "event=recovered")).isEqualTo(1);
+        assertThat(output.getAll())
+            .contains("retry_delay_ms=1000 exception_type=FlywayException")
+            .doesNotContain("migration SQL contained a secret", "another private detail");
+    }
+
+    @Test
+    void classifiesHealthyConnectionLossAsTransitionAndLogsRecovery(CapturedOutput output)
+            throws Exception {
+        DataSource dataSource = mock(DataSource.class);
+        Connection connection = mock(Connection.class);
+        when(dataSource.getConnection())
+            .thenReturn(connection)
+            .thenThrow(new SQLException("private JDBC detail"))
+            .thenReturn(connection);
+        coordinator = new DatabaseMigrationCoordinator(
+            dataSource, mock(Flyway.class), Duration.ofSeconds(1));
+
+        coordinator.refresh();
+        coordinator.health();
+        coordinator.health();
+        coordinator.refresh();
+
+        assertThat(occurrences(output.getAll(), "event=healthy_to_down")).isEqualTo(1);
+        assertThat(occurrences(output.getAll(), "event=startup_db_unavailable")).isZero();
+        assertThat(occurrences(output.getAll(), "event=recovered")).isEqualTo(1);
+        assertThat(output.getAll())
+            .contains("retry_delay_ms=1000 exception_type=SQLException")
+            .doesNotContain("private JDBC detail");
+    }
+
+    @Test
+    void logsListenerFailureTypeWithoutListenerExceptionDetails(CapturedOutput output)
+            throws Exception {
+        DataSource dataSource = mock(DataSource.class);
+        when(dataSource.getConnection()).thenReturn(mock(Connection.class));
+        ApplicationEventPublisher events = event -> {
+            throw new IllegalStateException("listener included a secret");
+        };
+        coordinator = new DatabaseMigrationCoordinator(
+            dataSource, mock(Flyway.class), events, Duration.ofSeconds(1));
+
+        coordinator.refresh();
+
+        assertThat(output.getAll())
+            .contains("event=listener_failed exception_type=IllegalStateException")
+            .doesNotContain("listener included a secret");
+    }
+
+    @Test
+    void logsLifecycleTransitionsOnlyWhenStateChanges(CapturedOutput output) throws Exception {
+        DataSource dataSource = mock(DataSource.class);
+        when(dataSource.getConnection()).thenReturn(mock(Connection.class));
+        coordinator = new DatabaseMigrationCoordinator(
+            dataSource, mock(Flyway.class), Duration.ofSeconds(1));
+
+        coordinator.start();
+        coordinator.start();
+        coordinator.stop();
+        coordinator.stop();
+
+        assertThat(occurrences(output.getAll(), "event=coordinator_started")).isEqualTo(1);
+        assertThat(occurrences(output.getAll(), "event=coordinator_stopping")).isEqualTo(1);
+        assertThat(output.getAll()).contains("retry_delay_ms=1000");
+    }
+
+    private static int occurrences(String text, String value) {
+        return (text.length() - text.replace(value, "").length()) / value.length();
     }
 }

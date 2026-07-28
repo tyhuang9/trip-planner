@@ -7,6 +7,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
@@ -38,7 +39,8 @@ final class DatabaseMigrationCoordinator implements HealthIndicator, SmartLifecy
     private final long retryMillis;
     private final AtomicBoolean ready = new AtomicBoolean();
     private final AtomicBoolean running = new AtomicBoolean();
-    private final AtomicBoolean failureLogged = new AtomicBoolean();
+    private final AtomicBoolean everReady = new AtomicBoolean();
+    private final AtomicReference<FailureEvent> loggedFailure = new AtomicReference<>();
     private final ReentrantLock checkLock = new ReentrantLock();
     private final Object retryMonitor = new Object();
     private Flyway flyway;
@@ -54,6 +56,13 @@ final class DatabaseMigrationCoordinator implements HealthIndicator, SmartLifecy
 
     DatabaseMigrationCoordinator(DataSource dataSource, Flyway flyway, Duration retryInterval) {
         this(() -> dataSource, flyway, event -> { }, retryInterval);
+    }
+
+    DatabaseMigrationCoordinator(DataSource dataSource,
+                                 Flyway flyway,
+                                 ApplicationEventPublisher events,
+                                 Duration retryInterval) {
+        this(() -> dataSource, flyway, events, retryInterval);
     }
 
     private DatabaseMigrationCoordinator(Supplier<DataSource> dataSourceSupplier,
@@ -72,8 +81,9 @@ final class DatabaseMigrationCoordinator implements HealthIndicator, SmartLifecy
             return status();
         }
         try {
-            if (!ready.get() || !canConnect()) {
-                markDown();
+            ConnectionProbe probe = probeConnection();
+            if (!ready.get() || !probe.connected()) {
+                markDown(probe.exceptionType());
                 scheduleRetry();
             }
             return status();
@@ -87,6 +97,7 @@ final class DatabaseMigrationCoordinator implements HealthIndicator, SmartLifecy
         if (!running.compareAndSet(false, true)) {
             return;
         }
+        LOG.info("event=coordinator_started retry_delay_ms={}", retryMillis);
         executor = Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread thread = new Thread(runnable, "database-readiness");
             thread.setDaemon(true);
@@ -97,7 +108,11 @@ final class DatabaseMigrationCoordinator implements HealthIndicator, SmartLifecy
 
     @Override
     public void stop() {
-        if (running.compareAndSet(true, false) && executor != null) {
+        if (!running.compareAndSet(true, false)) {
+            return;
+        }
+        LOG.info("event=coordinator_stopping");
+        if (executor != null) {
             executor.shutdownNow();
         }
     }
@@ -125,37 +140,55 @@ final class DatabaseMigrationCoordinator implements HealthIndicator, SmartLifecy
             if (ready.get()) {
                 return;
             }
-            DataSource dataSource = dataSourceSupplier.get();
-            if (dataSource == null || !canConnect(dataSource)) {
-                markDown();
+            DataSource dataSource;
+            try {
+                dataSource = dataSourceSupplier.get();
+            } catch (Exception ex) {
+                databaseUnavailable(exceptionType(ex));
+                return;
+            }
+            ConnectionProbe probe = probe(dataSource);
+            if (!probe.connected()) {
+                databaseUnavailable(probe.exceptionType());
+                return;
+            }
+            try {
+                // Close the connectivity probe before Flyway obtains its own connection.
+                flyway(dataSource).migrate();
+            } catch (Exception ex) {
+                logFailure(FailureEvent.MIGRATION_FAILED, exceptionType(ex));
+                ready.set(false);
                 scheduleRetry();
                 return;
             }
-            // Close the connectivity probe before Flyway obtains its own connection.
-            flyway(dataSource).migrate();
             if (ready.compareAndSet(false, true)) {
-                failureLogged.set(false);
-                LOG.info("Database readiness is UP");
+                everReady.set(true);
+                if (loggedFailure.getAndSet(null) != null) {
+                    LOG.info("event=recovered");
+                }
                 publishReady();
             }
-        } catch (Exception ex) {
-            markDown();
-            scheduleRetry();
         } finally {
             checkLock.unlock();
         }
     }
 
-    private boolean canConnect() {
-        DataSource dataSource = dataSourceSupplier.get();
-        return dataSource != null && canConnect(dataSource);
+    private ConnectionProbe probeConnection() {
+        try {
+            return probe(dataSourceSupplier.get());
+        } catch (Exception ex) {
+            return new ConnectionProbe(false, exceptionType(ex));
+        }
     }
 
-    private static boolean canConnect(DataSource dataSource) {
+    private static ConnectionProbe probe(DataSource dataSource) {
+        if (dataSource == null) {
+            return new ConnectionProbe(false, "none");
+        }
         try (Connection ignored = dataSource.getConnection()) {
-            return true;
+            return new ConnectionProbe(true, "none");
         } catch (Exception ex) {
-            return false;
+            return new ConnectionProbe(false, exceptionType(ex));
         }
     }
 
@@ -179,11 +212,31 @@ final class DatabaseMigrationCoordinator implements HealthIndicator, SmartLifecy
         return ready.get() ? Health.up().build() : Health.down().build();
     }
 
-    private void markDown() {
+    private void markDown(String exceptionType) {
         boolean wasReady = ready.getAndSet(false);
-        if (wasReady || failureLogged.compareAndSet(false, true)) {
-            LOG.warn("Database readiness is DOWN; retrying in {} ms", retryMillis);
+        if (wasReady) {
+            logFailure(FailureEvent.HEALTHY_TO_DOWN, exceptionType);
         }
+    }
+
+    private void databaseUnavailable(String exceptionType) {
+        ready.set(false);
+        if (!everReady.get()) {
+            logFailure(FailureEvent.STARTUP_DB_UNAVAILABLE, exceptionType);
+        }
+        scheduleRetry();
+    }
+
+    private void logFailure(FailureEvent failure, String exceptionType) {
+        if (loggedFailure.getAndSet(failure) != failure) {
+            LOG.warn("event={} retry_delay_ms={} exception_type={}",
+                failure.eventName, retryMillis, exceptionType);
+        }
+    }
+
+    private static String exceptionType(Exception ex) {
+        String simpleName = ex.getClass().getSimpleName();
+        return simpleName.isEmpty() ? "unknown" : simpleName;
     }
 
     private void scheduleRetry() {
@@ -210,7 +263,22 @@ final class DatabaseMigrationCoordinator implements HealthIndicator, SmartLifecy
         try {
             events.publishEvent(new DatabaseReadyEvent(this));
         } catch (RuntimeException ex) {
-            LOG.warn("Database-ready listener failed");
+            LOG.warn("event=listener_failed exception_type={}", exceptionType(ex));
+        }
+    }
+
+    private record ConnectionProbe(boolean connected, String exceptionType) {
+    }
+
+    private enum FailureEvent {
+        STARTUP_DB_UNAVAILABLE("startup_db_unavailable"),
+        HEALTHY_TO_DOWN("healthy_to_down"),
+        MIGRATION_FAILED("migration_failed");
+
+        private final String eventName;
+
+        FailureEvent(String eventName) {
+            this.eventName = eventName;
         }
     }
 }
