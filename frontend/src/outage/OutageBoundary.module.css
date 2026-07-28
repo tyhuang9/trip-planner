@@ -35,6 +35,7 @@
 .service { display: inline-flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-4); color: var(--color-text-muted); font-size: var(--font-size-xs); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .service span { width: .5rem; height: .5rem; background: currentColor; border-radius: var(--radius-pill); }
 .card h1 { margin-bottom: var(--space-3); color: var(--color-text); font-size: clamp(1.75rem, 5vw, 2.35rem); line-height: var(--line-height-tight); }
+.card h1:focus { outline: var(--focus-ring-width) solid var(--focus-ring-color); outline-offset: var(--focus-ring-offset); }
 .body { max-width: 31rem; margin: 0 auto var(--space-6); color: var(--color-text-muted); }
 
 .retry {

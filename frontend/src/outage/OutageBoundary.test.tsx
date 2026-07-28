@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
+import { StrictMode } from 'react'
 import userEvent from '@testing-library/user-event'
 import { OutageBoundary } from './OutageBoundary'
 import { __resetOutageMonitorForTests, reportAmbiguousBackendFailure } from './outageMonitor'
@@ -14,16 +15,53 @@ function app() {
 
 afterEach(() => {
   __resetOutageMonitorForTests()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
   Reflect.deleteProperty(navigator, 'onLine')
 })
 
 describe('<OutageBoundary>', () => {
+  it('starts one liveness-only probe on mount and passes through healthy content', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(app())
+
+    expect(await screen.findByText('Trip planner')).toBeInTheDocument()
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    expect(fetchMock.mock.calls[0][0]).toContain('/actuator/health/liveness')
+    expect(fetchMock.mock.calls[0][0]).not.toContain('/actuator/health/database')
+  })
+
+  it('deduplicates the mount health probe across StrictMode effect replays', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<StrictMode>{app()}</StrictMode>)
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+  })
+
+  it('does not update or flash after unmount while its startup probe is in flight', async () => {
+    let resolveLiveness: ((value: Response) => void) | undefined
+    const fetchMock = vi.fn().mockImplementation(() => new Promise<Response>((resolve) => {
+      resolveLiveness = resolve
+    }))
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.stubGlobal('fetch', fetchMock)
+    const { unmount } = render(app())
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+
+    unmount()
+    resolveLiveness?.(new Response(null, { status: 503 }))
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(errorSpy).not.toHaveBeenCalled()
+  })
+
   it('shows the definitive Render state with one alert, one retry status, and focused heading', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 503 })))
     render(app())
-
-    reportAmbiguousBackendFailure({ response: { status: 500 } } as never)
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(/render app service/i)
@@ -40,8 +78,6 @@ describe('<OutageBoundary>', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('network')))
     render(app())
 
-    reportAmbiguousBackendFailure()
-
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveAttribute('data-kind', 'server-unreachable')
     expect(alert).toHaveTextContent(/render app service/i)
@@ -51,6 +87,7 @@ describe('<OutageBoundary>', () => {
 
   it('shows a distinct Neon state and focuses the remounted main landmark after recovery', async () => {
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
       .mockResolvedValueOnce(new Response(null, { status: 200 }))
       .mockResolvedValueOnce(new Response(null, { status: 503 }))
       .mockResolvedValueOnce(new Response(null, { status: 200 }))
@@ -75,6 +112,7 @@ describe('<OutageBoundary>', () => {
 
   it('uses neutral retry feedback and drops it when the incident kind changes', async () => {
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
       .mockResolvedValueOnce(new Response(null, { status: 503 }))
       .mockResolvedValueOnce(new Response(null, { status: 503 }))
       .mockResolvedValueOnce(new Response(null, { status: 200 }))
@@ -96,6 +134,7 @@ describe('<OutageBoundary>', () => {
 
   it('clears feedback after recovery before the same incident kind recurs', async () => {
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
       .mockResolvedValueOnce(new Response(null, { status: 503 }))
       .mockResolvedValueOnce(new Response(null, { status: 200 }))
       .mockResolvedValueOnce(new Response(null, { status: 200 }))

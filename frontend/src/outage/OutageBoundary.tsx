@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { CloudOff, DatabaseZap, RefreshCw, WifiOff } from 'lucide-react'
-import { checkHealth, subscribeToOutage, type OutageKind } from './outageMonitor'
+import { checkHealth, checkStartupHealth, subscribeToOutage, type OutageKind } from './outageMonitor'
 import styles from './OutageBoundary.module.css'
 
 interface OutageBoundaryProps {
@@ -50,11 +50,18 @@ export function OutageBoundary({ children }: OutageBoundaryProps) {
   const [retryFeedback, setRetryFeedback] = useState<{ kind: OutageKind; message: string } | null>(null)
   const headingRef = useRef<HTMLHeadingElement>(null)
   const previousOutageRef = useRef<OutageKind | null>(null)
+  const startupProbeStartedRef = useRef(false)
 
   useEffect(() => subscribeToOutage((next) => {
     setRetryFeedback(null)
     setOutage(next)
   }), [])
+
+  useEffect(() => {
+    if (startupProbeStartedRef.current) return
+    startupProbeStartedRef.current = true
+    void checkStartupHealth()
+  }, [])
 
   useEffect(() => {
     if (outage !== null) {
