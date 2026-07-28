@@ -78,18 +78,47 @@ describe('outage monitoring', () => {
     await expect(checkHealth()).resolves.toBeNull()
   })
 
-  it('preserves a visible outage when a retry database probe is indeterminate', async () => {
+  it.each([
+    ['rejects', () => Promise.reject(new TypeError('network'))],
+    ['returns an unexpected status', () => Promise.resolve(response(429))],
+  ])('preserves a visible outage when a retry database probe %s', async (_label, databaseReply) => {
     const listener = vi.fn()
     subscribeToOutage(listener)
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response(503))
       .mockResolvedValueOnce(response(200))
-      .mockRejectedValueOnce(new TypeError('network'))
+      .mockImplementationOnce(databaseReply)
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(checkHealth()).resolves.toBe('server')
     await expect(checkHealth()).resolves.toBe('server')
     expect(listener).toHaveBeenLastCalledWith('server')
+  })
+
+  it('fails open on an initial database timeout and preserves an outage on retry timeout', async () => {
+    vi.useFakeTimers()
+    const hangingProbe = (_url: string, init: RequestInit) => {
+      const signal = init.signal as AbortSignal
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+      })
+    }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200))
+      .mockImplementationOnce(hangingProbe)
+      .mockResolvedValueOnce(response(503))
+      .mockResolvedValueOnce(response(200))
+      .mockImplementationOnce(hangingProbe)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const initial = checkHealth()
+    await vi.advanceTimersByTimeAsync(HEALTH_PROBE_TIMEOUT_MS)
+    await expect(initial).resolves.toBeNull()
+
+    await expect(checkHealth()).resolves.toBe('server')
+    const retry = checkHealth()
+    await vi.advanceTimersByTimeAsync(HEALTH_PROBE_TIMEOUT_MS)
+    await expect(retry).resolves.toBe('server')
   })
 
   it('times out a hanging probe and resets the shared promise for retry', async () => {
