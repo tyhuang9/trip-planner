@@ -16,8 +16,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.actuate.health.HealthEndpointGroup;
 import org.springframework.boot.actuate.health.HealthEndpointGroups;
+import org.springframework.boot.actuate.health.Health;
+import org.springframework.boot.actuate.health.HealthIndicator;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Bean;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -41,10 +45,21 @@ import com.trip.repo.UserRepository;
  * security) runs exactly as in production. The test profile excludes DataSource
  * autoconfig — Piece 2 will add a proper DB-backed integration test.
  */
-@SpringBootTest
+@SpringBootTest(classes = {Application.class, SmokeTest.HealthTestConfiguration.class})
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 class SmokeTest {
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class HealthTestConfiguration {
+        // The test profile intentionally has no DataSource. Supplying the same
+        // contributor id lets this smoke test validate the production group
+        // wiring without opening a real database connection.
+        @Bean
+        HealthIndicator dbHealthIndicator() {
+            return () -> Health.up().build();
+        }
+    }
 
     @Autowired
     MockMvc mvc;
@@ -106,6 +121,25 @@ class SmokeTest {
         assertThat(liveness.isMember("db")).isFalse();
         assertThat(liveness.isMember("googleMaps")).isFalse();
         assertThat(liveness.isMember("brevo")).isFalse();
+    }
+
+    @Test
+    void databaseHealthGroupContainsOnlyTheDatabaseIndicator() {
+        HealthEndpointGroup database = healthEndpointGroups.get("database");
+
+        assertThat(database).isNotNull();
+        assertThat(database.isMember("db")).isTrue();
+        assertThat(database.isMember("livenessState")).isFalse();
+        assertThat(database.isMember("googleMaps")).isFalse();
+        assertThat(database.isMember("brevo")).isFalse();
+    }
+
+    @Test
+    void databaseHealthEndpointIsPublicAndSanitized() throws Exception {
+        mvc.perform(get("/actuator/health/database"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").exists())
+            .andExpect(jsonPath("$.components").doesNotExist());
     }
 
     @Test
@@ -177,6 +211,17 @@ class SmokeTest {
             .andExpect(status().isOk())
             .andExpect(header().string("Access-Control-Allow-Origin",
                 equalTo("http://0.0.0.0:3000")));
+    }
+
+    @Test
+    void healthProbeCorsUsesTheExactConfiguredOrigin() throws Exception {
+        mvc.perform(options("/actuator/health/liveness")
+                .header("Origin", "http://localhost:3000")
+                .header("Access-Control-Request-Method", "GET"))
+            .andExpect(status().isOk())
+            .andExpect(header().string("Access-Control-Allow-Origin",
+                equalTo("http://localhost:3000")))
+            .andExpect(header().doesNotExist("Access-Control-Allow-Credentials"));
     }
 
     @Test
