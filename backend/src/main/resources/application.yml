@@ -18,8 +18,10 @@ spring:
       # Do not turn a temporarily sleeping/unavailable Neon database into a
       # process-startup failure. Database readiness is established asynchronously.
       initialization-fail-timeout: -1
-      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:3000}
-      validation-timeout: ${DB_VALIDATION_TIMEOUT_MS:1000}
+      # The public database health endpoint must resolve within the browser's
+      # outage timeout even when a pool acquisition needs to fail.
+      connection-timeout: 3000
+      validation-timeout: 1000
       idle-timeout: 300000
       keepalive-time: 0
   jpa:
