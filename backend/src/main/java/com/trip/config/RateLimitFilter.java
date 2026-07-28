@@ -63,6 +63,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private static final String SHARE_PATH_PREFIX = "/api/share/";
     private static final String PLACES_PATH_PREFIX = "/api/places/";
     private static final String MAPS_PATH_PREFIX = "/api/maps/";
+    private static final String HEALTH_PATH = "/actuator/health";
+    private static final String DATABASE_HEALTH_PATH = HEALTH_PATH + "/database";
+    private static final String DB_INDICATOR_HEALTH_PATH = HEALTH_PATH + "/db";
     /**
      * Shared with {@code AuthController}'s inner per-(ip, email) check so the two
      * layers emit byte-identical 429 bodies — a probing attacker cannot distinguish
@@ -85,6 +88,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         String path = request.getRequestURI();
         String clientIp = clientIp(request, trustProxy);
+        if (isDatabaseHealthPath(path) && isHealthReadMethod(request.getMethod())) {
+            if (!tryConsume(response, RateLimitRegistry.Named.HEALTH_DATABASE, clientIp)) {
+                return;
+            }
+        }
         if (isGoogleMapsProxyPath(path)
             && ("GET".equalsIgnoreCase(request.getMethod()) || "POST".equalsIgnoreCase(request.getMethod()))) {
             if (!tryConsume(response, RateLimitRegistry.Named.GOOGLE_MAPS, clientIp)) {
@@ -143,6 +151,20 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private static boolean isGoogleMapsProxyPath(String path) {
         return path.startsWith(PLACES_PATH_PREFIX) || path.startsWith(MAPS_PATH_PREFIX);
+    }
+
+    private static boolean isDatabaseHealthPath(String path) {
+        return HEALTH_PATH.equals(path)
+            || isPathOrDescendant(path, DATABASE_HEALTH_PATH)
+            || isPathOrDescendant(path, DB_INDICATOR_HEALTH_PATH);
+    }
+
+    private static boolean isHealthReadMethod(String method) {
+        return "GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method);
+    }
+
+    private static boolean isPathOrDescendant(String path, String root) {
+        return root.equals(path) || path.startsWith(root + "/");
     }
 
     private static boolean isShareAcceptPath(String path) {

@@ -53,7 +53,18 @@ public class CorsConfig {
 
         UrlBasedCorsConfigurationSource src = new UrlBasedCorsConfigurationSource();
         src.registerCorsConfiguration("/api/**", cfg);
+        src.registerCorsConfiguration("/actuator/health/**", healthProbeConfiguration(origins));
         return src;
+    }
+
+    private static CorsConfiguration healthProbeConfiguration(List<String> origins) {
+        CorsConfiguration cfg = new CorsConfiguration();
+        cfg.setAllowedOrigins(origins);
+        cfg.setAllowedMethods(List.of("GET", "OPTIONS"));
+        cfg.setAllowedHeaders(List.of("Accept", "Origin"));
+        cfg.setAllowCredentials(false);
+        cfg.setMaxAge(3600L);
+        return cfg;
     }
 
     static List<String> allowedOrigins(AppProperties props, Environment environment) {

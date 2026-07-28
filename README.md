@@ -269,7 +269,15 @@ Use the public liveness endpoint for process monitoring and keep-warm requests:
 GET https://<backend-origin>/actuator/health/liveness
 ```
 
-The endpoint returns HTTP `200` with `{"status":"UP"}` when the application process is alive. Its health group explicitly contains only Spring's `livenessState`; it does not query Neon or depend on Google Maps, Brevo, or future external-provider health indicators. It is intentionally not a readiness or end-to-end availability check. Use `/actuator/health` or a separate authenticated smoke test when dependency health or user-visible behavior must be monitored.
+The endpoint returns HTTP `200` with `{"status":"UP"}` when the application process is alive. Its health group explicitly contains only Spring's `livenessState`; it does not query Neon or depend on Google Maps, Brevo, or future external-provider health indicators. It is intentionally not a readiness or end-to-end availability check.
+
+The browser outage boundary also reads the public, sanitized database group:
+
+```text
+GET https://<backend-origin>/actuator/health/database
+```
+
+It returns only an overall status and contains only the JDBC `db` indicator. A `503` database response is meaningful only after liveness is `UP`; arbitrary API `5xx` responses never identify a Neon outage. Browser CORS accepts the public health paths only from exact `ALLOWED_ORIGINS` values and does not allow credentials, but CORS does not restrict non-browser clients. To protect the JDBC check itself, database-bearing health reads (`GET` and `HEAD`) share a limit of 30 requests per minute per resolved client IP: `/actuator/health`, the `/actuator/health/database` group and its descendants, and the direct `/actuator/health/db` indicator and its descendants. Exhaustion returns `429` with `Retry-After`. Liveness reads and health preflights are not included in that bucket.
 
 Any external keep-warm monitor must use this contract:
 
@@ -325,7 +333,7 @@ If password reset or verification emails are not arriving in `dev`/`prod`, verif
 - Responses larger than 2 KB are compressed for JSON and text content. SSE uses
   `text/event-stream`, which is deliberately excluded so events are not buffered.
 - Production registration creates an unverified user, sends one Brevo verification email, and withholds auth tokens until verification. The local profile creates verified users immediately and sends no email.
-- Public auth/share endpoints are rate limited in memory. This is fine for a small deployment, but limits reset on backend restart and are weaker against distributed abuse.
+- Public auth/share endpoints and the database health probe are rate limited in memory. This is fine for a small deployment, but limits reset on backend restart and are weaker against distributed abuse.
 - `/api/dev/**` endpoints are registered only under `SPRING_PROFILES_ACTIVE=local` and operate only on `@test.local` accounts.
 - Share links store only a SHA-256 hash of the raw token and can be revoked by the trip owner.
 - Anonymous guest writes require the guest cookie plus the `X-Dupert-Guest-Write: 1` header, and guest/share endpoints are rate limited.

@@ -24,6 +24,11 @@ export default defineConfig({
         changeOrigin: false,
         secure: false,
       },
+      '/actuator': {
+        target: 'http://localhost:8000',
+        changeOrigin: false,
+        secure: false,
+      },
     },
   },
   test: {

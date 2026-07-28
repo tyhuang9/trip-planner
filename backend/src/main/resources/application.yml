@@ -113,6 +113,11 @@ management:
         # explicit so future HealthIndicator beans are not added accidentally.
         liveness:
           include: livenessState
+        # This is the only dependency-specific public signal. Keep it limited
+        # to the JDBC indicator so a third-party provider cannot look like a
+        # database outage in the client.
+        database:
+          include: db
       show-details: never
   health:
     defaults:
