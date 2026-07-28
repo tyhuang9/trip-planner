@@ -88,7 +88,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         String path = request.getRequestURI();
         String clientIp = clientIp(request, trustProxy);
-        if (isDatabaseHealthPath(path) && "GET".equalsIgnoreCase(request.getMethod())) {
+        if (isDatabaseHealthPath(path) && isHealthReadMethod(request.getMethod())) {
             if (!tryConsume(response, RateLimitRegistry.Named.HEALTH_DATABASE, clientIp)) {
                 return;
             }
@@ -157,6 +157,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
         return HEALTH_PATH.equals(path)
             || isPathOrDescendant(path, DATABASE_HEALTH_PATH)
             || isPathOrDescendant(path, DB_INDICATOR_HEALTH_PATH);
+    }
+
+    private static boolean isHealthReadMethod(String method) {
+        return "GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method);
     }
 
     private static boolean isPathOrDescendant(String path, String root) {

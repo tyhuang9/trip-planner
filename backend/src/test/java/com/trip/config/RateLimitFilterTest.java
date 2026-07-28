@@ -190,16 +190,17 @@ class RateLimitFilterTest {
             "/actuator/health/db",
             "/actuator/health/db/details"
         };
+        String[] methods = {"GET", "HEAD"};
 
         for (int i = 0; i < 30; i++) {
             MockHttpServletResponse response = new MockHttpServletResponse();
-            filter.doFilter(request("GET", paths[i % paths.length]), response, chain);
+            filter.doFilter(request(methods[i % methods.length], paths[i % paths.length]), response, chain);
             assertThat(response.getStatus()).isEqualTo(200);
         }
         assertThat(registry.size()).isEqualTo(1);
 
         MockHttpServletResponse limited = new MockHttpServletResponse();
-        filter.doFilter(request("GET", "/actuator/health/database/db"), limited, chain);
+        filter.doFilter(request("HEAD", "/actuator/health/database/db"), limited, chain);
 
         assertThat(passed.get()).isEqualTo(30);
         assertThat(limited.getStatus()).isEqualTo(429);
@@ -217,11 +218,13 @@ class RateLimitFilterTest {
         for (int i = 0; i < 40; i++) {
             filter.doFilter(request("GET", "/actuator/health/liveness"),
                 new MockHttpServletResponse(), chain);
+            filter.doFilter(request("HEAD", "/actuator/health/liveness"),
+                new MockHttpServletResponse(), chain);
             filter.doFilter(request("OPTIONS", "/actuator/health/database"),
                 new MockHttpServletResponse(), chain);
         }
 
-        assertThat(passed.get()).isEqualTo(80);
+        assertThat(passed.get()).isEqualTo(120);
         assertThat(registry.size()).isZero();
     }
 

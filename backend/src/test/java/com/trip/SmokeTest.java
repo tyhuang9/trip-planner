@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -140,6 +141,33 @@ class SmokeTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.status").exists())
             .andExpect(jsonPath("$.components").doesNotExist());
+    }
+
+    @Test
+    void databaseHealthHeadRequestsShareTheLimiterWhileLivenessHeadRemainsAvailable() throws Exception {
+        for (int i = 0; i < 30; i++) {
+            mvc.perform(head("/actuator/health/database")
+                    .with(request -> {
+                        request.setRemoteAddr("198.51.100.72");
+                        return request;
+                    }))
+                .andExpect(status().isOk());
+        }
+
+        mvc.perform(head("/actuator/health/database/db")
+                .with(request -> {
+                    request.setRemoteAddr("198.51.100.72");
+                    return request;
+                }))
+            .andExpect(status().isTooManyRequests())
+            .andExpect(header().exists("Retry-After"));
+
+        mvc.perform(head("/actuator/health/liveness")
+                .with(request -> {
+                    request.setRemoteAddr("198.51.100.72");
+                    return request;
+                }))
+            .andExpect(status().isOk());
     }
 
     @Test

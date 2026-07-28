@@ -15,6 +15,7 @@ app:
   frontend-origin: http://localhost:3000
   jwt-secret: 00000000000000000000000000000000000000000000000000000000000000aa
   log-email-pepper: 000000000000000000000000000000aa
+  signup-enabled: true
 
 secure:
   hsts:
@@ -27,6 +28,9 @@ management:
         include: health
   endpoint:
     health:
+      # Most test slices intentionally exclude DataSource auto-configuration,
+      # so the production database group has no db contributor in this profile.
+      validate-group-membership: false
       probes:
         enabled: true
       show-details: never
