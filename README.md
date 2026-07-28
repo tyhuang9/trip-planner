@@ -269,7 +269,15 @@ Use the public liveness endpoint for process monitoring and keep-warm requests:
 GET https://<backend-origin>/actuator/health/liveness
 ```
 
-The endpoint returns HTTP `200` with `{"status":"UP"}` when the application process is alive. Its health group explicitly contains only Spring's `livenessState`; it does not query Neon or depend on Google Maps, Brevo, or future external-provider health indicators. It is intentionally not a readiness or end-to-end availability check. Use `/actuator/health` or a separate authenticated smoke test when dependency health or user-visible behavior must be monitored.
+The endpoint returns HTTP `200` with `{"status":"UP"}` when the application process is alive. Its health group explicitly contains only Spring's `livenessState`; it does not query Neon or depend on Google Maps, Brevo, or future external-provider health indicators. It is intentionally not a readiness or end-to-end availability check.
+
+The browser outage boundary also reads the public, sanitized database group:
+
+```text
+GET https://<backend-origin>/actuator/health/database
+```
+
+It returns only an overall status and contains only the JDBC `db` indicator. A non-2xx database response is meaningful only after liveness is `UP`; arbitrary API `5xx` responses never identify a Neon outage. Both public health paths accept browser CORS only from the exact `ALLOWED_ORIGINS` values and do not allow credentials.
 
 Any external keep-warm monitor must use this contract:
 
