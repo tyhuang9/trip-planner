@@ -57,7 +57,7 @@ class SmokeTest {
         // contributor id lets this smoke test validate the production group
         // wiring without opening a real database connection.
         @Bean
-        HealthIndicator dbHealthIndicator() {
+        HealthIndicator databaseHealthIndicator() {
             return () -> Health.up().build();
         }
     }
@@ -119,7 +119,7 @@ class SmokeTest {
 
         assertThat(liveness).isNotNull();
         assertThat(liveness.isMember("livenessState")).isTrue();
-        assertThat(liveness.isMember("db")).isFalse();
+        assertThat(liveness.isMember("database")).isFalse();
         assertThat(liveness.isMember("googleMaps")).isFalse();
         assertThat(liveness.isMember("brevo")).isFalse();
     }
@@ -129,7 +129,7 @@ class SmokeTest {
         HealthEndpointGroup database = healthEndpointGroups.get("database");
 
         assertThat(database).isNotNull();
-        assertThat(database.isMember("db")).isTrue();
+        assertThat(database.isMember("database")).isTrue();
         assertThat(database.isMember("livenessState")).isFalse();
         assertThat(database.isMember("googleMaps")).isFalse();
         assertThat(database.isMember("brevo")).isFalse();
@@ -154,7 +154,7 @@ class SmokeTest {
                 .andExpect(status().isOk());
         }
 
-        mvc.perform(head("/actuator/health/database/db")
+        mvc.perform(head("/actuator/health/database/database")
                 .with(request -> {
                     request.setRemoteAddr("198.51.100.72");
                     return request;

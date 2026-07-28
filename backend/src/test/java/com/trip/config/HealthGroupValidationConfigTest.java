@@ -14,14 +14,14 @@ class HealthGroupValidationConfigTest {
         .withConfiguration(AutoConfigurations.of(
             EndpointAutoConfiguration.class,
             HealthEndpointAutoConfiguration.class))
-        .withPropertyValues("management.endpoint.health.group.database.include=db");
+        .withPropertyValues("management.endpoint.health.group.database.include=database");
 
     @Test
     void missingDatabaseContributorFailsByDefault() {
         contextRunner.run(context -> {
             assertThat(context).hasFailed();
             assertThat(context.getStartupFailure())
-                .hasMessageContaining("Included health contributor 'db'")
+                .hasMessageContaining("Included health contributor 'database'")
                 .hasMessageContaining("group 'database'");
         });
     }
