@@ -1344,6 +1344,36 @@ describe('<TripMap>', () => {
     })
   })
 
+  it('bounds destination geocode stale timers to 24 days', async () => {
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    const maxStaleTimerMs = 24 * 24 * 60 * 60 * 1000
+    const oldStaleTimerMs = 30 * 24 * 60 * 60 * 1000
+
+    try {
+      geocodeMock.geocodeDestination.mockResolvedValueOnce({
+        label: 'Tokyo, Japan',
+        lat: 35.6762,
+        lng: 139.6503,
+      })
+
+      render(<TripMap activities={[]} fallbackActivities={[]} destination="Tokyo, Japan" />)
+
+      await screen.findByRole('img', { name: /destination: tokyo, japan/i })
+
+      const longDelays = setTimeoutSpy.mock.calls
+        .map(([, delay]) => delay)
+        .filter((delay): delay is number => (
+          typeof delay === 'number' && delay > 24 * 60 * 60 * 1000
+        ))
+
+      expect(longDelays.length).toBeGreaterThan(0)
+      expect(longDelays.every((delay) => delay <= maxStaleTimerMs)).toBe(true)
+      expect(longDelays).not.toContain(oldStaleTimerMs)
+    } finally {
+      setTimeoutSpy.mockRestore()
+    }
+  })
+
   it('does not geocode the destination when destination fallback is disabled', () => {
     render(
       <TripMap
