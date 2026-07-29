@@ -235,6 +235,21 @@ test('rejects alternate privacy object IDs, comments, and Resources decoys', () 
   }, /unexpected|Resources/)
 })
 
+test('rejects canonical privacy object IDs reused behind decoy comments', () => {
+  expectRejected((candidate) => {
+    candidate.project = candidate.project.replace(
+      '/* End PBXResourcesBuildPhase section */',
+      '\t\tDEADBEEFDEADBEEFDEADBEEF /* Other Resources */ = {\n\t\t\tisa = PBXResourcesBuildPhase;\n\t\t\tfiles = (\n\t\t\t\t7B31F0F8A1B2C3D4E5F60708 /* Decoy */,\n\t\t\t);\n\t\t};\n/* End PBXResourcesBuildPhase section */',
+    )
+  }, /object IDs/)
+  expectRejected((candidate) => {
+    candidate.project = candidate.project.replace(
+      '/* End PBXGroup section */',
+      '\t\tDEADBEEFDEADBEEFDEADBEEF /* Other */ = {\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = (\n\t\t\t\t7B31F0F7A1B2C3D4E5F60708 /* Decoy */,\n\t\t\t);\n\t\t};\n/* End PBXGroup section */',
+    )
+  }, /object IDs/)
+})
+
 test('rejects duplicate Xcode sections and duplicate App or Resources objects', () => {
   expectRejected((candidate) => {
     candidate.project += '\n/* Begin PBXResourcesBuildPhase section */\n/* End PBXResourcesBuildPhase section */\n'

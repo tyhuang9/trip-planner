@@ -145,6 +145,10 @@ function inspectXcodeProject(project, violations) {
     || privacyLines.filter((line) => line === groupLine).length > 1) {
     violations.push('Xcode project contains an unexpected or duplicate privacy manifest reference')
   }
+  if (count(project, new RegExp(BUILD_FILE, 'g')) !== 2
+    || count(project, new RegExp(FILE_REF, 'g')) !== 3) {
+    violations.push('Xcode privacy manifest object IDs must have only their canonical references')
+  }
 
   const buildSection = projectSection(project, 'PBXBuildFile', violations)
   const fileSection = projectSection(project, 'PBXFileReference', violations)
