@@ -26,7 +26,7 @@ export function DeepLinkScrubber() {
     requestDeepLinkRouteFocus(destination)
     navigate(destination, { replace: true })
   }, [location.pathname, location.search, navigate])
-  return <RouteLoadingFallback kind="auth" />
+  return <RouteLoadingFallback kind="secure-link" />
 }
 
 export function DeepLinkHandoffRoute({

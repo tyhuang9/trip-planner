@@ -104,6 +104,12 @@ export function EmailVerificationPage() {
     }
   }
 
+  const keepCurrentSession = () => {
+    consumeDeepLinkHandoff(handoffId)
+    requestDeepLinkRouteFocus('/trips')
+    navigate('/trips', { replace: true })
+  }
+
   const state = hasToken ? verification.state : 'error'
   const message = hasToken
     ? isInitializing
@@ -138,13 +144,25 @@ export function EmailVerificationPage() {
           {message}
         </div>}
         {needsIdentitySwitch ? (
-          <button className={styles.submit} type="button" disabled={isSwitchingIdentity} onClick={() => void confirmIdentitySwitch()}>
-            {isSwitchingIdentity ? 'Signing out...' : 'Sign out and verify this email'}
+          <div className={styles.form}>
+            <button className={styles.submit} type="button" disabled={isSwitchingIdentity} onClick={() => void confirmIdentitySwitch()}>
+              {isSwitchingIdentity ? 'Signing out...' : 'Sign out and verify this email'}
+            </button>
+            <button className={styles.textButton} type="button" disabled={isSwitchingIdentity} onClick={keepCurrentSession}>
+              Keep current session
+            </button>
+          </div>
+        ) : null}
+        {isAuthenticated && !needsIdentitySwitch && state === 'error' ? (
+          <button className={styles.textButton} type="button" onClick={keepCurrentSession}>
+            Return to trips
           </button>
         ) : null}
-        <p className={styles.altLink}>
-          <Link to="/login">Back to sign in</Link>
-        </p>
+        {!isAuthenticated && !needsIdentitySwitch && state === 'error' ? (
+          <p className={styles.altLink}>
+            <Link to="/login">Back to sign in</Link>
+          </p>
+        ) : null}
       </div>
     </main>
   )

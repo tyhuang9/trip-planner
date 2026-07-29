@@ -9,7 +9,7 @@ import { EmailVerificationPage } from './EmailVerificationPage'
 import { verifyEmail } from '../api/auth'
 import { useAuthStore } from '../auth/authStore'
 import type { AuthResponse } from '../types/auth'
-import { putDeepLinkHandoff, __resetDeepLinkVaultForTests } from '../deep-links/vault'
+import { getDeepLinkHandoff, putDeepLinkHandoff, __resetDeepLinkVaultForTests, wasDeepLinkRecentlyConsumed } from '../deep-links/vault'
 import { DeepLinkRouteFocus } from '../deep-links/DeepLinkRouteFocus'
 import { __resetDeepLinkRouteFocusForTests } from '../deep-links/routeFocusRequest'
 import { AuthContext, type AuthContextValue } from '../auth/authContextValue'
@@ -156,6 +156,49 @@ describe('<EmailVerificationPage>', () => {
     expect(useAuthStore.getState().user?.email).toBe('verified@example.com')
   })
 
+  it('keeps the authenticated session and releases the handoff when requested', async () => {
+    const logout = vi.fn()
+    useAuthStore.getState().setSession({
+      accessToken: 'existing-token',
+      expiresInSeconds: 900,
+      user: { ...AUTH_RESPONSE.user, email: 'existing@example.com' },
+    })
+    const link = {
+      kind: 'verify-email' as const,
+      token: 'ignored-switch-token',
+      returnTo: { kind: 'route' as const, path: '/trips' },
+    }
+    const handoffId = putDeepLinkHandoff(link)
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthContext.Provider value={makeAuth({
+          authStatus: 'authenticated',
+          isAuthenticated: true,
+          user: { ...AUTH_RESPONSE.user, email: 'existing@example.com' },
+          logout,
+        })}>
+          <MemoryRouter initialEntries={[`/verify/${handoffId}`]}>
+            <DeepLinkRouteFocus />
+            <Routes>
+              <Route path="/verify/:handoffId" element={<EmailVerificationPage />} />
+              <Route path="/trips" element={<main id="main"><h1>Trips</h1></main>} />
+            </Routes>
+          </MemoryRouter>
+        </AuthContext.Provider>
+      </QueryClientProvider>,
+    )
+
+    expect(screen.queryByRole('link', { name: /back to sign in/i })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /keep current session/i }))
+    expect(verifyEmailMock).not.toHaveBeenCalled()
+    expect(logout).not.toHaveBeenCalled()
+    expect(useAuthStore.getState().user?.email).toBe('existing@example.com')
+    expect(getDeepLinkHandoff(handoffId)).toBeUndefined()
+    expect(wasDeepLinkRecentlyConsumed(link)).toBe(true)
+    await vi.waitFor(() => expect(screen.getByRole('heading', { name: 'Trips' })).toHaveFocus())
+  })
+
   it('verifies the token from the verify-email URL', async () => {
     verifyEmailMock.mockResolvedValue(AUTH_RESPONSE)
 
@@ -218,6 +261,26 @@ describe('<EmailVerificationPage>', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(
       /verification link is invalid or expired/i,
     )
+    expect(screen.getByRole('link', { name: /back to sign in/i })).toBeInTheDocument()
+  })
+
+  it('lets an authenticated user return to trips from an invalid link', async () => {
+    useAuthStore.getState().setSession({
+      accessToken: 'existing-token',
+      expiresInSeconds: 900,
+      user: { ...AUTH_RESPONSE.user, email: 'existing@example.com' },
+    })
+    renderEmailVerification('/verify-email', makeAuth({
+      authStatus: 'authenticated',
+      isAuthenticated: true,
+      user: { ...AUTH_RESPONSE.user, email: 'existing@example.com' },
+    }))
+
+    expect(verifyEmailMock).not.toHaveBeenCalled()
+    expect(screen.queryByRole('link', { name: /back to sign in/i })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /return to trips/i }))
+    expect(useAuthStore.getState().user?.email).toBe('existing@example.com')
+    await vi.waitFor(() => expect(screen.getByRole('heading', { name: 'Trips page' })).toHaveFocus())
   })
 
   it('shows the invalid-link message when the token is rejected', async () => {

@@ -14,8 +14,6 @@ import styles from './AuthForm.module.css'
 type LoginMode = 'signIn' | 'passwordReset'
 
 export function LoginPage() {
-  usePageTitle('Sign in – Dupert')
-
   const auth = useAuth()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -33,6 +31,7 @@ export function LoginPage() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [mode, setMode] = useState<LoginMode>(() => searchParams.get('mode') === 'password-reset' ? 'passwordReset' : 'signIn')
+  usePageTitle(mode === 'passwordReset' ? 'Request password reset – Dupert' : 'Sign in – Dupert')
   const [resetEmail, setResetEmail] = useState('')
   const [resetMessage, setResetMessage] = useState<string | null>(null)
   const [resetError, setResetError] = useState<string | null>(null)
@@ -62,7 +61,7 @@ export function LoginPage() {
   // otherwise a user with a valid refresh cookie sees a brief flash of
   // the login form before being bounced to /trips.
   if (isInitializing) return <AuthBootstrapShell />
-  if (isAuthenticated) {
+  if (isAuthenticated && mode === 'signIn') {
     return <Navigate to={returnTo} replace />
   }
 

@@ -1,9 +1,10 @@
 import styles from './RouteLoadingFallback.module.css'
 
-type RouteLoadingKind = 'auth' | 'trips' | 'workspace' | 'members'
+type RouteLoadingKind = 'auth' | 'secure-link' | 'trips' | 'workspace' | 'members'
 
 const labels: Record<RouteLoadingKind, string> = {
   auth: 'Loading sign-in page',
+  'secure-link': 'Opening secure link',
   trips: 'Loading your trips',
   workspace: 'Loading trip workspace',
   members: 'Loading trip members',
