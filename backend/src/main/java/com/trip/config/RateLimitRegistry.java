@@ -136,6 +136,11 @@ public class RateLimitRegistry {
         /** 120 backend-proxied Google Maps calls per minute per IP. */
         GOOGLE_MAPS(() -> Bucket.builder()
             .addLimit(Bandwidth.builder().capacity(120).refillGreedy(120, Duration.ofMinutes(1)).build())
+            .build()),
+
+        /** 30 public database health probes per minute per IP. */
+        HEALTH_DATABASE(() -> Bucket.builder()
+            .addLimit(Bandwidth.builder().capacity(30).refillGreedy(30, Duration.ofMinutes(1)).build())
             .build());
 
         private final Supplier<Bucket> factory;

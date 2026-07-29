@@ -15,20 +15,30 @@ spring:
       # starter; these values make its production budget explicit.
       maximum-pool-size: ${DB_POOL_MAX_SIZE:4}
       minimum-idle: ${DB_POOL_MIN_IDLE:0}
-      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:10000}
-      validation-timeout: ${DB_VALIDATION_TIMEOUT_MS:3000}
+      # Do not turn a temporarily sleeping/unavailable Neon database into a
+      # process-startup failure. Database readiness is established asynchronously.
+      initialization-fail-timeout: -1
+      # The public database health endpoint must resolve within the browser's
+      # outage timeout even when a pool acquisition needs to fail.
+      connection-timeout: 3000
+      validation-timeout: 1000
       idle-timeout: 300000
       keepalive-time: 0
   jpa:
     open-in-view: false
     hibernate:
-      ddl-auto: validate
+      # Migrations validate and create the schema after the JVM is serving.
+      ddl-auto: none
     properties:
       hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        boot:
+          allow_jdbc_metadata_access: false
         jdbc.time_zone: UTC
         format_sql: false
   flyway:
-    enabled: true
+    # DatabaseMigrationCoordinator owns migration so database loss cannot block boot.
+    enabled: false
     baseline-on-migrate: false
     locations: classpath:db/migration
   jackson:
@@ -92,6 +102,8 @@ app:
   # Honor X-Forwarded-For for client-IP resolution. Default false; flip to true only
   # behind a proxy that overwrites (not appends) the header (Fly, Vercel).
   trust-proxy: ${APP_TRUST_PROXY:false}
+  database:
+    check-interval-ms: ${DB_CHECK_INTERVAL_MS:5000}
 
 # Security knobs (toggled on in prod, off in dev).
 secure:
@@ -113,10 +125,17 @@ management:
         # explicit so future HealthIndicator beans are not added accidentally.
         liveness:
           include: livenessState
+        # This is the only dependency-specific public signal. Keep it limited
+        # to the migration-aware readiness indicator so a third-party provider
+        # cannot look like a database outage in the client.
+        database:
+          include: database
       show-details: never
   health:
     defaults:
       enabled: true
+    db:
+      enabled: false
 
 logging:
   level:

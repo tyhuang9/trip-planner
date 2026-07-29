@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { parseApiError } from '../api/errors'
 import { useAuth } from '../auth/useAuth'
 import { useAcceptShareLink } from '../hooks/useShareLinks'
