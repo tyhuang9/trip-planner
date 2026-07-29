@@ -35,7 +35,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from 'react'
-import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useIsAuthenticated } from '../auth/authStore'
 import { AuthContext } from '../auth/authContextValue'
 import {

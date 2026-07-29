@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router'
 import { useAuth } from '../auth/useAuth'
 import { AuthBootstrapShell } from '../auth/AuthBootstrapShell'
 import { useIsAuthenticated } from '../auth/authStore'
