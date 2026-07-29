@@ -1,757 +1,1513 @@
 {
-    "template_status": "UNEXECUTED",
-    "notice": "TEMPLATE / NOT EVIDENCE \u2014 immutable source template; this file records no physical-device execution.",
-    "copy_results_to": "docs/mobile/evidence/issue-64/YYYY-MM-DD/<run-id>/results.json",
-    "result_status_vocabulary": [
-        "UNEXECUTED",
-        "PASS",
-        "FAIL",
-        "BLOCKED",
-        "UNVERIFIED"
-    ],
-    "platforms": [
+  "schema_version": 2,
+  "template_status": "UNEXECUTED",
+  "notice": "TEMPLATE / NOT EVIDENCE — immutable source; JSON results are the sole claim-bearing artifact.",
+  "copy_results_to": "docs/mobile/evidence/issue-64/YYYY-MM-DD/<lowercase-run-id>/results.json",
+  "result_status_vocabulary": [
+    "UNEXECUTED",
+    "PASS",
+    "FAIL",
+    "BLOCKED",
+    "UNVERIFIED"
+  ],
+  "platforms": [
+    {
+      "platform": "ios",
+      "metadata": {
+        "device_type": "UNEXECUTED",
+        "is_simulator": "UNEXECUTED",
+        "is_emulator": "UNEXECUTED",
+        "commit_or_tag": "UNEXECUTED",
+        "app_version_build": "UNEXECUTED",
+        "device_model": "UNEXECUTED",
+        "os_version": "UNEXECUTED",
+        "tooling": "UNEXECUTED",
+        "staging_environment": "UNEXECUTED",
+        "test_date_time": "UNEXECUTED",
+        "tester_owner": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED"
+      },
+      "contexts": [
         {
-            "platform": "ios",
-            "device_requirement": "Physical iPhone required; simulator-only runs do not satisfy this contract.",
-            "metadata": {
-                "commit_or_tag": "UNEXECUTED",
-                "app_version_build": "UNEXECUTED",
-                "device_model": "UNEXECUTED",
-                "os_version": "UNEXECUTED",
-                "ios_xcode_macos_tooling": "UNEXECUTED",
-                "staging_environment": "UNEXECUTED",
-                "test_date_time": "UNEXECUTED",
-                "tester_owner": "UNEXECUTED",
-                "artifact_identity_checksum": "UNEXECUTED"
+          "context_id": "member",
+          "cases": [
+            {
+              "case_id": "member_login",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
             },
-            "cases": [
+            {
+              "case_id": "access_token_expiry_refresh_rotation",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "background_resume",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "force_kill_relaunch",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "logout",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "account_deletion",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+          "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "email_verification_return",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "password_reset_return",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "trip_rest_read",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "trip_write",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "sse_streaming_genuine_without_global_native_http_patch",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "offline_loss_reconnect_each_session_boundary",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              },
+              "session_boundaries": [
                 {
-                    "case_id": "member_login",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
+                  "boundary": "member_login",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
                 },
                 {
-                    "case_id": "access_token_expiry_refresh_rotation",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
+                  "boundary": "access_token_expiry_refresh_rotation",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
                 },
                 {
-                    "case_id": "background_resume",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
+                  "boundary": "background_resume",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
                 },
                 {
-                    "case_id": "force_kill_relaunch",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
+                  "boundary": "force_kill_relaunch",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
                 },
                 {
-                    "case_id": "logout",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
+                  "boundary": "logout",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
                 },
                 {
-                    "case_id": "account_deletion",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
+                  "boundary": "account_deletion",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
                 },
                 {
-                    "case_id": "email_verification_return",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
+                  "boundary": "email_verification_return",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
                 },
                 {
-                    "case_id": "password_reset_return",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
+                  "boundary": "password_reset_return",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
                 },
                 {
-                    "case_id": "guest_acceptance",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
+                  "boundary": "trip_rest_read",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
                 },
                 {
-                    "case_id": "trip_rest_read",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
+                  "boundary": "trip_write",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
                 },
                 {
-                    "case_id": "trip_write",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "sse_streaming_genuine_without_global_native_http_patch",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "guest_relaunch",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "guest_claim",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "guest_expiry",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "guest_revocation",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "offline_loss_reconnect_each_session_boundary",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    },
-                    "session_boundaries": [
-                        {
-                            "boundary": "member_login",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "access_token_expiry_refresh_rotation",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "background_resume",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "force_kill_relaunch",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "logout",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "account_deletion",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "email_verification_return",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "password_reset_return",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "guest_acceptance",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "trip_rest_read",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "trip_write",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "sse_streaming",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "guest_relaunch",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "guest_claim",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "guest_expiry",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "guest_revocation",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        }
-                    ]
-                },
-                {
-                    "case_id": "ios_webview_domain_configuration",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
+                  "boundary": "sse_streaming_genuine_without_global_native_http_patch",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
                 }
-            ],
-            "credential_lifecycle": [
-                {
-                    "stage_id": "issued",
-                    "status": "UNEXECUTED",
-                    "evidence": "UNEXECUTED"
-                },
-                {
-                    "stage_id": "stored",
-                    "status": "UNEXECUTED",
-                    "evidence": "UNEXECUTED"
-                },
-                {
-                    "stage_id": "attached",
-                    "status": "UNEXECUTED",
-                    "evidence": "UNEXECUTED"
-                },
-                {
-                    "stage_id": "rotated",
-                    "status": "UNEXECUTED",
-                    "evidence": "UNEXECUTED"
-                },
-                {
-                    "stage_id": "claimed",
-                    "status": "UNEXECUTED",
-                    "evidence": "UNEXECUTED"
-                },
-                {
-                    "stage_id": "revoked",
-                    "status": "UNEXECUTED",
-                    "evidence": "UNEXECUTED"
-                }
-            ]
+              ]
+            }
+          ],
+          "credential_lifecycle": [
+            {
+              "stage_id": "issued",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "stage_id": "stored",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "stage_id": "attached",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "stage_id": "rotated",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "stage_id": "revoked",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            }
+          ]
         },
         {
-            "platform": "android",
-            "device_requirement": "Physical Android device required; emulator-only runs do not satisfy this contract.",
-            "metadata": {
-                "commit_or_tag": "UNEXECUTED",
-                "app_version_build": "UNEXECUTED",
-                "device_model": "UNEXECUTED",
-                "os_version": "UNEXECUTED",
-                "android_adb_tooling": "UNEXECUTED",
-                "staging_environment": "UNEXECUTED",
-                "test_date_time": "UNEXECUTED",
-                "tester_owner": "UNEXECUTED",
-                "artifact_identity_checksum": "UNEXECUTED"
-            },
-            "cases": [
-                {
-                    "case_id": "member_login",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "access_token_expiry_refresh_rotation",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "background_resume",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "force_kill_relaunch",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "logout",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "account_deletion",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "email_verification_return",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "password_reset_return",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "guest_acceptance",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "trip_rest_read",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "trip_write",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "sse_streaming_genuine_without_global_native_http_patch",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "guest_relaunch",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "guest_claim",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "guest_expiry",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "guest_revocation",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                },
-                {
-                    "case_id": "offline_loss_reconnect_each_session_boundary",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    },
-                    "session_boundaries": [
-                        {
-                            "boundary": "member_login",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "access_token_expiry_refresh_rotation",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "background_resume",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "force_kill_relaunch",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "logout",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "account_deletion",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "email_verification_return",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "password_reset_return",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "guest_acceptance",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "trip_rest_read",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "trip_write",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "sse_streaming",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "guest_relaunch",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "guest_claim",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "guest_expiry",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        },
-                        {
-                            "boundary": "guest_revocation",
-                            "status": "UNEXECUTED",
-                            "evidence": "UNEXECUTED"
-                        }
-                    ]
-                },
-                {
-                    "case_id": "android_third_party_cookie_behavior",
-                    "status": "UNEXECUTED",
-                    "steps": "UNEXECUTED",
-                    "evidence": {
-                        "safe_reference": "UNEXECUTED",
-                        "observed_result": "UNEXECUTED",
-                        "network_trace_reference": "UNEXECUTED",
-                        "artifact_identity_checksum": "UNEXECUTED",
-                        "redaction_notes": "UNEXECUTED"
-                    }
-                }
-            ],
-            "credential_lifecycle": [
-                {
-                    "stage_id": "issued",
-                    "status": "UNEXECUTED",
-                    "evidence": "UNEXECUTED"
-                },
-                {
-                    "stage_id": "stored",
-                    "status": "UNEXECUTED",
-                    "evidence": "UNEXECUTED"
-                },
-                {
-                    "stage_id": "attached",
-                    "status": "UNEXECUTED",
-                    "evidence": "UNEXECUTED"
-                },
-                {
-                    "stage_id": "rotated",
-                    "status": "UNEXECUTED",
-                    "evidence": "UNEXECUTED"
-                },
-                {
-                    "stage_id": "claimed",
-                    "status": "UNEXECUTED",
-                    "evidence": "UNEXECUTED"
-                },
-                {
-                    "stage_id": "revoked",
-                    "status": "UNEXECUTED",
-                    "evidence": "UNEXECUTED"
-                }
-            ]
-        }
-    ],
-    "redaction_policy": {
-        "status": "UNEXECUTED",
-        "raw_secret_policy": "NEVER COMMIT raw cookies, access tokens, refresh tokens, guest tokens, credentials, reset or verification links, signing material, API keys, or secrets.",
-        "safe_reference_policy": "Use endpoint/method, status code, cookie or token name only, timestamps, redacted headers, and artifact identity/checksum references. Replace every credential or link value with <REDACTED>.",
-        "forbidden_values": [
-            "raw cookies",
-            "access tokens",
-            "refresh tokens",
-            "guest tokens",
-            "credentials",
-            "email reset links",
-            "email verification links",
-            "signing material",
-            "API keys",
-            "secrets"
-        ],
-        "evidence_placeholder": "UNEXECUTED"
-    },
-    "adr_contract": {
-        "status": "UNEXECUTED",
-        "allowed_outcomes": [
+          "context_id": "guest",
+          "cases": [
             {
-                "option_id": "cookie_only_proven",
-                "title": "Proven cookie-only configuration",
-                "scope": "Must prove the entire member and guest lifecycle on physical iPhone and Android devices."
+              "case_id": "guest_acceptance",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
             },
             {
-                "option_id": "native_credential_transport",
-                "title": "Explicit native credential transport",
-                "scope": "Must cover the entire member and guest lifecycle with documented security properties and frontend/backend support."
+              "case_id": "background_resume",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "force_kill_relaunch",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "guest_relaunch",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "trip_rest_read",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "trip_write",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "sse_streaming_genuine_without_global_native_http_patch",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "guest_claim",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "guest_expiry",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "guest_revocation",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "offline_loss_reconnect_each_session_boundary",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              },
+              "session_boundaries": [
+                {
+                  "boundary": "guest_acceptance",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "background_resume",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "force_kill_relaunch",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "guest_relaunch",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "trip_rest_read",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "trip_write",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "sse_streaming_genuine_without_global_native_http_patch",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "guest_claim",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "guest_expiry",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "guest_revocation",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                }
+              ]
             }
-        ],
-        "forbidden_fallbacks": [
-            "endpoint_only_fallback",
-            "web_storage_refresh_or_guest_token_workaround"
-        ],
-        "decision": "UNEXECUTED",
-        "security_properties": "UNEXECUTED",
-        "frontend_backend_work": "UNEXECUTED",
-        "migration_backward_compatibility": "UNEXECUTED",
-        "rollback": "UNEXECUTED",
-        "revised_estimate": "UNEXECUTED",
-        "follow_up_issues": "UNEXECUTED"
+          ],
+          "credential_lifecycle": [
+            {
+              "stage_id": "issued",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "stage_id": "stored",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "stage_id": "attached",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "stage_id": "claimed",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "stage_id": "revoked",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            }
+          ]
+        }
+      ],
+      "platform_cases": [
+        {
+          "case_id": "ios_webview_domain_configuration",
+          "preconditions": "UNEXECUTED",
+          "actions": "UNEXECUTED",
+          "expected_outcome": "UNEXECUTED",
+          "cleanup": "UNEXECUTED",
+          "status": "UNEXECUTED",
+          "evidence": {
+            "safe_reference": "UNEXECUTED",
+            "observed_result": "UNEXECUTED",
+            "network_trace_reference": "UNEXECUTED",
+            "artifact_identity_checksum": "UNEXECUTED",
+            "redaction_notes": "UNEXECUTED"
+          }
+        }
+      ]
     },
-    "references": {
-        "spike_runbook": "docs/mobile/auth-session-device-spike.md",
-        "adr_template": "docs/mobile/auth-session-transport-adr-template.md",
-        "release_readiness": "docs/mobile/release-readiness.md"
+    {
+      "platform": "android",
+      "metadata": {
+        "device_type": "UNEXECUTED",
+        "is_simulator": "UNEXECUTED",
+        "is_emulator": "UNEXECUTED",
+        "commit_or_tag": "UNEXECUTED",
+        "app_version_build": "UNEXECUTED",
+        "device_model": "UNEXECUTED",
+        "os_version": "UNEXECUTED",
+        "tooling": "UNEXECUTED",
+        "staging_environment": "UNEXECUTED",
+        "test_date_time": "UNEXECUTED",
+        "tester_owner": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED"
+      },
+      "contexts": [
+        {
+          "context_id": "member",
+          "cases": [
+            {
+              "case_id": "member_login",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "access_token_expiry_refresh_rotation",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "background_resume",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "force_kill_relaunch",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "logout",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "account_deletion",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+          "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "email_verification_return",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "password_reset_return",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "trip_rest_read",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "trip_write",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "sse_streaming_genuine_without_global_native_http_patch",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "offline_loss_reconnect_each_session_boundary",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              },
+              "session_boundaries": [
+                {
+                  "boundary": "member_login",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "access_token_expiry_refresh_rotation",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "background_resume",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "force_kill_relaunch",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "logout",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "account_deletion",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "email_verification_return",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "password_reset_return",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "trip_rest_read",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "trip_write",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "sse_streaming_genuine_without_global_native_http_patch",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                }
+              ]
+            }
+          ],
+          "credential_lifecycle": [
+            {
+              "stage_id": "issued",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "stage_id": "stored",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "stage_id": "attached",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "stage_id": "rotated",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "stage_id": "revoked",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            }
+          ]
+        },
+        {
+          "context_id": "guest",
+          "cases": [
+            {
+              "case_id": "guest_acceptance",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "background_resume",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "force_kill_relaunch",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "guest_relaunch",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "trip_rest_read",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "trip_write",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "sse_streaming_genuine_without_global_native_http_patch",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "guest_claim",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "guest_expiry",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "guest_revocation",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "case_id": "offline_loss_reconnect_each_session_boundary",
+              "preconditions": "UNEXECUTED",
+              "actions": "UNEXECUTED",
+              "expected_outcome": "UNEXECUTED",
+              "cleanup": "UNEXECUTED",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              },
+              "session_boundaries": [
+                {
+                  "boundary": "guest_acceptance",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "background_resume",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "force_kill_relaunch",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "guest_relaunch",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "trip_rest_read",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "trip_write",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "sse_streaming_genuine_without_global_native_http_patch",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "guest_claim",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "guest_expiry",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                },
+                {
+                  "boundary": "guest_revocation",
+                  "status": "UNEXECUTED",
+                  "evidence": {
+                    "safe_reference": "UNEXECUTED",
+                    "observed_result": "UNEXECUTED",
+                    "network_trace_reference": "UNEXECUTED",
+                    "artifact_identity_checksum": "UNEXECUTED",
+                    "redaction_notes": "UNEXECUTED"
+                  }
+                }
+              ]
+            }
+          ],
+          "credential_lifecycle": [
+            {
+              "stage_id": "issued",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "stage_id": "stored",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "stage_id": "attached",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "stage_id": "claimed",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            },
+            {
+              "stage_id": "revoked",
+              "status": "UNEXECUTED",
+              "evidence": {
+                "safe_reference": "UNEXECUTED",
+                "observed_result": "UNEXECUTED",
+                "network_trace_reference": "UNEXECUTED",
+                "artifact_identity_checksum": "UNEXECUTED",
+                "redaction_notes": "UNEXECUTED"
+              }
+            }
+          ]
+        }
+      ],
+      "platform_cases": [
+        {
+          "case_id": "android_third_party_cookie_behavior",
+          "preconditions": "UNEXECUTED",
+          "actions": "UNEXECUTED",
+          "expected_outcome": "UNEXECUTED",
+          "cleanup": "UNEXECUTED",
+          "status": "UNEXECUTED",
+          "evidence": {
+            "safe_reference": "UNEXECUTED",
+            "observed_result": "UNEXECUTED",
+            "network_trace_reference": "UNEXECUTED",
+            "artifact_identity_checksum": "UNEXECUTED",
+            "redaction_notes": "UNEXECUTED"
+          }
+        }
+      ]
     }
+  ],
+  "redaction_policy": {
+    "raw_capture_policy": "External restricted artifacts only; never commit raw captures, credentials, cookies, tokens, JWTs, Bearer values, or query secrets.",
+    "safe_reference_policy": "Evidence uses redaction-safe external references and sha256 checksums only."
+  },
+  "adr_contract": {
+    "allowed_outcomes": [
+      "cookie_only_proven",
+      "native_credential_transport"
+    ],
+    "forbidden_fallbacks": [
+      "endpoint_only_fallback",
+      "web_storage_refresh_or_guest_token_workaround"
+    ]
+  },
+  "references": {
+    "spike": "docs/mobile/auth-session-device-spike.md",
+    "adr": "docs/mobile/auth-session-transport-adr-template.md"
+  }
 }
