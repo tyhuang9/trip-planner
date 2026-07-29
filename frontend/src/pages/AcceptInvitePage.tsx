@@ -23,7 +23,7 @@ export default function AcceptInvitePage() {
       const accepted = await acceptMutation.mutateAsync(token)
       navigate(`/trips/${encodeURIComponent(accepted.publicId)}`, { replace: true })
     } catch {
-      // React Query owns the visible error state.
+      // The share mutation hook owns the visible error state.
     }
   }
 
