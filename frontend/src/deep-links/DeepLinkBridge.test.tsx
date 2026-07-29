@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DeepLinkBridge } from './DeepLinkBridge'
@@ -39,7 +39,7 @@ describe('DeepLinkBridge', () => {
 
   it('drains a warm notification after the bridge is already ready', async () => {
     render(<MemoryRouter><DeepLinkBridge /><LocationLog /></MemoryRouter>)
-    enqueueDeepLink({ kind: 'trip', publicId: 'warm123' })
+    act(() => enqueueDeepLink({ kind: 'trip', publicId: 'warm123' }))
     await waitFor(() => expect(screen.getByTestId('paths')).toHaveTextContent('/,/trips/warm123'))
   })
 })
