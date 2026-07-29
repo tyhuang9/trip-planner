@@ -1344,10 +1344,10 @@ describe('<TripMap>', () => {
     })
   })
 
-  it('bounds destination geocode stale timers to 24 days', async () => {
+  it('schedules the destination geocode stale timer at exactly 24 days', async () => {
     const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
-    const maxStaleTimerMs = 24 * 24 * 60 * 60 * 1000
-    const oldStaleTimerMs = 30 * 24 * 60 * 60 * 1000
+    const expectedStaleTimerMs = 24 * 24 * 60 * 60 * 1000
+    const legacyStaleTimerMs = 30 * 24 * 60 * 60 * 1000 + 1
 
     try {
       geocodeMock.geocodeDestination.mockResolvedValueOnce({
@@ -1360,15 +1360,13 @@ describe('<TripMap>', () => {
 
       await screen.findByRole('img', { name: /destination: tokyo, japan/i })
 
-      const longDelays = setTimeoutSpy.mock.calls
+      const scheduledDelays = setTimeoutSpy.mock.calls
         .map(([, delay]) => delay)
-        .filter((delay): delay is number => (
-          typeof delay === 'number' && delay > 24 * 60 * 60 * 1000
-        ))
+        .filter((delay): delay is number => typeof delay === 'number')
 
-      expect(longDelays.length).toBeGreaterThan(0)
-      expect(longDelays.every((delay) => delay <= maxStaleTimerMs)).toBe(true)
-      expect(longDelays).not.toContain(oldStaleTimerMs)
+      expect(scheduledDelays).toContain(expectedStaleTimerMs)
+      expect(Math.max(...scheduledDelays)).toBe(expectedStaleTimerMs)
+      expect(scheduledDelays).not.toContain(legacyStaleTimerMs)
     } finally {
       setTimeoutSpy.mockRestore()
     }
