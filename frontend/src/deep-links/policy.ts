@@ -17,6 +17,14 @@ function hasUnsafeEncoding(value: string): boolean {
   return /%(?:2f|5c|2e|00|0a|0d)/i.test(value) || value.includes('\\')
 }
 
+function hasControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code <= 0x1f || code === 0x7f) return true
+  }
+  return false
+}
+
 function safeSecret(value: string | undefined): value is string {
   if (!value) return false
   return value.length <= MAX_SECRET_LENGTH && SAFE_SECRET.test(value)
@@ -66,7 +74,7 @@ export function parseDeepLink(rawUrl: string): DeepLink | null {
     rawUrl.includes('#') ||
     rawUrl.endsWith('?') ||
     rawUrl !== rawUrl.trim() ||
-    /[\u0000-\u001f\u007f]/.test(rawUrl) ||
+    hasControlCharacter(rawUrl) ||
     !/^https:\/\/dupert\.vercel\.app(?:\/|\?|$)/.test(rawUrl) ||
     /\/(?:\.\.?)(?:\/|$)/.test(rawPath) ||
     hasUnsafeEncoding(rawPath)

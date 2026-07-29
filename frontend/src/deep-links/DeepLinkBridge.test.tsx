@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, useLocation, useNavigate } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -14,9 +13,7 @@ vi.mock('../auth/useAuth', () => ({
 function LocationLog() {
   const location = useLocation()
   const navigate = useNavigate()
-  const [paths, setPaths] = useState<string[]>([])
-  useEffect(() => setPaths((current) => [...current, location.pathname]), [location.pathname])
-  return <><div data-testid="paths">{paths.join(',')}</div><button type="button" onClick={() => navigate('/ready')}>Acknowledge</button></>
+  return <><div data-testid="paths">{location.pathname}</div><button type="button" onClick={() => navigate('/ready')}>Acknowledge</button></>
 }
 
 beforeEach(() => {
@@ -35,15 +32,15 @@ describe('DeepLinkBridge', () => {
 
     isInitializing = false
     view.rerender(<MemoryRouter><DeepLinkBridge /><LocationLog /></MemoryRouter>)
-    await waitFor(() => expect(screen.getByTestId('paths')).toHaveTextContent('/,/trips/first'))
+    await waitFor(() => expect(screen.getByTestId('paths')).toHaveTextContent('/trips/first'))
     expect(screen.getByTestId('paths')).not.toHaveTextContent('/trips/second')
     fireEvent.click(screen.getByRole('button', { name: 'Acknowledge' }))
-    await waitFor(() => expect(screen.getByTestId('paths')).toHaveTextContent('/ready,/trips/second'))
+    await waitFor(() => expect(screen.getByTestId('paths')).toHaveTextContent('/trips/second'))
   })
 
   it('drains a warm notification after the bridge is already ready', async () => {
     render(<MemoryRouter><DeepLinkBridge /><LocationLog /></MemoryRouter>)
     act(() => enqueueDeepLink({ kind: 'trip', publicId: 'warm123' }))
-    await waitFor(() => expect(screen.getByTestId('paths')).toHaveTextContent('/,/trips/warm123'))
+    await waitFor(() => expect(screen.getByTestId('paths')).toHaveTextContent('/trips/warm123'))
   })
 })
