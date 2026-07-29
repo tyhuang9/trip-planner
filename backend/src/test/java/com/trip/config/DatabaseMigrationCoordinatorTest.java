@@ -11,16 +11,23 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import javax.sql.DataSource;
 
+import com.zaxxer.hikari.HikariDataSource;
+import com.zaxxer.hikari.HikariPoolMXBean;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.Mockito;
+import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -130,6 +137,49 @@ class DatabaseMigrationCoordinatorTest {
         calls.verify(connection).close();
         calls.verify(flyway).migrate();
         assertThat(coordinator.health().getStatus().getCode()).isEqualTo("UP");
+    }
+
+    @Test
+    @Timeout(5)
+    void returnsDownWithinHealthBudgetWhenHikariPoolIsSaturated() throws Exception {
+        DataSource physicalDataSource = mock(DataSource.class);
+        Connection physicalConnection = mock(Connection.class);
+        when(physicalConnection.isValid(Mockito.anyInt())).thenReturn(true);
+        when(physicalDataSource.getConnection()).thenReturn(physicalConnection);
+
+        try (HikariDataSource pool = new HikariDataSource()) {
+            pool.setDataSource(physicalDataSource);
+            pool.setMaximumPoolSize(1);
+            pool.setMinimumIdle(0);
+            pool.setConnectionTimeout(500L);
+            pool.setValidationTimeout(250L);
+            coordinator = new DatabaseMigrationCoordinator(
+                pool, mock(Flyway.class), Duration.ofSeconds(1));
+
+            coordinator.refresh();
+            assertThat(coordinator.health().getStatus().getCode()).isEqualTo("UP");
+
+            HikariPoolMXBean poolMetrics = pool.getHikariPoolMXBean();
+            try (Connection heldConnection = pool.getConnection()) {
+                assertThat(poolMetrics.getActiveConnections()).isEqualTo(1);
+                assertThat(poolMetrics.getIdleConnections()).isZero();
+                assertThat(poolMetrics.getTotalConnections()).isEqualTo(1);
+
+                ExecutorService healthExecutor = Executors.newSingleThreadExecutor();
+                try {
+                    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+                    Future<Health> health = healthExecutor.submit(coordinator::health);
+
+                    awaitConnectionWaiter(poolMetrics, health, deadline);
+                    Health result = health.get(remainingNanos(deadline), TimeUnit.NANOSECONDS);
+
+                    assertThat(result.getStatus().getCode()).isEqualTo("DOWN");
+                    awaitNoConnectionWaiters(poolMetrics, deadline);
+                } finally {
+                    healthExecutor.shutdownNow();
+                }
+            }
+        }
     }
 
     @Test
@@ -264,5 +314,28 @@ class DatabaseMigrationCoordinatorTest {
             Thread.sleep(10L);
         }
         assertThat(output.getAll()).contains(value);
+    }
+
+    private static void awaitConnectionWaiter(HikariPoolMXBean poolMetrics,
+                                              Future<?> health,
+                                              long deadline) throws InterruptedException {
+        while (poolMetrics.getThreadsAwaitingConnection() != 1 && System.nanoTime() < deadline) {
+            assertThat(health).as("health check completed before waiting for a pooled connection")
+                .isNotDone();
+            Thread.sleep(5L);
+        }
+        assertThat(poolMetrics.getThreadsAwaitingConnection()).isEqualTo(1);
+    }
+
+    private static void awaitNoConnectionWaiters(HikariPoolMXBean poolMetrics, long deadline)
+            throws InterruptedException {
+        while (poolMetrics.getThreadsAwaitingConnection() != 0 && System.nanoTime() < deadline) {
+            Thread.sleep(5L);
+        }
+        assertThat(poolMetrics.getThreadsAwaitingConnection()).isZero();
+    }
+
+    private static long remainingNanos(long deadline) {
+        return Math.max(1L, deadline - System.nanoTime());
     }
 }
