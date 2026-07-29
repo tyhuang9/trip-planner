@@ -69,7 +69,7 @@ a real macOS builder produces reproducible evidence.
 | Authentication and guest sessions | BLOCKED | Unassigned | Depends on issue #64 physical-device ADR and smoke evidence |
 | Maps | BLOCKED | Unassigned | Depends on issue #66 renderer ADR and restricted-key evidence |
 | Universal/App Links | BLOCKED | Unassigned | Depends on issue #67 owned-host association files and signed fingerprints |
-| Privacy and store metadata | BLOCKED | Unassigned | Privacy audit, declarations, policy/support URLs, disclosures, review data, and screenshots are not recorded |
+| Privacy and store metadata | BLOCKED | Unassigned | App-owned manifest source contract passes, but Xcode archive privacy report + App Store Connect reconciliation, vendor manifests, disclosures, review data, and screenshots are not recorded |
 | Device install smoke | BLOCKED | Unassigned | No signed iOS and Android installs or member/guest staging smoke evidence recorded |
 | Backward compatibility and rollback | BLOCKED | Unassigned | Previous-version compatibility and rollback drill are not recorded |
 | Monitoring and ownership | BLOCKED | Unassigned | Release owners, monitoring links, escalation path, and go/no-go approver are not assigned |
