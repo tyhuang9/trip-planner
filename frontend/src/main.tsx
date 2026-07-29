@@ -11,6 +11,7 @@ import { ColorModeProvider } from './theme/ColorModeProvider.tsx'
 import { applyColorMode, readStoredColorMode } from './theme/colorMode.ts'
 import { markPerformance } from './performance/timing.ts'
 import { PlatformIntegrations } from '@dupert/platform-integrations'
+import { OutageBoundary } from './outage/OutageBoundary.tsx'
 
 applyColorMode(readStoredColorMode())
 markPerformance('app-mounted')
@@ -19,11 +20,13 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ColorModeProvider>
       <QueryClientProvider client={queryClient}>
-        <PlatformIntegrations>
-          <AuthProvider>
-            <App />
-          </AuthProvider>
-        </PlatformIntegrations>
+        <OutageBoundary>
+          <PlatformIntegrations>
+            <AuthProvider>
+              <App />
+            </AuthProvider>
+          </PlatformIntegrations>
+        </OutageBoundary>
       </QueryClientProvider>
     </ColorModeProvider>
   </StrictMode>,

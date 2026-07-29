@@ -22,7 +22,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.context.event.EventListener;
 
+import com.trip.config.DatabaseReadyEvent;
 import com.trip.domain.User;
 import com.trip.repo.UserRepository;
 import com.trip.web.exception.ValidationException;
@@ -116,6 +118,21 @@ class LocalDevUserServiceTest {
                 "admin@test.local");
         assertThat(existingAdmin.getDisplayName()).isEqualTo("Admin User");
         assertThat(existingAdmin.isEmailVerified()).isTrue();
+    }
+
+    @Test
+    void readyEventSeedsDefaultsOnceWithoutReturningAnEventPayload() throws Exception {
+        when(passwordEncoder.encode(LocalDevUserService.DEFAULT_PASSWORD)).thenReturn("hashed-password");
+        when(userRepository.findByEmailIgnoreCase(any())).thenReturn(Optional.empty());
+        when(userRepository.findByEmailEndingWithIgnoreCaseOrderByEmail("@test.local")).thenReturn(List.of());
+
+        service.seedWhenDatabaseReady(new DatabaseReadyEvent(this));
+
+        verify(userRepository, org.mockito.Mockito.times(4)).save(any(User.class));
+        var listener = LocalDevUserService.class.getMethod(
+            "seedWhenDatabaseReady", DatabaseReadyEvent.class);
+        assertThat(listener.getReturnType()).isEqualTo(void.class);
+        assertThat(listener.isAnnotationPresent(EventListener.class)).isTrue();
     }
 
     private static User userWith(long id, String email, String displayName) {

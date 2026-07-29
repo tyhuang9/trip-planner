@@ -3,6 +3,7 @@ import MockAdapter from 'axios-mock-adapter'
 import axios from 'axios'
 import {
   __resetRefreshSingletonForTests,
+  API_REQUEST_TIMEOUT_MS,
   apiClient,
   AuthCoordinationUnavailableError,
   AuthResolutionPendingError,
@@ -70,6 +71,11 @@ describe('apiClient request interceptor', () => {
 
   it('sends cookies with apiClient requests', () => {
     expect(apiClient.defaults.withCredentials).toBe(true)
+  })
+
+  it('uses a bounded timeout that still allows a cold backend start', () => {
+    expect(API_REQUEST_TIMEOUT_MS).toBe(60_000)
+    expect(apiClient.defaults.timeout).toBe(API_REQUEST_TIMEOUT_MS)
   })
 
   it('attaches Authorization header when a token is present', async () => {
@@ -490,6 +496,7 @@ describe('refreshSession cross-tab coordination', () => {
     expect(refreshMock.history.post[0].headers?.[AUTH_COOKIE_ACTION_HEADER]).toBe(
       AUTH_COOKIE_ACTION_VALUE,
     )
+    expect(refreshMock.history.post[0].timeout).toBe(API_REQUEST_TIMEOUT_MS)
     expect(first.accessToken).toBe('coalesced-tok')
     expect(second.accessToken).toBe('coalesced-tok')
   })

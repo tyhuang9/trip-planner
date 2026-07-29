@@ -1,5 +1,5 @@
 import { useCallback, useContext, useState } from 'react'
-import { Outlet, useLocation, useParams, useSearchParams } from 'react-router-dom'
+import { Outlet, useLocation, useParams, useSearchParams } from 'react-router'
 import { AuthContext } from '../auth/authContextValue'
 import { AuthBootstrapShell } from '../auth/AuthBootstrapShell'
 import { useIsAuthenticated } from '../auth/authStore'

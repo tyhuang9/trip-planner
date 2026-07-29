@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router'
 import { parseApiError } from '../api/errors'
 import { useAcceptGuestShareLink } from '../hooks/useShareLinks'
 import { usePageTitle } from '../utils/usePageTitle'

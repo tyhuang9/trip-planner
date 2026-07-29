@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, Navigate } from 'react-router-dom'
+import { Link, Navigate } from 'react-router'
 import { bootstrapGuestSession } from '../api/guestSession'
 import { AuthBootstrapShell } from '../auth/AuthBootstrapShell'
 import { useAuth } from '../auth/useAuth'

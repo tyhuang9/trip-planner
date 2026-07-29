@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -84,9 +85,9 @@ class SmokeTest {
     ShareLinkRepository shareLinkRepository;
 
     @Test
-    void healthEndpointReturns200() throws Exception {
+    void rootHealthReflectsDatabaseReadiness() throws Exception {
         mvc.perform(get("/actuator/health"))
-            .andExpect(status().isOk())
+            .andExpect(status().isServiceUnavailable())
             .andExpect(jsonPath("$.status").exists());
     }
 
@@ -103,9 +104,55 @@ class SmokeTest {
 
         assertThat(liveness).isNotNull();
         assertThat(liveness.isMember("livenessState")).isTrue();
-        assertThat(liveness.isMember("db")).isFalse();
+        assertThat(liveness.isMember("database")).isFalse();
         assertThat(liveness.isMember("googleMaps")).isFalse();
         assertThat(liveness.isMember("brevo")).isFalse();
+    }
+
+    @Test
+    void databaseHealthGroupContainsOnlyTheDatabaseIndicator() {
+        HealthEndpointGroup database = healthEndpointGroups.get("database");
+
+        assertThat(database).isNotNull();
+        assertThat(database.isMember("database")).isTrue();
+        assertThat(database.isMember("livenessState")).isFalse();
+        assertThat(database.isMember("googleMaps")).isFalse();
+        assertThat(database.isMember("brevo")).isFalse();
+    }
+
+    @Test
+    void databaseHealthEndpointIsPublicAndSanitized() throws Exception {
+        mvc.perform(get("/actuator/health/database"))
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.status").exists())
+            .andExpect(jsonPath("$.components").doesNotExist());
+    }
+
+    @Test
+    void databaseHealthHeadRequestsShareTheLimiterWhileLivenessHeadRemainsAvailable() throws Exception {
+        for (int i = 0; i < 30; i++) {
+            mvc.perform(head("/actuator/health/database")
+                    .with(request -> {
+                        request.setRemoteAddr("198.51.100.72");
+                        return request;
+                    }))
+                .andExpect(status().isServiceUnavailable());
+        }
+
+        mvc.perform(head("/actuator/health/database/database")
+                .with(request -> {
+                    request.setRemoteAddr("198.51.100.72");
+                    return request;
+                }))
+            .andExpect(status().isTooManyRequests())
+            .andExpect(header().exists("Retry-After"));
+
+        mvc.perform(head("/actuator/health/liveness")
+                .with(request -> {
+                    request.setRemoteAddr("198.51.100.72");
+                    return request;
+                }))
+            .andExpect(status().isOk());
     }
 
     @Test
@@ -177,6 +224,17 @@ class SmokeTest {
             .andExpect(status().isOk())
             .andExpect(header().string("Access-Control-Allow-Origin",
                 equalTo("http://0.0.0.0:3000")));
+    }
+
+    @Test
+    void healthProbeCorsUsesTheExactConfiguredOrigin() throws Exception {
+        mvc.perform(options("/actuator/health/liveness")
+                .header("Origin", "http://localhost:3000")
+                .header("Access-Control-Request-Method", "GET"))
+            .andExpect(status().isOk())
+            .andExpect(header().string("Access-Control-Allow-Origin",
+                equalTo("http://localhost:3000")))
+            .andExpect(header().doesNotExist("Access-Control-Allow-Credentials"));
     }
 
     @Test

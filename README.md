@@ -145,6 +145,8 @@ export JAVA_HOME="<path-to-your-jdk-21>"
 ```
 
 Flyway will run all migrations against the database selected by `DATABASE_URL` on first boot.
+The backend starts even while Neon is unavailable. It runs Flyway asynchronously once
+database connectivity returns; local demo users are then seeded after that migration.
 
 ## Frontend/backend connection
 
@@ -257,8 +259,8 @@ dupert/
 | `DATABASE_URL` | backend | Local Postgres by default; Neon or any PostgreSQL URL when intentionally overridden |
 | `DB_POOL_MAX_SIZE` | backend | Hikari maximum connections for one backend instance; default `4` |
 | `DB_POOL_MIN_IDLE` | backend | Hikari minimum idle connections; default `0` so Neon can sleep |
-| `DB_CONNECTION_TIMEOUT_MS` | backend | Hikari acquisition timeout; default `10000` ms |
-| `DB_VALIDATION_TIMEOUT_MS` | backend | Hikari validation timeout; default `3000` ms |
+| Database health timeout | backend | Hikari acquisition is fixed at `3000` ms and validation at `1000` ms so database health remains bounded |
+| `DB_CHECK_INTERVAL_MS` | backend | Delay between asynchronous database/migration retries while the database is down; default `5000` ms |
 | `SPRING_PROFILES_ACTIVE` | backend | Use `local` for local development and `prod` on Render |
 | `JWT_SECRET` | backend | 32 random bytes (hex) for signing access tokens |
 | `LOG_EMAIL_PEPPER` | backend | 16 random bytes (hex) for hashing emails in logs |
@@ -298,8 +300,7 @@ APP_PUBLIC_FRONTEND_URL=https://dupert.vercel.app
 SIGNUP_ENABLED=false
 DB_POOL_MAX_SIZE=4
 DB_POOL_MIN_IDLE=0
-DB_CONNECTION_TIMEOUT_MS=10000
-DB_VALIDATION_TIMEOUT_MS=3000
+DB_CHECK_INTERVAL_MS=5000
 ```
 
 `SPRING_PROFILES_ACTIVE=prod` loads `application-prod.yml`, which sets secure cookies, `SameSite=None`, and HSTS. Keep `APP_COOKIES_SECURE=true`, `APP_COOKIES_SAME_SITE=None` for split-origin deployments, and `SECURE_HSTS_ENABLED=true` explicit on Render as a deployment guard against missing or overridden profile config.
@@ -336,7 +337,15 @@ Use the public liveness endpoint for process monitoring and keep-warm requests:
 GET https://<backend-origin>/actuator/health/liveness
 ```
 
-The endpoint returns HTTP `200` with `{"status":"UP"}` when the application process is alive. Its health group explicitly contains only Spring's `livenessState`; it does not query Neon or depend on Google Maps, Brevo, or future external-provider health indicators. It is intentionally not a readiness or end-to-end availability check. Use `/actuator/health` or a separate authenticated smoke test when dependency health or user-visible behavior must be monitored.
+The endpoint returns HTTP `200` with `{"status":"UP"}` when the application process is alive. Its health group explicitly contains only Spring's `livenessState`; it does not query Neon or depend on Google Maps, Brevo, or future external-provider health indicators. It is intentionally not a readiness or end-to-end availability check.
+
+The browser outage boundary also reads the public, sanitized database group:
+
+```text
+GET https://<backend-origin>/actuator/health/database
+```
+
+It returns only an overall status from the migration-aware `database` indicator. It is `503` until the service can connect and Flyway completes; after that, each health read performs a bounded connectivity check (three seconds by default) and flips back to `503` if Neon is lost. Background retries and migrations run only while this state is down, so a healthy service does not poll Neon. A `503` database response is meaningful only after liveness is `UP`; arbitrary API `5xx` responses never identify a Neon outage. Browser CORS accepts the public health paths only from exact `ALLOWED_ORIGINS` values and does not allow credentials, but CORS does not restrict non-browser clients. To protect the database check itself, database-bearing health reads (`GET` and `HEAD`) share a limit of 30 requests per minute per resolved client IP: `/actuator/health` and the `/actuator/health/database` group and its descendants. Exhaustion returns `429` with `Retry-After`. Liveness reads and health preflights are not included in that bucket.
 
 Any external keep-warm monitor must use this contract:
 
@@ -392,7 +401,7 @@ If password reset or verification emails are not arriving in `dev`/`prod`, verif
 - Responses larger than 2 KB are compressed for JSON and text content. SSE uses
   `text/event-stream`, which is deliberately excluded so events are not buffered.
 - Production registration creates an unverified user, sends one Brevo verification email, and withholds auth tokens until verification. The local profile creates verified users immediately and sends no email.
-- Public auth/share endpoints are rate limited in memory. This is fine for a small deployment, but limits reset on backend restart and are weaker against distributed abuse.
+- Public auth/share endpoints and the database health probe are rate limited in memory. This is fine for a small deployment, but limits reset on backend restart and are weaker against distributed abuse.
 - `/api/dev/**` endpoints are registered only under `SPRING_PROFILES_ACTIVE=local` and operate only on `@test.local` accounts.
 - Share links store only a SHA-256 hash of the raw token and can be revoked by the trip owner.
 - Anonymous guest writes require the guest cookie plus the `X-Dupert-Guest-Write: 1` header, and guest/share endpoints are rate limited.

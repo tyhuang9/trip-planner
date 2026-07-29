@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react'
-import { BrowserRouter, Link, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Link, Route, Routes } from 'react-router'
 import './App.css'
 import { RequireAuth } from './auth/RequireAuth'
 import { SkipLink } from './components/SkipLink'
