@@ -475,13 +475,15 @@ describe('<AuthProvider> silent refresh on mount', () => {
     )
     await waitFor(() => expect(apiMock.history.post).toHaveLength(1))
 
-    localStorage.removeItem(PENDING_LOGOUT_STORAGE_KEY)
-    window.dispatchEvent(
-      new StorageEvent('storage', {
-        key: PENDING_LOGOUT_STORAGE_KEY,
-        newValue: null,
-      }),
-    )
+    act(() => {
+      localStorage.removeItem(PENDING_LOGOUT_STORAGE_KEY)
+      window.dispatchEvent(
+        new StorageEvent('storage', {
+          key: PENDING_LOGOUT_STORAGE_KEY,
+          newValue: null,
+        }),
+      )
+    })
 
     await waitFor(() => {
       expect(screen.getByTestId('status').textContent).toBe('unauthenticated')
