@@ -266,6 +266,18 @@ test('rejects duplicate Xcode sections and duplicate App or Resources objects', 
       '\t\t504EC3031FED79650016851F /* App */ = {\n\t\t\tisa = PBXNativeTarget;\n\t\t};\n/* End PBXNativeTarget section */',
     )
   }, /App target/)
+  expectRejected((candidate) => {
+    candidate.project = candidate.project.replace(
+      '/* End PBXResourcesBuildPhase section */',
+      '\t\t504EC3021FED79650016851F /* Decoy */ = {\n\t\t\tisa = PBXResourcesBuildPhase;\n\t\t};\n/* End PBXResourcesBuildPhase section */',
+    )
+  }, /canonical occurrences/)
+  expectRejected((candidate) => {
+    candidate.project = candidate.project.replace(
+      '/* End PBXNativeTarget section */',
+      '\t\t504EC3031FED79650016851F /* Decoy */ = {\n\t\t\tisa = PBXNativeTarget;\n\t\t};\n/* End PBXNativeTarget section */',
+    )
+  }, /canonical occurrences/)
 })
 
 test('allows unrelated Xcode resource phases and native targets', () => {
@@ -326,6 +338,13 @@ test('rejects duplicate or contradictory privacy ledger rows and blocks', () => 
   expectRejected((candidate) => {
     const privacyRow = candidate.releaseDocument.split('\n').find((line) => line.startsWith('| Privacy and store metadata |'))
     candidate.releaseDocument = `${privacyRow}\n${candidate.releaseDocument.replace(privacyRow, '| Privacy and store metadata | PASS | Owner | Decoy |')}`
+  }, /exactly one canonical BLOCKED/)
+  expectRejected((candidate) => {
+    const privacyRow = candidate.releaseDocument.split('\n').find((line) => line.startsWith('| Privacy and store metadata |'))
+    candidate.releaseDocument = candidate.releaseDocument.replace(privacyRow, `<!--\n${privacyRow}\n-->`)
+  }, /exactly one canonical BLOCKED/)
+  expectRejected((candidate) => {
+    candidate.releaseDocument += '\nPrivacy and store metadata is READY.\n'
   }, /exactly one canonical BLOCKED/)
 })
 

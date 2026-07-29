@@ -8,6 +8,8 @@ const INVENTORY_PATH = 'docs/mobile/ios-privacy-manifest-inventory.md'
 const PROJECT_PATH = 'frontend/ios/App/App.xcodeproj/project.pbxproj'
 const FILE_REF = '7B31F0F7A1B2C3D4E5F60708'
 const BUILD_FILE = '7B31F0F8A1B2C3D4E5F60708'
+const RESOURCES_PHASE = '504EC3021FED79650016851F'
+const APP_TARGET = '504EC3031FED79650016851F'
 const PRIVACY_GATE_ROW = '| Privacy and store metadata | BLOCKED | Unassigned | App-owned manifest source contract passes, but Xcode archive privacy report + App Store Connect reconciliation, vendor manifests, disclosures, review data, and screenshots are not recorded |'
 const XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8"?>'
 const PLIST_DOCTYPE = '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
@@ -149,6 +151,11 @@ function inspectXcodeProject(project, violations) {
     || count(project, new RegExp(FILE_REF, 'g')) !== 3) {
     violations.push('Xcode privacy manifest object IDs must have only their canonical references')
   }
+  // Resources: definition + App buildPhases. App: definition + TargetAttributes + targets.
+  if (count(project, new RegExp(RESOURCES_PHASE, 'g')) !== 2
+    || count(project, new RegExp(APP_TARGET, 'g')) !== 3) {
+    violations.push('Xcode App target and Resources phase IDs must have only their canonical occurrences')
+  }
 
   const buildSection = projectSection(project, 'PBXBuildFile', violations)
   const fileSection = projectSection(project, 'PBXFileReference', violations)
@@ -207,11 +214,19 @@ function inspectDocumentation(inventory, releaseDocument, violations) {
     violations.push('privacy inventory must not claim release or approval status')
   }
   const gateBlocks = [...releaseDocument.matchAll(/<!-- mobile-release-gates:start -->([\s\S]*?)<!-- mobile-release-gates:end -->/g)]
-  const privacyRows = releaseDocument.split('\n').map((line) => line.trim()).filter((line) => line.startsWith('| Privacy and store metadata |'))
+  const gateBlock = gateBlocks.length === 1 ? gateBlocks[0][1] : ''
+  const visibleGateBlock = gateBlock.replace(/<!--[\s\S]*?-->/g, '')
+  const visibleReleaseDocument = releaseDocument.replace(/<!--[\s\S]*?-->/g, '')
+  const privacyRows = visibleReleaseDocument.split('\n').map((line) => line.trim()).filter((line) => line.startsWith('| Privacy and store metadata |'))
+  const gatePrivacyRows = visibleGateBlock.split('\n').map((line) => line.trim()).filter((line) => line.startsWith('| Privacy and store metadata |'))
+  const contradictoryClaims = visibleReleaseDocument.split('\n').filter((line) =>
+    /(?:\bprivacy\b|store metadata)/i.test(line) && /\b(?:PASS|GO|CLEARED|READY|APPROVED)\b/i.test(line))
   if (count(releaseDocument, /<!-- mobile-release-gates:start -->/g) !== 1
     || count(releaseDocument, /<!-- mobile-release-gates:end -->/g) !== 1
     || gateBlocks.length !== 1 || privacyRows.length !== 1
-    || privacyRows[0] !== PRIVACY_GATE_ROW || !gateBlocks[0][1].includes(PRIVACY_GATE_ROW)) {
+    || /<!--|-->/.test(gateBlock) || contradictoryClaims.length > 0
+    || privacyRows[0] !== PRIVACY_GATE_ROW
+    || gatePrivacyRows.length !== 1 || gatePrivacyRows[0] !== PRIVACY_GATE_ROW) {
     violations.push('release readiness must contain exactly one canonical BLOCKED privacy and store gate')
   }
 }
