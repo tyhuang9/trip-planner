@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
-import { StrictMode } from 'react'
+import { StrictMode, useEffect } from 'react'
 import userEvent from '@testing-library/user-event'
+import MockAdapter from 'axios-mock-adapter'
+import axios from 'axios'
 import { OutageBoundary } from './OutageBoundary'
 import { __resetOutageMonitorForTests, reportAmbiguousBackendFailure } from './outageMonitor'
+import { AuthProvider } from '../auth/AuthContext'
+import { __resetRefreshSingletonForTests } from '../api/client'
+
+let refreshMock: MockAdapter | null = null
 
 function app() {
   return (
@@ -13,23 +19,78 @@ function app() {
   )
 }
 
+function AuthMountProbe({ onMount }: { onMount: () => void }) {
+  useEffect(onMount, [onMount])
+  return <span>Authenticated app mounted</span>
+}
+
 afterEach(() => {
   __resetOutageMonitorForTests()
+  __resetRefreshSingletonForTests()
+  refreshMock?.restore()
+  refreshMock = null
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   Reflect.deleteProperty(navigator, 'onLine')
 })
 
 describe('<OutageBoundary>', () => {
-  it('starts one liveness-only probe on mount and passes through healthy content', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
+  it('waits for healthy liveness before mounting auth children or starting refresh', async () => {
+    let resolveLiveness: ((value: Response) => void) | undefined
+    const fetchMock = vi.fn().mockImplementation(() => new Promise<Response>((resolve) => {
+      resolveLiveness = resolve
+    }))
+    const authChildMounted = vi.fn()
+    refreshMock = new MockAdapter(axios)
+    refreshMock.onPost('/api/auth/refresh').reply(401, { error: 'unauthenticated' })
     vi.stubGlobal('fetch', fetchMock)
-    render(app())
+    render(
+      <OutageBoundary>
+        <AuthProvider>
+          <AuthMountProbe onMount={authChildMounted} />
+        </AuthProvider>
+      </OutageBoundary>,
+    )
 
-    expect(await screen.findByText('Trip planner')).toBeInTheDocument()
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('status')).toHaveTextContent(/checking dupert’s route/i)
+    expect(authChildMounted).not.toHaveBeenCalled()
+    expect(refreshMock.history.post).toHaveLength(0)
+
+    resolveLiveness?.(new Response(null, { status: 200 }))
+
+    await waitFor(() => expect(authChildMounted).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(refreshMock?.history.post).toHaveLength(1))
     expect(fetchMock.mock.calls[0][0]).toContain('/actuator/health/liveness')
     expect(fetchMock.mock.calls[0][0]).not.toContain('/actuator/health/database')
+  })
+
+  it('shows the outage card instead of mounting auth children when liveness fails', async () => {
+    let resolveLiveness: ((value: Response) => void) | undefined
+    const fetchMock = vi.fn().mockImplementation(() => new Promise<Response>((resolve) => {
+      resolveLiveness = resolve
+    }))
+    const authChildMounted = vi.fn()
+    refreshMock = new MockAdapter(axios)
+    refreshMock.onPost('/api/auth/refresh').reply(401, { error: 'unauthenticated' })
+    vi.stubGlobal('fetch', fetchMock)
+    render(
+      <OutageBoundary>
+        <AuthProvider>
+          <AuthMountProbe onMount={authChildMounted} />
+        </AuthProvider>
+      </OutageBoundary>,
+    )
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    expect(authChildMounted).not.toHaveBeenCalled()
+    expect(refreshMock.history.post).toHaveLength(0)
+
+    resolveLiveness?.(new Response(null, { status: 503 }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/render app service/i)
+    expect(authChildMounted).not.toHaveBeenCalled()
+    expect(refreshMock.history.post).toHaveLength(0)
   })
 
   it('deduplicates the mount health probe across StrictMode effect replays', async () => {
