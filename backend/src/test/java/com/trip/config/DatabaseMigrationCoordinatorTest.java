@@ -91,7 +91,7 @@ class DatabaseMigrationCoordinatorTest {
     }
 
     @Test
-    void startsWithoutWaitingForABlockedDatabaseCheck() throws Exception {
+    void startsWithoutWaitingForABlockedDatabaseCheck(CapturedOutput output) throws Exception {
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         DataSource dataSource = mock(DataSource.class);
@@ -109,6 +109,7 @@ class DatabaseMigrationCoordinatorTest {
         assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
         assertThat(coordinator.health().getStatus().getCode()).isEqualTo("DOWN");
         release.countDown();
+        awaitOutputContains(output, "event=startup_db_unavailable");
     }
 
     @Test
@@ -254,5 +255,14 @@ class DatabaseMigrationCoordinatorTest {
 
     private static int occurrences(String text, String value) {
         return (text.length() - text.replace(value, "").length()) / value.length();
+    }
+
+    private static void awaitOutputContains(CapturedOutput output, String value)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+        while (!output.getAll().contains(value) && System.nanoTime() < deadline) {
+            Thread.sleep(10L);
+        }
+        assertThat(output.getAll()).contains(value);
     }
 }
