@@ -145,19 +145,21 @@ Maps/app-wall values, then syncs Android only and runs
 `:app:assembleRelease`. It inspects the ephemeral exact
 `app-release-unsigned.apk` with Android Build Tools and the pinned hosted-runner
 NDK: `aapt` checks the application ID, version, and SDK declarations;
-`apksigner` must report the APK unsigned; the packaged `assets/public` bundle
-is checked against the native bundle policy; and `zipalign -c -P 16 -v 4` is
-always run. When an APK packages `lib/**/*.so`, every library is inspected with
-NDK `llvm-objdump -p` and every `LOAD` alignment must be at least `2**14`; when
-no native libraries are packaged, that ELF-specific check is accurately marked
-not applicable.
+archive inspection must find neither v1 signature entries nor an APK Signing
+Block before `apksigner` corroborates the explicit no-signature condition; the
+packaged `assets/public` bundle is checked against the native bundle policy;
+and `zipalign -c -P 16 -v 4` is always run. When an APK packages
+`lib/**/*.so`, every library is inspected with NDK `llvm-objdump -p` and every
+`LOAD` alignment must be at least `2**14`; when no native libraries are
+packaged, that ELF-specific check is accurately marked not applicable.
 
 This is build and static-artifact evidence only. The APK is not uploaded,
 signed, installed, launched on an emulator/device, submitted to Play, or a
 claim of runtime, production, release-readiness, or store compatibility. The
-repository uses Gradle 8.14.3 and Java 21; transitive Gradle dependency
-resolution remains outside this unsigned-artifact check and should be reviewed
-as part of normal dependency maintenance.
+repository uses Gradle 8.14.3 and Java 21, and the wrapper pins Gradle's
+published checksum for the 8.14.3 complete distribution. Transitive Gradle
+dependency verification remains outside this unsigned-artifact check and
+should be reviewed as part of normal dependency maintenance.
 
 ## Deferred native qualification
 

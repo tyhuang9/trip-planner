@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { assertNativeBundlePolicy } from './check-native-bundle-policy.mjs'
 
 const APK_NAME = 'app-release-unsigned.apk'
+const APK_SIGNING_BLOCK_MAGIC = Buffer.from('APK Sig Block 42')
 const MIN_LOAD_ALIGNMENT = 2n ** 14n
 
 function command(runner, executable, args) {
@@ -41,11 +42,12 @@ export function resolveAndroidTools(environment = process.env) {
   if (Number(buildToolsVersion.split('.')[0]) < 35) throw new Error('ANDROID_BUILD_TOOLS_VERSION must be 35 or newer for the 16 KB APK alignment check')
 
   const buildTools = join(androidHome, 'build-tools', buildToolsVersion)
+  const objdump = join(androidHome, 'ndk', ndkVersion, 'toolchains', 'llvm', 'prebuilt', androidHostTag(), 'bin', 'llvm-objdump')
   return {
     aapt: requiredTool(join(buildTools, 'aapt'), 'aapt'),
     apksigner: requiredTool(join(buildTools, 'apksigner'), 'apksigner'),
     zipalign: requiredTool(join(buildTools, 'zipalign'), 'zipalign'),
-    objdump: requiredTool(join(androidHome, 'ndk', ndkVersion, 'toolchains', 'llvm', 'prebuilt', androidHostTag(), 'bin', 'llvm-objdump'), 'NDK llvm-objdump'),
+    objdump: existsSync(objdump) ? objdump : null,
   }
 }
 
@@ -81,23 +83,55 @@ export function assertExpectedBadging(badging) {
   }
 }
 
-function assertZipFile(apkPath) {
+function readZipFile(apkPath) {
   if (basename(apkPath) !== APK_NAME) throw new Error(`APK filename must be exactly ${APK_NAME}`)
   if (!existsSync(apkPath) || !statSync(apkPath).isFile()) throw new Error(`APK does not exist: ${apkPath}`)
   const bytes = readFileSync(apkPath)
   const eocd = Buffer.from([0x50, 0x4b, 0x05, 0x06])
-  if (bytes.length < 22 || bytes.lastIndexOf(eocd) < Math.max(0, bytes.length - 65557)) {
+  const eocdOffset = bytes.lastIndexOf(eocd)
+  if (bytes.length < 22 || eocdOffset < Math.max(0, bytes.length - 65557)
+    || eocdOffset + 22 > bytes.length
+    || eocdOffset + 22 + bytes.readUInt16LE(eocdOffset + 20) !== bytes.length) {
     throw new Error(`APK is not a valid ZIP file: ${apkPath}`)
   }
+  return { bytes, eocdOffset }
 }
 
 function assertUnsigned(runner, tools, apkPath) {
-  const result = runner(tools.apksigner, ['verify', '--verbose', apkPath])
-  if (result.status === 0) throw new Error('APK must be unsigned; apksigner verified a signature')
-  const report = `${result.stdout ?? ''}\n${result.stderr ?? ''}`
-  if (!/(does not verify|not signed|no (jar )?signatures|unsigned)/i.test(report)) {
-    throw new Error('apksigner did not clearly report that the APK is unsigned')
+  let result
+  try {
+    result = runner(tools.apksigner, ['verify', '--verbose', apkPath])
+  } catch {
+    throw new Error('apksigner failed to run while confirming the APK has no signatures')
   }
+  if (!result || typeof result.status !== 'number') throw new Error('apksigner returned an invalid result')
+  if (result.status === 0) throw new Error('APK must be unsigned; apksigner verified a signature')
+  const report = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  if (report.length !== 2 || !report.includes('DOES NOT VERIFY') || !report.includes('ERROR: No JAR signatures')) {
+    throw new Error('apksigner did not explicitly report the no-signature condition')
+  }
+}
+
+function assertNoSigningMaterial(bytes, eocdOffset, entries) {
+  const v1Entry = entries.find((entry) => /^META-INF\/[^/]+\.(?:SF|RSA|DSA|EC)$/i.test(entry))
+  if (v1Entry) throw new Error(`APK contains v1 signing material: ${v1Entry}`)
+
+  const centralDirectoryOffset = bytes.readUInt32LE(eocdOffset + 16)
+  if (centralDirectoryOffset > eocdOffset) throw new Error('APK central-directory offset is invalid')
+  if (centralDirectoryOffset < APK_SIGNING_BLOCK_MAGIC.length
+    || !bytes.subarray(centralDirectoryOffset - APK_SIGNING_BLOCK_MAGIC.length, centralDirectoryOffset).equals(APK_SIGNING_BLOCK_MAGIC)) return
+
+  const footerSizeOffset = centralDirectoryOffset - 24
+  if (footerSizeOffset < 0) throw new Error('APK contains a malformed APK Signing Block')
+  const footerSize = bytes.readBigUInt64LE(footerSizeOffset)
+  if (footerSize < 24n || footerSize > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error('APK contains a malformed APK Signing Block')
+  }
+  const blockStart = centralDirectoryOffset - Number(footerSize) - 8
+  if (blockStart < 0 || bytes.readBigUInt64LE(blockStart) !== footerSize) {
+    throw new Error('APK contains a malformed APK Signing Block')
+  }
+  throw new Error('APK contains an APK Signing Block')
 }
 
 function assertSafeArchiveEntry(entry) {
@@ -118,6 +152,7 @@ function loadAlignments(objdump) {
 
 function assertLibraries16Kb(runner, tools, apkPath, libraries, directory) {
   if (libraries.length === 0) return false
+  if (!tools.objdump) throw new Error('NDK llvm-objdump is unavailable for packaged native-library inspection')
   for (const library of libraries) assertSafeArchiveEntry(library)
   command(runner, 'unzip', ['-qq', apkPath, ...libraries, '-d', directory])
   for (const library of libraries) {
@@ -131,12 +166,13 @@ function assertLibraries16Kb(runner, tools, apkPath, libraries, directory) {
 
 export function checkAndroidUnsignedArtifact(apkPath, { environment = process.env, tools, runner = defaultRunner } = {}) {
   const resolvedApk = resolve(apkPath)
-  assertZipFile(resolvedApk)
+  const { bytes, eocdOffset } = readZipFile(resolvedApk)
   const officialTools = tools ?? resolveAndroidTools(environment)
   assertExpectedBadging(command(runner, officialTools.aapt, ['dump', 'badging', resolvedApk]))
-  assertUnsigned(runner, officialTools, resolvedApk)
   command(runner, 'unzip', ['-tqq', resolvedApk])
   const entries = command(runner, 'unzip', ['-Z1', resolvedApk]).split(/\r?\n/).filter(Boolean)
+  assertNoSigningMaterial(bytes, eocdOffset, entries)
+  assertUnsigned(runner, officialTools, resolvedApk)
   for (const required of ['assets/public/index.html', 'assets/public/.vite/manifest.json']) {
     if (!entries.includes(required)) throw new Error(`APK is missing required packaged bundle file: ${required}`)
   }

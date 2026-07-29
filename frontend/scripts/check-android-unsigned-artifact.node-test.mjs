@@ -1,28 +1,30 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { assertExpectedBadging, checkAndroidUnsignedArtifact } from './check-android-unsigned-artifact.mjs'
-import { alignedLoad, packagedEntries, validBadging } from './fixtures/android-unsigned-artifact.mjs'
+import { alignedLoad, emptyZip, packagedEntries, signingBlockZip, validBadging } from './fixtures/android-unsigned-artifact.mjs'
 
 const tools = { aapt: 'aapt', apksigner: 'apksigner', zipalign: 'zipalign', objdump: 'llvm-objdump' }
-const emptyZip = Buffer.from('504b0506000000000000000000000000000000000000', 'hex')
 
-async function fixtureApk(t) {
+async function fixtureApk(t, contents = emptyZip) {
   const directory = await mkdtemp(join(tmpdir(), 'dupert-android-apk-test-'))
   const apk = join(directory, 'app-release-unsigned.apk')
-  await writeFile(apk, emptyZip)
+  await writeFile(apk, contents)
   t.after(() => rm(directory, { force: true, recursive: true }))
   return apk
 }
 
-function fixtureRunner({ entries = packagedEntries, badging = validBadging, signature = 'DOES NOT VERIFY\nERROR: APK is not signed', signatureStatus = 1, load = alignedLoad, calls } = {}) {
+function fixtureRunner({ entries = packagedEntries, badging = validBadging, signature = 'DOES NOT VERIFY\nERROR: No JAR signatures', signatureStatus = 1, load = alignedLoad, calls, apksignerError } = {}) {
   return (executable, args) => {
     calls?.push([executable, args])
     if (executable === 'aapt') return { status: 0, stdout: badging }
-    if (executable === 'apksigner') return { status: signatureStatus, stderr: signature }
+    if (executable === 'apksigner') {
+      if (apksignerError) throw apksignerError
+      return { status: signatureStatus, stderr: signature }
+    }
     if (executable === 'zipalign') return { status: 0 }
     if (executable === 'llvm-objdump') return { status: 0, stdout: load }
     if (executable !== 'unzip') throw new Error(`unexpected tool: ${executable}`)
@@ -41,7 +43,11 @@ function fixtureRunner({ entries = packagedEntries, badging = validBadging, sign
 test('accepts an unsigned APK fixture with no packaged native libraries', async (t) => {
   const apk = await fixtureApk(t)
   const calls = []
-  const result = checkAndroidUnsignedArtifact(apk, { tools, runner: fixtureRunner({ calls }), environment: {} })
+  const result = checkAndroidUnsignedArtifact(apk, {
+    tools: { ...tools, objdump: null },
+    runner: fixtureRunner({ calls }),
+    environment: {},
+  })
   assert.deepEqual(result, { elfChecked: false, libraryCount: 0 })
   assert.deepEqual(calls.find(([tool]) => tool === 'zipalign'), ['zipalign', ['-c', '-P', '16', '-v', '4', apk]])
 })
@@ -62,6 +68,49 @@ test('rejects signed APKs and missing packaged public files', async (t) => {
     runner: fixtureRunner({ entries: ['assets/public/index.html'] }),
     environment: {},
   }), /manifest\.json/)
+})
+
+test('rejects case-insensitive v1 signing material', async (t) => {
+  const apk = await fixtureApk(t)
+  assert.throws(() => checkAndroidUnsignedArtifact(apk, {
+    tools,
+    runner: fixtureRunner({ entries: [...packagedEntries, 'META-INF/release.Ec'] }),
+    environment: {},
+  }), /v1 signing material/)
+})
+
+test('rejects valid and malformed APK Signing Blocks', async (t) => {
+  const signedApk = await fixtureApk(t, signingBlockZip())
+  assert.throws(() => checkAndroidUnsignedArtifact(signedApk, {
+    tools,
+    runner: fixtureRunner(),
+    environment: {},
+  }), /contains an APK Signing Block/)
+
+  const malformedApk = await fixtureApk(t, signingBlockZip({ headerSize: 23n }))
+  assert.throws(() => checkAndroidUnsignedArtifact(malformedApk, {
+    tools,
+    runner: fixtureRunner(),
+    environment: {},
+  }), /malformed APK Signing Block/)
+})
+
+test('rejects tampered signature output even when the filename contains unsigned', async (t) => {
+  const apk = await fixtureApk(t)
+  assert.throws(() => checkAndroidUnsignedArtifact(apk, {
+    tools,
+    runner: fixtureRunner({ signature: 'DOES NOT VERIFY\nERROR: signature did not verify for app-release-unsigned.apk' }),
+    environment: {},
+  }), /did not explicitly report the no-signature condition/)
+})
+
+test('fails closed when apksigner cannot run', async (t) => {
+  const apk = await fixtureApk(t)
+  assert.throws(() => checkAndroidUnsignedArtifact(apk, {
+    tools,
+    runner: fixtureRunner({ apksignerError: new Error('runtime unavailable') }),
+    environment: {},
+  }), /apksigner failed to run/)
 })
 
 test('checks every packaged native library for 16 KB LOAD alignment', async (t) => {
