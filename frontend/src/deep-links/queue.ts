@@ -1,5 +1,5 @@
 import { deepLinkTarget, type DeepLink } from './policy'
-import { clearDeepLinkHandoff, findDeepLinkHandoff, putDeepLinkHandoff } from './vault'
+import { clearDeepLinkHandoff, findDeepLinkHandoff, putDeepLinkHandoff, wasDeepLinkRecentlyConsumed } from './vault'
 
 const TTL_MS = 5 * 60_000
 const TRIP_REPLAY_DEDUPE_MS = 5_000
@@ -21,7 +21,7 @@ function prune() {
 
 export function enqueueDeepLink(link: DeepLink) {
   prune()
-  if (link.kind !== 'trip' && findDeepLinkHandoff(link)) return
+  if (link.kind !== 'trip' && (findDeepLinkHandoff(link) || wasDeepLinkRecentlyConsumed(link))) return
   if (link.kind === 'trip' && recentTripTargets.has(deepLinkTarget(link))) return
   const handoffId = link.kind === 'trip' ? undefined : putDeepLinkHandoff(link)
   const target = link.kind === 'trip' ? deepLinkTarget(link) : `${deepLinkTarget(link)}/${handoffId}`

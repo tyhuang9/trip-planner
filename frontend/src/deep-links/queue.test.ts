@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { enqueueDeepLink, takeDeepLink, __resetDeepLinkQueueForTests } from './queue'
-import { getDeepLinkHandoff, __resetDeepLinkVaultForTests } from './vault'
+import { consumeDeepLinkHandoff, getDeepLinkHandoff, __resetDeepLinkVaultForTests } from './vault'
 
 beforeEach(() => {
   __resetDeepLinkQueueForTests()
@@ -42,6 +42,20 @@ describe('deep-link queue', () => {
     enqueueDeepLink({ kind: 'verify-email', token: 'verify-secret', returnTo: { kind: 'route', path: '/trips' } })
     vi.advanceTimersByTime(5 * 60_000 + 1)
     expect(takeDeepLink()).toBeUndefined()
+    vi.useRealTimers()
+  })
+
+  it('suppresses a delayed OS replay only during the consumed tombstone window', () => {
+    vi.useFakeTimers()
+    const link = { kind: 'share' as const, token: 'os-replay-secret' }
+    enqueueDeepLink(link)
+    const first = takeDeepLink()
+    consumeDeepLinkHandoff(first?.handoffId)
+    enqueueDeepLink(link)
+    expect(takeDeepLink()).toBeUndefined()
+    vi.advanceTimersByTime(5_001)
+    enqueueDeepLink(link)
+    expect(takeDeepLink()?.target).toMatch(/^\/link\/dl_/)
     vi.useRealTimers()
   })
 })

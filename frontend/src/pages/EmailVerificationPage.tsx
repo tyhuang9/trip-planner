@@ -8,8 +8,9 @@ import { useAuthStore } from '../auth/authStore'
 import { safeReturnPath } from '../auth/safeReturnPath'
 import { tripKeys } from '../hooks/useTrips'
 import { usePageTitle } from '../utils/usePageTitle'
-import { clearDeepLinkHandoff, getDeepLinkHandoff, putDeepLinkHandoff } from '../deep-links/vault'
-import { requestDeepLinkRouteFocus } from '../deep-links/DeepLinkRouteFocus'
+import { clearDeepLinkHandoff, consumeDeepLinkHandoff, getDeepLinkHandoff, putDeepLinkHandoff } from '../deep-links/vault'
+import { requestDeepLinkRouteFocus } from '../deep-links/routeFocusRequest'
+import { useAuth } from '../auth/useAuth'
 import styles from './AuthForm.module.css'
 
 type VerificationState = 'verifying' | 'verified' | 'error'
@@ -22,6 +23,7 @@ export function EmailVerificationPage() {
   const [handoff] = useState(() => getDeepLinkHandoff(handoffId))
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const { isAuthenticated, isInitializing, logout } = useAuth()
   const setSession = useAuthStore((state) => state.setSession)
   const token = handoff?.kind === 'verify-email' ? handoff.token : searchParams.get('token') ?? ''
   const returnTo = handoff?.kind === 'verify-email' ? handoff.returnTo : safeReturnPath(searchParams.get('return'))
@@ -34,14 +36,27 @@ export function EmailVerificationPage() {
     message: 'Verifying your email...',
   })
   const startedRef = useRef(false)
+  const [identitySwitchRequired, setIdentitySwitchRequired] = useState(isAuthenticated)
+  const [identitySwitchConfirmed, setIdentitySwitchConfirmed] = useState(false)
+  const [isSwitchingIdentity, setIsSwitchingIdentity] = useState(false)
+  const [identitySwitchError, setIdentitySwitchError] = useState<string | null>(null)
+
+  if (isAuthenticated && !identitySwitchRequired) setIdentitySwitchRequired(true)
 
   useEffect(() => {
     if (!hasToken) return
+    if (isInitializing || isAuthenticated) return
+    if (identitySwitchRequired && !identitySwitchConfirmed) return
     if (startedRef.current) return
     startedRef.current = true
 
     verifyEmail({ token })
       .then((res) => {
+        if (!identitySwitchConfirmed && useAuthStore.getState().authStatus === 'authenticated') {
+          startedRef.current = false
+          setIdentitySwitchRequired(true)
+          return
+        }
         setSession({
           accessToken: res.accessToken,
           expiresInSeconds: res.expiresInSeconds,
@@ -60,7 +75,7 @@ export function EmailVerificationPage() {
           : returnTo.kind === 'share'
             ? `/link/${putDeepLinkHandoff(returnTo)}`
             : returnTo.path
-        clearDeepLinkHandoff(handoffId)
+        consumeDeepLinkHandoff(handoffId)
         if (handoffId) requestDeepLinkRouteFocus(destination)
         navigate(destination, { replace: true })
       })
@@ -73,12 +88,29 @@ export function EmailVerificationPage() {
         })
         clearDeepLinkHandoff(handoffId)
       })
-  }, [handoffId, hasToken, navigate, queryClient, returnTo, setSession, token])
+  }, [handoffId, hasToken, identitySwitchConfirmed, identitySwitchRequired, isAuthenticated, isInitializing, navigate, queryClient, returnTo, setSession, token])
+
+  const confirmIdentitySwitch = async () => {
+    if (isSwitchingIdentity) return
+    setIsSwitchingIdentity(true)
+    setIdentitySwitchError(null)
+    try {
+      await logout()
+      setIdentitySwitchConfirmed(true)
+    } catch {
+      setIdentitySwitchError('Could not sign out. Your current session was not changed.')
+    } finally {
+      setIsSwitchingIdentity(false)
+    }
+  }
 
   const state = hasToken ? verification.state : 'error'
   const message = hasToken
-    ? verification.message
+    ? isInitializing
+      ? 'Checking your current session...'
+      : verification.message
     : 'This verification link is invalid or expired.'
+  const needsIdentitySwitch = hasToken && !isInitializing && identitySwitchRequired && !identitySwitchConfirmed
 
   return (
     <main id="main" className={styles.shell}>
@@ -91,7 +123,11 @@ export function EmailVerificationPage() {
             ? 'Checking your verification link.'
             : 'Dupert account verification.'}
         </p>
-        <div
+        {needsIdentitySwitch ? (
+          <div className={identitySwitchError ? styles.banner : styles.bannerWarning} role="alert">
+            <span>{identitySwitchError ?? 'This verification link may belong to a different account. Sign out before verifying it to protect your current session.'}</span>
+          </div>
+        ) : <div
           className={
             state === 'error'
               ? styles.banner
@@ -100,7 +136,12 @@ export function EmailVerificationPage() {
           role={state === 'error' ? 'alert' : 'status'}
         >
           {message}
-        </div>
+        </div>}
+        {needsIdentitySwitch ? (
+          <button className={styles.submit} type="button" disabled={isSwitchingIdentity} onClick={() => void confirmIdentitySwitch()}>
+            {isSwitchingIdentity ? 'Signing out...' : 'Sign out and verify this email'}
+          </button>
+        ) : null}
         <p className={styles.altLink}>
           <Link to="/login">Back to sign in</Link>
         </p>

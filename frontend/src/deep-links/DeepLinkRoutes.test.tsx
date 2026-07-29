@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DeepLinkHandoffRoute, DeepLinkScrubber } from './DeepLinkRoutes'
 import { __resetDeepLinkVaultForTests, putDeepLinkHandoff } from './vault'
 import { parseDeepLinkPath } from './policy'
-import { DeepLinkRouteFocus, __resetDeepLinkRouteFocusForTests } from './DeepLinkRouteFocus'
+import { DeepLinkRouteFocus } from './DeepLinkRouteFocus'
+import { __resetDeepLinkRouteFocusForTests } from './routeFocusRequest'
 
 function LocationProbe() {
   const location = useLocation()

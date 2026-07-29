@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router'
 import { confirmPasswordReset } from '../api/auth'
 import { parseApiError } from '../api/errors'
 import { usePageTitle } from '../utils/usePageTitle'
-import { clearDeepLinkHandoff, getDeepLinkHandoff } from '../deep-links/vault'
+import { consumeDeepLinkHandoff, getDeepLinkHandoff } from '../deep-links/vault'
 import styles from './AuthForm.module.css'
 
 export default function PasswordResetPage() {
@@ -52,7 +52,7 @@ export default function PasswordResetPage() {
     setIsSubmitting(true)
     try {
       await confirmPasswordReset({ token, password })
-      clearDeepLinkHandoff(handoffId)
+      consumeDeepLinkHandoff(handoffId)
       setSuccessMessage('Password reset complete. You can sign in now.')
       setPassword('')
       setConfirmPassword('')

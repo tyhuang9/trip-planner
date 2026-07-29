@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DeepLinkBridge } from './DeepLinkBridge'
 import { enqueueDeepLink, __resetDeepLinkQueueForTests } from './queue'
 import { clearDeepLinkHandoff, __resetDeepLinkVaultForTests } from './vault'
-import { DeepLinkRouteFocus, __resetDeepLinkRouteFocusForTests } from './DeepLinkRouteFocus'
+import { DeepLinkRouteFocus } from './DeepLinkRouteFocus'
+import { __resetDeepLinkRouteFocusForTests } from './routeFocusRequest'
 
 let isInitializing = false
 vi.mock('../auth/useAuth', () => ({

@@ -1,26 +1,15 @@
 import { useEffect } from 'react'
 import { useLocation } from 'react-router'
-
-let focusTarget: string | null = null
-
-export function requestDeepLinkRouteFocus(target: string) {
-  focusTarget = target
-}
-
-export function __resetDeepLinkRouteFocusForTests() {
-  focusTarget = null
-}
+import { takeDeepLinkRouteFocusRequest } from './routeFocusRequest'
 
 /** Moves focus only after navigation initiated by the deep-link subsystem. */
 export function DeepLinkRouteFocus() {
   const location = useLocation()
 
   useEffect(() => {
-    if (focusTarget !== location.pathname) return
-    focusTarget = null
+    if (!takeDeepLinkRouteFocusRequest(location.pathname)) return
     let loadingFocused = false
     let completed = false
-    let observer: MutationObserver | undefined
 
     const focusRoute = () => {
       const main = document.getElementById('main')
@@ -29,7 +18,6 @@ export function DeepLinkRouteFocus() {
         heading.tabIndex = -1
         heading.focus()
         completed = true
-        observer?.disconnect()
         return
       }
       if (main && !loadingFocused) {
@@ -41,14 +29,17 @@ export function DeepLinkRouteFocus() {
 
     focusRoute()
     if (completed) return
-    observer = new MutationObserver(focusRoute)
+    const observer = new MutationObserver(() => {
+      focusRoute()
+      if (completed) observer.disconnect()
+    })
     observer.observe(document.body, { childList: true, subtree: true })
     const timeout = window.setTimeout(() => observer?.disconnect(), 2_000)
     return () => {
       window.clearTimeout(timeout)
       observer?.disconnect()
     }
-  }, [location.key])
+  }, [location.key, location.pathname])
 
   return null
 }

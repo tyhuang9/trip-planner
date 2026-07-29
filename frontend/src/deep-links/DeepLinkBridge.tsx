@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router'
 import { useAuth } from '../auth/useAuth'
 import { subscribeToDeepLinks, takeDeepLink } from './queue'
 import { getDeepLinkHandoff, subscribeToDeepLinkVault } from './vault'
-import { requestDeepLinkRouteFocus } from './DeepLinkRouteFocus'
+import { requestDeepLinkRouteFocus } from './routeFocusRequest'
 
 /** Bridges native URLs only after auth has reached a conclusive state. */
 export function DeepLinkBridge() {

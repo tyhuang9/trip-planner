@@ -3,8 +3,8 @@ import { Link, useNavigate, useParams } from 'react-router'
 import { parseApiError } from '../api/errors'
 import { useAcceptGuestShareLink } from '../hooks/useShareLinks'
 import { usePageTitle } from '../utils/usePageTitle'
-import { clearDeepLinkHandoff, getDeepLinkHandoff } from '../deep-links/vault'
-import { requestDeepLinkRouteFocus } from '../deep-links/DeepLinkRouteFocus'
+import { consumeDeepLinkHandoff, getDeepLinkHandoff } from '../deep-links/vault'
+import { requestDeepLinkRouteFocus } from '../deep-links/routeFocusRequest'
 import styles from './SharePages.module.css'
 
 export default function GuestOnboardingPage() {
@@ -30,7 +30,7 @@ export default function GuestOnboardingPage() {
       token,
       body: { displayName },
     })
-    clearDeepLinkHandoff(handoffId)
+    consumeDeepLinkHandoff(handoffId)
     const destination = `/trips/${encodeURIComponent(accepted.publicId)}`
     requestDeepLinkRouteFocus(destination)
     navigate(destination, { replace: true })

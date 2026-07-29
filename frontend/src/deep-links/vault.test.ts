@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { __resetDeepLinkVaultForTests, clearDeepLinkHandoff, findDeepLinkHandoff, getDeepLinkHandoff, putDeepLinkHandoff, subscribeToDeepLinkVault } from './vault'
+import { __resetDeepLinkVaultForTests, clearDeepLinkHandoff, consumeDeepLinkHandoff, findDeepLinkHandoff, getDeepLinkHandoff, putDeepLinkHandoff, subscribeToDeepLinkVault, wasDeepLinkRecentlyConsumed } from './vault'
 
 beforeEach(() => __resetDeepLinkVaultForTests())
 
@@ -40,5 +40,29 @@ describe('deep-link vault', () => {
     putDeepLinkHandoff({ kind: 'share', token: 'after-unsubscribe' })
     expect(listener).toHaveBeenCalledTimes(4)
     vi.useRealTimers()
+  })
+
+  it('tracks successful consumption without blocking a direct web handoff', () => {
+    vi.useFakeTimers()
+    const link = { kind: 'share' as const, token: 'consumed-secret' }
+    const first = putDeepLinkHandoff(link)
+    consumeDeepLinkHandoff(first)
+    expect(getDeepLinkHandoff(first)).toBeUndefined()
+    expect(wasDeepLinkRecentlyConsumed(link)).toBe(true)
+    const direct = putDeepLinkHandoff(link)
+    expect(direct).not.toBe(first)
+    expect(getDeepLinkHandoff(direct)).toEqual(link)
+    vi.advanceTimersByTime(5_001)
+    expect(wasDeepLinkRecentlyConsumed(link)).toBe(false)
+    vi.useRealTimers()
+  })
+
+  it('does not tombstone an ordinary clear used after a retryable failure', () => {
+    const link = { kind: 'reset-password' as const, token: 'retry-secret' }
+    const first = putDeepLinkHandoff(link)
+    clearDeepLinkHandoff(first)
+    const retry = putDeepLinkHandoff(link)
+    expect(retry).not.toBe(first)
+    expect(getDeepLinkHandoff(retry)).toEqual(link)
   })
 })

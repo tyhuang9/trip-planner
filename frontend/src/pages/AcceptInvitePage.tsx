@@ -1,12 +1,10 @@
-import { useEffect, useRef } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { parseApiError } from '../api/errors'
 import { useAuth } from '../auth/useAuth'
 import { useAcceptShareLink } from '../hooks/useShareLinks'
 import { usePageTitle } from '../utils/usePageTitle'
-import { getDeepLinkHandoff } from '../deep-links/vault'
-import { clearDeepLinkHandoff } from '../deep-links/vault'
-import { requestDeepLinkRouteFocus } from '../deep-links/DeepLinkRouteFocus'
+import { consumeDeepLinkHandoff, getDeepLinkHandoff } from '../deep-links/vault'
+import { requestDeepLinkRouteFocus } from '../deep-links/routeFocusRequest'
 import styles from './SharePages.module.css'
 
 export default function AcceptInvitePage() {
@@ -20,13 +18,11 @@ export default function AcceptInvitePage() {
   const { isAuthenticated, isInitializing } = useAuth()
   const acceptMutation = useAcceptShareLink()
   const returnPath = handoffId ? `/link/${handoffId}` : `${location.pathname}${location.search}`
-  const autoAcceptStartedRef = useRef(false)
-
   const handleAccept = async () => {
     if (!token || acceptMutation.isPending) return
     try {
       const accepted = await acceptMutation.mutateAsync(token)
-      clearDeepLinkHandoff(handoffId)
+      consumeDeepLinkHandoff(handoffId)
       const destination = `/trips/${encodeURIComponent(accepted.publicId)}`
       requestDeepLinkRouteFocus(destination)
       navigate(destination, { replace: true })
@@ -34,24 +30,6 @@ export default function AcceptInvitePage() {
       // React Query owns the visible error state.
     }
   }
-
-  useEffect(() => {
-    if (isInitializing || !isAuthenticated || !token || autoAcceptStartedRef.current) {
-      return
-    }
-    autoAcceptStartedRef.current = true
-    void acceptMutation
-      .mutateAsync(token)
-      .then((accepted) => {
-        clearDeepLinkHandoff(handoffId)
-        const destination = `/trips/${encodeURIComponent(accepted.publicId)}`
-        requestDeepLinkRouteFocus(destination)
-        navigate(destination, { replace: true })
-      })
-      .catch(() => {
-        // React Query owns the visible error state; this prevents an unhandled rejection.
-      })
-  }, [acceptMutation, handoffId, isAuthenticated, isInitializing, navigate, token])
 
   return (
     <main id="main" className={styles.narrowShell}>

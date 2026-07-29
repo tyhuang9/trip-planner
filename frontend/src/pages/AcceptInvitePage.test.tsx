@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { AuthContext, type AuthContextValue } from '../auth/authContextValue'
 import AcceptInvitePage from './AcceptInvitePage'
 import { putDeepLinkHandoff, __resetDeepLinkVaultForTests } from '../deep-links/vault'
-import { DeepLinkRouteFocus, __resetDeepLinkRouteFocusForTests } from '../deep-links/DeepLinkRouteFocus'
+import { DeepLinkRouteFocus } from '../deep-links/DeepLinkRouteFocus'
+import { __resetDeepLinkRouteFocusForTests } from '../deep-links/routeFocusRequest'
 
 const shareMocks = vi.hoisted(() => ({
   mutateAsync: vi.fn(),
@@ -65,7 +67,7 @@ beforeEach(() => {
 })
 
 describe('<AcceptInvitePage>', () => {
-  it('auto-accepts the invite for an authenticated user', async () => {
+  it('waits for an authenticated user to explicitly accept the invite', async () => {
     shareMocks.mutateAsync.mockResolvedValue({
       publicId: 'abc234def567',
       role: 'EDITOR',
@@ -73,9 +75,9 @@ describe('<AcceptInvitePage>', () => {
 
     renderInvite(makeAuth({ isAuthenticated: true }))
 
-    await waitFor(() => {
-      expect(shareMocks.mutateAsync).toHaveBeenCalledWith('raw-token')
-    })
+    expect(shareMocks.mutateAsync).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: 'Accept invite' }))
+    expect(shareMocks.mutateAsync).toHaveBeenCalledWith('raw-token')
     expect(await screen.findByTestId('shared-trip')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Shared trip' })).toHaveFocus())
   })
@@ -109,7 +111,7 @@ describe('<AcceptInvitePage>', () => {
     expect(screen.getByRole('link', { name: /continue as guest/i })).toHaveAttribute('href', `/link/${handoffId}/guest`)
   })
 
-  it('announces automatic invite acceptance progress politely', () => {
+  it('announces invite acceptance progress politely', () => {
     shareMocks.isPending = true
     shareMocks.mutateAsync.mockReturnValue(new Promise(() => undefined))
     renderInvite(makeAuth({ isAuthenticated: true }))

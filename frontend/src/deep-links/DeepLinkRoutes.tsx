@@ -2,7 +2,7 @@ import { useEffect, type ReactNode } from 'react'
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router'
 import { deepLinkTarget, parseDeepLinkPath } from './policy'
 import { putDeepLinkHandoff, getDeepLinkHandoff } from './vault'
-import { requestDeepLinkRouteFocus } from './DeepLinkRouteFocus'
+import { requestDeepLinkRouteFocus } from './routeFocusRequest'
 import { RouteLoadingFallback } from '../components/RouteLoadingFallback'
 
 function targetFor(link: NonNullable<ReturnType<typeof parseDeepLinkPath>>) {
