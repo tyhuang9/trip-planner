@@ -266,7 +266,8 @@ function inspectGateTable(document, violations) {
   }
   for (const gate of gateNames) if (!REQUIRED_GATES.includes(gate)) violations.push(`release gate is unknown: ${gate}`)
   const outsideGateTable = document.replace(blocks[0][0], '')
-  if (/(?:Authentication and guest sessions|Device install smoke)\s*:\s*(?:PASS|APPROVED)|Physical-device evidence\s+APPROVED/i.test(outsideGateTable)) violations.push('release-readiness contains an issue #64 PASS or APPROVED claim outside the canonical gate table')
+  const protectedSubject = /Authentication and guest sessions|Device install smoke|Physical-device evidence/i
+  if (outsideGateTable.split('\n').some((line) => protectedSubject.test(line) && /\b(?:PASS|APPROVED)\b/i.test(line.replace(/\bmust\s+PASS\b/ig, '')))) violations.push('release-readiness contains an issue #64 PASS or APPROVED claim outside the canonical gate table')
   return rows
 }
 

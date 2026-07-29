@@ -295,8 +295,19 @@ test('rejects X-API-Key headers without flagging safe policy prose', () => {
   assert.deepEqual(inspectMobileReleaseReadiness(sources()), []); const result = completed(); result.platforms[0].contexts[0].cases[0].actions = 'X-API-Key: raw-secret'; assert.match(messages(tracked(result)), /raw credential/)
 })
 
-test('rejects issue-64 approval claims outside the release gate table', () => {
-  const candidate = sources(); candidate.releaseDocument += '\nAuthentication and guest sessions: PASS. Physical-device evidence APPROVED.\n'; assert.match(messages(candidate), /outside the canonical gate table/)
+test('rejects issue-64 approval claims outside the release gate table', async (t) => {
+  const claims = [
+    ['colon', 'Authentication and guest sessions: PASS'],
+    ['em dash', 'Authentication and guest sessions — PASS'],
+    ['copula', 'Device install smoke is APPROVED'],
+    ['Markdown row', '| Physical-device evidence | PASS |'],
+    ['three-line PoC', 'Authentication and guest sessions — PASS\nDevice install smoke is APPROVED\nPhysical-device evidence: PASS'],
+  ]
+  for (const [name, claim] of claims) await t.test(name, () => { const candidate = sources(); candidate.releaseDocument += `\n${claim}\n`; assert.match(messages(candidate), /outside the canonical gate table/) })
+})
+
+test('allows instructional must-PASS prose outside the release gate table', () => {
+  const candidate = sources(); candidate.releaseDocument += '\nAuthentication and guest sessions must PASS before review.\n'; assert.doesNotMatch(messages(candidate), /outside the canonical gate table/)
 })
 
 test('rejects duplicate toolchain and release-gate blocks', () => {
