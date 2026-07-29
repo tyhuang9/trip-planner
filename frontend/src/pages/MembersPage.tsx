@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router'
 import { parseApiError } from '../api/errors'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { useRemoveTripMember, useTripMembers } from '../hooks/useShareLinks'

@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type FormEvent } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router'
 import { confirmPasswordReset } from '../api/auth'
 import { parseApiError } from '../api/errors'
 import { usePageTitle } from '../utils/usePageTitle'
