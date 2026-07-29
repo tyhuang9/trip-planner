@@ -63,7 +63,10 @@ describe('outage monitoring', () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(response(200)).mockResolvedValueOnce(response(503))
     vi.stubGlobal('fetch', fetchMock)
 
-    reportAmbiguousBackendFailure({ response: { status: 500 } } as never)
+    reportAmbiguousBackendFailure({
+      isAxiosError: true,
+      response: { status: 500 },
+    })
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
 
     expect(fetchMock.mock.calls[0][0]).toContain('/actuator/health/liveness')
@@ -123,6 +126,48 @@ describe('outage monitoring', () => {
     const retry = checkHealth()
     await vi.advanceTimersByTimeAsync(HEALTH_PROBE_TIMEOUT_MS)
     await expect(retry).resolves.toBe('server')
+  })
+
+  it('shares one overall timeout between liveness and a hanging database probe', async () => {
+    vi.useFakeTimers()
+    let databaseSignal: AbortSignal | undefined
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
+        window.setTimeout(
+          () => resolve(response(200)),
+          HEALTH_PROBE_TIMEOUT_MS - 1,
+        )
+      }))
+      .mockImplementationOnce((_url, init: RequestInit) => {
+        databaseSignal = init.signal as AbortSignal
+        return new Promise<Response>((_resolve, reject) => {
+          databaseSignal?.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'))
+          })
+        })
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const probe = checkHealth()
+    await vi.advanceTimersByTimeAsync(HEALTH_PROBE_TIMEOUT_MS - 1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(databaseSignal?.aborted).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(probe).resolves.toBeNull()
+    expect(databaseSignal?.aborted).toBe(true)
+  })
+
+  it('skips the database probe when liveness consumes the overall deadline', async () => {
+    vi.spyOn(Date, 'now')
+      .mockReturnValueOnce(1_000)
+      .mockReturnValue(1_000 + HEALTH_PROBE_TIMEOUT_MS)
+    const fetchMock = vi.fn().mockResolvedValue(response(200))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(checkHealth()).resolves.toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toContain('/actuator/health/liveness')
   })
 
   it('times out a hanging probe and resets the shared promise for retry', async () => {
@@ -293,9 +338,31 @@ describe('outage monitoring', () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
 
-    reportAmbiguousBackendFailure({ response: { status: 422 } } as never)
+    reportAmbiguousBackendFailure({
+      isAxiosError: true,
+      response: { status: 422 },
+    })
 
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('does not promote non-Axios failures into outage probes', () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    reportAmbiguousBackendFailure(new Error('local state changed'))
+
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('probes health after an Axios network failure', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response(503))
+    vi.stubGlobal('fetch', fetchMock)
+
+    reportAmbiguousBackendFailure({ isAxiosError: true })
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+
+    expect(fetchMock.mock.calls[0][0]).toContain('/actuator/health/liveness')
   })
 
   it('shares one health probe across concurrent backend failures', async () => {
