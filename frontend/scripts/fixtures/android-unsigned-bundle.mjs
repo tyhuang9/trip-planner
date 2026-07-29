@@ -28,10 +28,81 @@ export function bundletoolValidation(entries = requiredEntries) {
   return `App Bundle information\n------------\nFeature modules:\n\tFeature module: base\n${files.join('\n')}\n`
 }
 
-export function archiveDetails(entries = requiredEntries, types = {}) {
-  const records = entries.map((entry) => {
+const UNIX_MODES = {
+  '-': 0o100644,
+  b: 0o060644,
+  c: 0o020644,
+  d: 0o040755,
+  l: 0o120777,
+  p: 0o010644,
+  s: 0o140777,
+}
+
+export function unicodePathExtra(path) {
+  const encodedPath = Buffer.from(path, 'utf8')
+  const field = Buffer.alloc(9 + encodedPath.length)
+  field.writeUInt16LE(0x7075, 0)
+  field.writeUInt16LE(5 + encodedPath.length, 2)
+  field.writeUInt8(1, 4)
+  encodedPath.copy(field, 9)
+  return field
+}
+
+export function zipFixture(entries = requiredEntries, types = {}, {
+  centralExtraFields = {},
+  declaredEntryCount = entries.length,
+  externalAttributes = {},
+  hostSystem = 3,
+  hostSystems = {},
+  localExtraFields = centralExtraFields,
+} = {}) {
+  const localRecords = []
+  const centralRecords = []
+  let localOffset = 0
+  for (const entry of entries) {
+    const name = Buffer.from(entry, 'utf8')
+    const flags = name.some((byte) => byte >= 0x80) ? 0x800 : 0
     const type = types[entry] ?? (entry.endsWith('/') ? 'd' : '-')
-    return `${type}rw-r--r--  3.0 unx        1 bx        1 stor 26-Jan-01 00:00 ${entry}`
-  })
-  return `Archive: fixture.aab\n${records.join('\n')}\n${entries.length} files, 0 bytes uncompressed, 0 bytes compressed:  0.0%\n`
+    const mode = UNIX_MODES[type]
+    if (mode === undefined) throw new Error(`Unsupported fixture ZIP type: ${type}`)
+    const creator = hostSystems[entry] ?? hostSystem
+    const centralExtra = centralExtraFields[entry] ?? Buffer.alloc(0)
+    const localExtra = localExtraFields[entry] ?? Buffer.alloc(0)
+    const attributes = Object.hasOwn(externalAttributes, entry)
+      ? externalAttributes[entry]
+      : creator === 3 ? (mode << 16) >>> 0 : 0
+
+    const local = Buffer.alloc(30 + name.length + localExtra.length)
+    local.writeUInt32LE(0x04034b50, 0)
+    local.writeUInt16LE(20, 4)
+    local.writeUInt16LE(flags, 6)
+    local.writeUInt16LE(name.length, 26)
+    local.writeUInt16LE(localExtra.length, 28)
+    name.copy(local, 30)
+    localExtra.copy(local, 30 + name.length)
+    localRecords.push(local)
+
+    const central = Buffer.alloc(46 + name.length + centralExtra.length)
+    central.writeUInt32LE(0x02014b50, 0)
+    central.writeUInt16LE((creator << 8) | 20, 4)
+    central.writeUInt16LE(20, 6)
+    central.writeUInt16LE(flags, 8)
+    central.writeUInt16LE(name.length, 28)
+    central.writeUInt16LE(centralExtra.length, 30)
+    central.writeUInt32LE(attributes >>> 0, 38)
+    central.writeUInt32LE(localOffset, 42)
+    name.copy(central, 46)
+    centralExtra.copy(central, 46 + name.length)
+    centralRecords.push(central)
+    localOffset += local.length
+  }
+
+  const centralDirectory = Buffer.concat(centralRecords)
+  const eocd = Buffer.alloc(22)
+  eocd.writeUInt32LE(0x06054b50, 0)
+  eocd.writeUInt16LE(declaredEntryCount, 8)
+  eocd.writeUInt16LE(declaredEntryCount, 10)
+  eocd.writeUInt32LE(centralDirectory.length, 12)
+  eocd.writeUInt32LE(localOffset, 16)
+  return Buffer.concat([...localRecords, centralDirectory, eocd])
 }

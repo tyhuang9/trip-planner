@@ -21,6 +21,16 @@ const UNSIGNED_JARSIGNER_OUTPUTS = new Set([
   '\njar is unsigned.\n',
   '\nno manifest.\n\njar is unsigned.\n',
 ])
+const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50
+const ZIP_EOCD_SIGNATURE = 0x06054b50
+const ZIP_LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50
+const ZIP64_UINT16_SENTINEL = 0xffff
+const ZIP64_UINT32_SENTINEL = 0xffffffff
+const ZIP_HOST_DOS = 0
+const ZIP_HOST_UNIX = 3
+const ZIP_UNIX_DIRECTORY = 0x4000
+const ZIP_UNIX_FILE_TYPE_MASK = 0xf000
+const ZIP_UNIX_REGULAR_FILE = 0x8000
 
 function defaultRunner(executable, args) {
   const result = spawnSync(executable, args, { encoding: 'utf8' })
@@ -102,45 +112,140 @@ function assertBundletool(runner, jarPath, bundlePath) {
   }
 }
 
-function assertZipFile(bundlePath) {
+function readZipFile(bundlePath) {
   const bytes = readFileSync(bundlePath)
-  const eocd = Buffer.from([0x50, 0x4b, 0x05, 0x06])
+  const eocd = Buffer.allocUnsafe(4)
+  eocd.writeUInt32LE(ZIP_EOCD_SIGNATURE)
   const eocdOffset = bytes.lastIndexOf(eocd)
   if (bytes.length < 22 || eocdOffset < Math.max(0, bytes.length - 65557)
     || eocdOffset + 22 > bytes.length
     || eocdOffset + 22 + bytes.readUInt16LE(eocdOffset + 20) !== bytes.length) {
     throw new Error(`AAB is not a valid ZIP file: ${bundlePath}`)
   }
+  return { bytes, eocdOffset }
 }
 
 function assertSafeEntry(entry) {
   const normalizedEntry = entry.endsWith('/') ? entry.slice(0, -1) : entry
   const segments = normalizedEntry.split('/')
-  if (!entry || entry.startsWith('/') || entry.includes('\\') || /[\0-\x1f\x7f]/.test(entry)
+  if (!entry || entry.startsWith('/') || entry.includes('\\') || /\p{Cc}/u.test(entry)
     || segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
     throw new Error(`AAB contains an unsafe archive path: ${entry}`)
   }
 }
 
-function assertArchiveEntries(entries, details) {
+function assertArchiveEntries(entries) {
   if (new Set(entries).size !== entries.length) throw new Error('AAB contains duplicate archive entries')
   for (const entry of entries) assertSafeEntry(entry)
 
-  const signingEntry = entries.find((entry) => /^META-INF\/[^/]+\.(?:SF|RSA|DSA|EC)$/i.test(entry))
+  const signingEntry = entries.find((entry) => /^META-INF\/(?:[^/]+\.(?:SF|RSA|DSA|EC)|SIG-[^/]*)$/i.test(entry))
   if (signingEntry) throw new Error(`AAB contains JAR signing material: ${signingEntry}`)
 
   for (const required of REQUIRED_ENTRIES) {
     if (!entries.includes(required)) throw new Error(`AAB is missing required entry: ${required}`)
   }
+}
 
-  const modes = details.split('\n').flatMap((line) => {
-    const match = line.match(/^(\S+)\s+\d+\.\d+\s+(?:fat|unx)\s+/)
-    return match ? [match[1][0]] : []
-  })
-  if (modes.length !== entries.length) throw new Error('unzip did not report file types for every AAB entry')
-  if (modes.some((type) => type !== '-' && type !== 'd')) {
-    throw new Error('AAB contains a symbolic link or unsupported archive entry')
+function decodeEntryName(bytes) {
+  if (bytes.length === 0 || bytes.some((byte) => byte <= 0x1f || byte === 0x7f)) {
+    throw new Error('AAB contains an empty or control-character archive path')
   }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    throw new Error('AAB contains a non-UTF-8 archive path')
+  }
+}
+
+function assertSupportedEntryType(name, versionMadeBy, externalAttributes) {
+  const hostSystem = versionMadeBy >>> 8
+  const namedDirectory = name.endsWith('/')
+  if (hostSystem === ZIP_HOST_UNIX) {
+    const unixType = (externalAttributes >>> 16) & ZIP_UNIX_FILE_TYPE_MASK
+    if (unixType !== ZIP_UNIX_REGULAR_FILE && unixType !== ZIP_UNIX_DIRECTORY) {
+      throw new Error('AAB contains a symbolic link or unsupported archive entry')
+    }
+    if ((unixType === ZIP_UNIX_DIRECTORY) !== namedDirectory) {
+      throw new Error('AAB archive entry type conflicts with its path')
+    }
+    return
+  }
+
+  if (hostSystem !== ZIP_HOST_DOS || (externalAttributes >>> 16) !== 0) {
+    throw new Error('AAB contains an unsupported ZIP creator or external file type')
+  }
+  const dosAttributes = externalAttributes & 0xffff
+  if ((dosAttributes & 0x08) !== 0) {
+    throw new Error('AAB contains a ZIP volume-label entry')
+  }
+  const dosDirectory = (dosAttributes & 0x10) !== 0
+  if (dosDirectory && !namedDirectory) {
+    throw new Error('AAB archive entry type conflicts with its path')
+  }
+}
+
+function assertMatchingLocalHeader(bytes, centralDirectoryOffset, centralOffset, flags, nameBytes) {
+  const localOffset = bytes.readUInt32LE(centralOffset + 42)
+  if (localOffset === ZIP64_UINT32_SENTINEL || localOffset + 30 > centralDirectoryOffset
+    || bytes.readUInt32LE(localOffset) !== ZIP_LOCAL_FILE_HEADER_SIGNATURE) {
+    throw new Error('AAB contains an invalid ZIP local-file header')
+  }
+  const localFlags = bytes.readUInt16LE(localOffset + 6)
+  const localNameLength = bytes.readUInt16LE(localOffset + 26)
+  const localExtraLength = bytes.readUInt16LE(localOffset + 28)
+  const localEnd = localOffset + 30 + localNameLength + localExtraLength
+  if (localEnd > centralDirectoryOffset || localExtraLength !== 0) {
+    throw new Error('AAB contains unsupported or truncated ZIP local metadata')
+  }
+  const localName = bytes.subarray(localOffset + 30, localOffset + 30 + localNameLength)
+  if (localFlags !== flags || !localName.equals(nameBytes)) {
+    throw new Error('AAB local and central ZIP metadata do not match')
+  }
+}
+
+export function readCentralDirectoryEntries(bytes, eocdOffset) {
+  const diskNumber = bytes.readUInt16LE(eocdOffset + 4)
+  const centralDirectoryDisk = bytes.readUInt16LE(eocdOffset + 6)
+  const entriesOnDisk = bytes.readUInt16LE(eocdOffset + 8)
+  const entryCount = bytes.readUInt16LE(eocdOffset + 10)
+  const centralDirectorySize = bytes.readUInt32LE(eocdOffset + 12)
+  const centralDirectoryOffset = bytes.readUInt32LE(eocdOffset + 16)
+  if (diskNumber !== 0 || centralDirectoryDisk !== 0 || entriesOnDisk !== entryCount
+    || entryCount === ZIP64_UINT16_SENTINEL
+    || centralDirectorySize === ZIP64_UINT32_SENTINEL
+    || centralDirectoryOffset === ZIP64_UINT32_SENTINEL
+    || centralDirectoryOffset + centralDirectorySize !== eocdOffset) {
+    throw new Error('AAB uses an unsupported or inconsistent ZIP central directory')
+  }
+
+  const entries = []
+  let offset = centralDirectoryOffset
+  for (let index = 0; index < entryCount; index += 1) {
+    if (offset + 46 > eocdOffset || bytes.readUInt32LE(offset) !== ZIP_CENTRAL_DIRECTORY_SIGNATURE) {
+      throw new Error('AAB contains an invalid ZIP central-directory record')
+    }
+    const versionMadeBy = bytes.readUInt16LE(offset + 4)
+    const flags = bytes.readUInt16LE(offset + 8)
+    const nameLength = bytes.readUInt16LE(offset + 28)
+    const extraLength = bytes.readUInt16LE(offset + 30)
+    const commentLength = bytes.readUInt16LE(offset + 32)
+    const externalAttributes = bytes.readUInt32LE(offset + 38)
+    const nextOffset = offset + 46 + nameLength + extraLength + commentLength
+    if ((flags & 0x1) !== 0) throw new Error('AAB contains an encrypted ZIP entry')
+    if (extraLength !== 0) throw new Error('AAB contains unsupported ZIP extra fields')
+    if (nextOffset > eocdOffset) throw new Error('AAB contains a truncated ZIP entry')
+    const nameBytes = bytes.subarray(offset + 46, offset + 46 + nameLength)
+    if ((flags & 0x800) === 0 && nameBytes.some((byte) => byte >= 0x80)) {
+      throw new Error('AAB contains a non-UTF-8 archive path')
+    }
+    assertMatchingLocalHeader(bytes, centralDirectoryOffset, offset, flags, nameBytes)
+    const name = decodeEntryName(nameBytes)
+    assertSupportedEntryType(name, versionMadeBy, externalAttributes)
+    entries.push(name)
+    offset = nextOffset
+  }
+  if (offset !== eocdOffset) throw new Error('AAB central-directory size does not match its entries')
+  return entries
 }
 
 export function checkAndroidUnsignedBundle(bundlePath, { environment = process.env, runner = defaultRunner } = {}) {
@@ -163,17 +268,14 @@ export function checkAndroidUnsignedBundle(bundlePath, { environment = process.e
   }
   assertUnsignedJarsignerResult(jarsignerResult)
 
-  assertZipFile(resolvedBundle)
-  run(runner, 'unzip', ['-tqq', resolvedBundle], 'unzip integrity check')
-  const entries = run(runner, 'unzip', ['-Z1', resolvedBundle], 'unzip entry listing')
-    .split(/\r?\n/)
-    .filter(Boolean)
-  const details = run(runner, 'unzip', ['-Z', '-l', resolvedBundle], 'unzip file-type listing')
-  assertArchiveEntries(entries, details)
+  const { bytes, eocdOffset } = readZipFile(resolvedBundle)
+  run(runner, 'unzip', ['-UU', '-tqq', resolvedBundle], 'unzip integrity check')
+  const entries = readCentralDirectoryEntries(bytes, eocdOffset)
+  assertArchiveEntries(entries)
 
   const directory = mkdtempSync(join(tmpdir(), 'dupert-android-aab-'))
   try {
-    run(runner, 'unzip', ['-qq', resolvedBundle, 'base/assets/public/*', '-d', directory], 'unzip packaged bundle extraction')
+    run(runner, 'unzip', ['-UU', '-qq', resolvedBundle, 'base/assets/public/*', '-d', directory], 'unzip packaged bundle extraction')
     assertPackagedNativeBundlePolicy(join(directory, 'base', 'assets', 'public'), environment)
   } finally {
     rmSync(directory, { force: true, recursive: true })

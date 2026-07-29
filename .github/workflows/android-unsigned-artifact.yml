@@ -73,7 +73,7 @@ jobs:
               exit 1
             }
           done
-          for tool in /usr/bin/curl /usr/bin/cut /usr/bin/install /usr/bin/sha256sum /usr/bin/unzip /usr/bin/zipinfo; do
+          for tool in /usr/bin/curl /usr/bin/cut /usr/bin/install /usr/bin/sha256sum /usr/bin/unzip; do
             test -x "$tool" || {
               echo "::error title=Missing hosted tool::$tool is unavailable"
               exit 1

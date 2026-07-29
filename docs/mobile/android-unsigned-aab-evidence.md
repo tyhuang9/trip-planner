@@ -22,10 +22,14 @@ The hosted job uses Java 21 and the repository's pinned Gradle wrapper to run
 canonical `app-release.aab` filename and fails closed unless all of these checks
 pass:
 
-1. The AAB is a regular ZIP with safe, unique entries containing only regular
-   files and directories. Absolute, ambiguous, parent-traversal, backslash,
-   duplicate, control-character, symlink, and special-file entries are rejected
-   before extraction.
+1. The AAB is a regular ZIP whose central directory is parsed directly so raw
+   member names and external file types are inspected without line-oriented
+   tool output. Entries must be safe and unique and contain only regular files
+   and directories. Absolute, ambiguous, parent-traversal, backslash, duplicate,
+   control-character, non-UTF-8, encrypted, extra-field, unsupported-creator,
+   symlink, and special-file entries are rejected before extraction. Local and
+   central names/flags must match, and Info-ZIP alternate Unicode-name handling
+   is disabled for both integrity checking and extraction.
 2. `BundleConfig.pb`, the base module manifest, and
    `base/assets/public/index.html` are present. JAR signature entries are absent.
 3. Google's official bundletool 1.18.3 validates the bundle and reports the

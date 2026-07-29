@@ -6,15 +6,16 @@ import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { assertUnsignedJarsignerResult, checkAndroidUnsignedBundle } from './check-android-unsigned-bundle.mjs'
 import {
-  archiveDetails,
   bundletoolValidation,
   emptyZip,
   expectedManifest,
   requiredEntries,
+  unicodePathExtra,
   unsignedJarsigner,
+  zipFixture,
 } from './fixtures/android-unsigned-bundle.mjs'
 
-async function fixturePaths(t, contents = emptyZip) {
+async function fixturePaths(t, contents = zipFixture()) {
   const directory = await mkdtemp(join(tmpdir(), 'dupert-android-aab-test-'))
   const bundle = join(directory, 'app-release.aab')
   const bundletoolJar = join(directory, 'bundletool-all-1.18.3.jar')
@@ -28,8 +29,6 @@ function success(stdout = '') {
 }
 
 function fixtureRunner({
-  entries = requiredEntries,
-  details = archiveDetails(entries),
   extractedFiles = { 'index.html': '<main>native</main>' },
   validationResult,
   manifestResults = {},
@@ -53,9 +52,7 @@ function fixtureRunner({
     }
     if (executable !== 'unzip') throw new Error(`unexpected tool: ${executable}`)
     if (unzipResult) return unzipResult
-    if (args[0] === '-Z1') return success(`${entries.join('\n')}\n`)
-    if (args[0] === '-Z' && args[1] === '-l') return success(details)
-    if (args[0] === '-qq') {
+    if (args.includes('-qq') && args.includes('-d')) {
       const publicDirectory = join(args[args.indexOf('-d') + 1], 'base', 'assets', 'public')
       mkdirSync(publicDirectory, { recursive: true })
       for (const [name, contents] of Object.entries(extractedFiles)) {
@@ -87,10 +84,8 @@ test('accepts a validated unsigned AAB and invokes pinned tools with exact argum
   ])
   assert.deepEqual(calls[6], ['jarsigner', ['-verify', bundle]])
   assert.deepEqual(calls.slice(7).map(([, args]) => args), [
-    ['-tqq', bundle],
-    ['-Z1', bundle],
-    ['-Z', '-l', bundle],
-    ['-qq', bundle, 'base/assets/public/*', '-d', calls[10][1][4]],
+    ['-UU', '-tqq', bundle],
+    ['-UU', '-qq', bundle, 'base/assets/public/*', '-d', calls[8][1][5]],
   ])
 })
 
@@ -208,57 +203,121 @@ test('rejects malformed ZIP evidence, unzip failures, and missing required entri
     () => checkAndroidUnsignedBundle(bundle, options(bundletoolJar, fixtureRunner({ unzipResult: { ...success(), status: 2 } }))),
     /unzip integrity check returned an unexpected result/,
   )
+  const missing = await fixturePaths(t, zipFixture(requiredEntries.slice(0, -1)))
   assert.throws(
-    () => checkAndroidUnsignedBundle(bundle, options(bundletoolJar, fixtureRunner({ entries: requiredEntries.slice(0, -1) }))),
+    () => checkAndroidUnsignedBundle(missing.bundle, options(missing.bundletoolJar, fixtureRunner())),
     /missing required entry: base\/assets\/public\/index\.html/,
   )
 })
 
-test('rejects duplicate, absolute, ambiguous, parent-traversal, and backslash archive paths', async (t) => {
-  const { bundle, bundletoolJar } = await fixturePaths(t)
+test('rejects duplicate, absolute, ambiguous, control, parent-traversal, and backslash archive paths', async (t) => {
   for (const [entries, expected] of [
     [[...requiredEntries, requiredEntries[0]], /duplicate archive entries/],
     [[...requiredEntries, '/absolute'], /unsafe archive path/],
     [[...requiredEntries, 'base/assets/public//ambiguous'], /unsafe archive path/],
     [[...requiredEntries, 'base/assets/public/./ambiguous'], /unsafe archive path/],
-    [[...requiredEntries, 'base/assets/public/control\rname'], /unsafe archive path/],
+    [[...requiredEntries, 'base/assets/public/control\rname'], /control-character archive path/],
+    [[...requiredEntries, 'base/assets/public/control\nname'], /control-character archive path/],
+    [[...requiredEntries, 'base/assets/public/control\r\nname'], /control-character archive path/],
     [[...requiredEntries, 'base/assets/public/../escape'], /unsafe archive path/],
     [[...requiredEntries, 'base\\assets\\public\\escape'], /unsafe archive path/],
   ]) {
+    const { bundle, bundletoolJar } = await fixturePaths(t, zipFixture(entries))
     assert.throws(
-      () => checkAndroidUnsignedBundle(bundle, options(bundletoolJar, fixtureRunner({ entries }))),
+      () => checkAndroidUnsignedBundle(bundle, options(bundletoolJar, fixtureRunner())),
       expected,
     )
   }
 })
 
 test('allows a manifest but rejects case-insensitive JAR signature material', async (t) => {
-  const { bundle, bundletoolJar } = await fixturePaths(t)
   const manifestEntries = [...requiredEntries, 'base/assets/public/', 'META-INF/MANIFEST.MF']
-  assert.doesNotThrow(() => checkAndroidUnsignedBundle(bundle, options(bundletoolJar, fixtureRunner({ entries: manifestEntries }))))
+  const manifest = await fixturePaths(t, zipFixture(manifestEntries))
+  assert.doesNotThrow(() => checkAndroidUnsignedBundle(
+    manifest.bundle,
+    options(manifest.bundletoolJar, fixtureRunner()),
+  ))
 
   for (const extension of ['SF', 'rsa', 'DsA', 'eC']) {
     const entries = [...requiredEntries, `META-INF/RELEASE.${extension}`]
+    const { bundle, bundletoolJar } = await fixturePaths(t, zipFixture(entries))
     assert.throws(
-      () => checkAndroidUnsignedBundle(bundle, options(bundletoolJar, fixtureRunner({ entries }))),
+      () => checkAndroidUnsignedBundle(bundle, options(bundletoolJar, fixtureRunner())),
+      /JAR signing material/,
+    )
+  }
+  for (const name of ['META-INF/SIG-CUSTOM', 'meta-inf/sig-extra.bin']) {
+    const { bundle, bundletoolJar } = await fixturePaths(t, zipFixture([...requiredEntries, name]))
+    assert.throws(
+      () => checkAndroidUnsignedBundle(bundle, options(bundletoolJar, fixtureRunner())),
       /JAR signing material/,
     )
   }
 })
 
-test('rejects symlinks, special entries, and incomplete file-type evidence', async (t) => {
-  const { bundle, bundletoolJar } = await fixturePaths(t)
+test('rejects symlinks, special entries, and inconsistent central-directory evidence', async (t) => {
   for (const type of ['l', 'c', 'b', 'p', 's']) {
-    const details = archiveDetails(requiredEntries, { [requiredEntries[0]]: type })
+    const { bundle, bundletoolJar } = await fixturePaths(
+      t,
+      zipFixture(requiredEntries, { [requiredEntries[0]]: type }),
+    )
     assert.throws(
-      () => checkAndroidUnsignedBundle(bundle, options(bundletoolJar, fixtureRunner({ details }))),
+      () => checkAndroidUnsignedBundle(bundle, options(bundletoolJar, fixtureRunner())),
       /symbolic link or unsupported archive entry/,
     )
   }
+  const inconsistent = await fixturePaths(t, zipFixture(
+    requiredEntries,
+    {},
+    { declaredEntryCount: requiredEntries.length + 1 },
+  ))
   assert.throws(
-    () => checkAndroidUnsignedBundle(bundle, options(bundletoolJar, fixtureRunner({ details: archiveDetails(requiredEntries).split('\n').slice(0, -3).join('\n') }))),
-    /did not report file types for every AAB entry/,
+    () => checkAndroidUnsignedBundle(
+      inconsistent.bundle,
+      options(inconsistent.bundletoolJar, fixtureRunner()),
+    ),
+    /invalid ZIP central-directory record/,
   )
+})
+
+test('rejects alternate path metadata and unsupported ZIP creator/type combinations', async (t) => {
+  const entry = requiredEntries[0]
+  const cases = [
+    [
+      zipFixture(requiredEntries, {}, {
+        centralExtraFields: { [entry]: unicodePathExtra('../alternate-name') },
+      }),
+      /unsupported ZIP extra fields/,
+    ],
+    [
+      zipFixture(requiredEntries, {}, {
+        centralExtraFields: {},
+        localExtraFields: { [entry]: unicodePathExtra('../local-alternate-name') },
+      }),
+      /unsupported or truncated ZIP local metadata/,
+    ],
+    [zipFixture(requiredEntries, {}, { hostSystem: 10 }), /unsupported ZIP creator/],
+    [
+      zipFixture(requiredEntries, {}, {
+        externalAttributes: { [entry]: (0o120777 << 16) >>> 0 },
+        hostSystem: 0,
+      }),
+      /unsupported ZIP creator or external file type/,
+    ],
+  ]
+  for (const [contents, expected] of cases) {
+    const { bundle, bundletoolJar } = await fixturePaths(t, contents)
+    assert.throws(
+      () => checkAndroidUnsignedBundle(bundle, options(bundletoolJar, fixtureRunner())),
+      expected,
+    )
+  }
+
+  const dos = await fixturePaths(t, zipFixture(requiredEntries, {}, { hostSystem: 0 }))
+  assert.doesNotThrow(() => checkAndroidUnsignedBundle(
+    dos.bundle,
+    options(dos.bundletoolJar, fixtureRunner()),
+  ))
 })
 
 test('reuses packaged-native policy and rejects an omitted extracted entrypoint', async (t) => {
