@@ -406,6 +406,16 @@ class ShareLinkControllerTest {
     }
 
     @Test
+    void legacyAcceptWithoutBearerReturns401EvenWithGuestCookie() throws Exception {
+        mvc.perform(post("/api/share/" + RAW_TOKEN + "/accept")
+                .with(remoteAddr("203.0.113.37"))
+                .cookie(guestCookie()))
+            .andExpect(status().isUnauthorized());
+
+        verify(shareLinkRepository, never()).findByTokenHash(any());
+    }
+
+    @Test
     void bodyAcceptWithoutBearerReturns401EvenWithGuestCookie() throws Exception {
         mvc.perform(post("/api/share/accept")
                 .with(remoteAddr("203.0.113.33"))
