@@ -63,11 +63,15 @@ async function probeLiveness(timeoutMs: number): Promise<OutageKind | null> {
 }
 
 async function probeHealth(timeoutMs: number): Promise<ProbeResult> {
+  const deadline = Date.now() + timeoutMs
   const livenessResult = await probeLiveness(timeoutMs)
   if (livenessResult !== null) return livenessResult
 
+  const remainingMs = deadline - Date.now()
+  if (remainingMs <= 0) return undefined
+
   try {
-    const database = await fetchHealth('/actuator/health/database', timeoutMs)
+    const database = await fetchHealth('/actuator/health/database', remainingMs)
     if (database.status === 503) return 'database'
     return database.ok ? null : undefined
   } catch {
