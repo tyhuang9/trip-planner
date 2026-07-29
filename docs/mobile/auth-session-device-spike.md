@@ -6,13 +6,20 @@
 > this repository contains no device results.
 
 The machine-readable contract is [`auth-session-device-evidence.template.json`](auth-session-device-evidence.template.json).
-Copy it to a reviewable evidence location only when a run is authorized. Do not
-replace `UNEXECUTED` with a claim unless the linked, redaction-safe artifact exists.
+It is immutable: **never edit, rename, or use the tracked `.template.json` as a
+result file.** When a run is authorized, copy it exactly to
+`docs/mobile/evidence/issue-64/YYYY-MM-DD/<run-id>/results.json`, where `<run-id>`
+contains only lowercase letters, digits, and hyphens. Edit only that dated copy;
+keep raw captures in restricted storage and link them only by redaction-safe
+reference/checksum. Do not replace `UNEXECUTED` with a claim unless the linked,
+redaction-safe artifact exists.
 
 ## Required execution metadata
 
-Record each field for each physical device. `UNEXECUTED` is the only allowed value
-in this template.
+Record each field inside the matching iOS or Android platform object. `UNEXECUTED`
+is the only allowed value in the tracked template; a copied, partial result retains
+`UNEXECUTED` for rows not yet run and may use `PASS`, `FAIL`, `BLOCKED`, or
+`UNVERIFIED` only for a recorded result status.
 
 | Field | iPhone | Android |
 | --- | --- | --- |
@@ -33,11 +40,12 @@ tooling used; never infer a device result from a web or simulator run.
 
 ## Run matrix
 
-Run every row on both platforms unless a row explicitly says otherwise. Keep the
-status and every evidence field `UNEXECUTED` until the run and its artifact are
-reviewed.
+Run every shared row on both platforms unless a row explicitly says otherwise.
+Each platform owns a separate status, steps, and evidence object: do not combine an
+iOS result with Android, even when both results are the same. Keep every template
+value `UNEXECUTED` until the run and its artifact are reviewed.
 
-| Case ID | Required coverage | Status | Safe evidence reference |
+| Case ID | Required coverage | iOS result/evidence | Android result/evidence |
 | --- | --- | --- | --- |
 | `member_login` | Member login | `UNEXECUTED` | `UNEXECUTED` |
 | `access_token_expiry_refresh_rotation` | Access-token expiry and refresh rotation | `UNEXECUTED` | `UNEXECUTED` |
@@ -50,19 +58,20 @@ reviewed.
 | `guest_acceptance` | Guest acceptance | `UNEXECUTED` | `UNEXECUTED` |
 | `trip_rest_read` | Trip REST read | `UNEXECUTED` | `UNEXECUTED` |
 | `trip_write` | Trip write | `UNEXECUTED` | `UNEXECUTED` |
-| `sse_streaming_genuine_without_global_native_http_patch` | Genuine SSE streaming; prove incremental delivery and no global native HTTP patch | `UNEXECUTED` | `UNEXECUTED` |
+| `sse_streaming_genuine_without_global_native_http_patch` | Genuine SSE streaming | `UNEXECUTED` | `UNEXECUTED` |
 | `guest_relaunch` | Guest relaunch | `UNEXECUTED` | `UNEXECUTED` |
 | `guest_claim` | Guest claim | `UNEXECUTED` | `UNEXECUTED` |
 | `guest_expiry` | Guest expiry | `UNEXECUTED` | `UNEXECUTED` |
 | `guest_revocation` | Guest revocation | `UNEXECUTED` | `UNEXECUTED` |
-| `offline_loss_reconnect_each_session_boundary` | Offline loss/reconnect at every listed member, guest, REST, and SSE session boundary | `UNEXECUTED` | `UNEXECUTED` |
-| `ios_webview_domain_configuration` | iOS WebView domain configuration | `UNEXECUTED` | `UNEXECUTED` |
-| `android_third_party_cookie_behavior` | Android third-party-cookie behavior | `UNEXECUTED` | `UNEXECUTED` |
+| `offline_loss_reconnect_each_session_boundary` | Offline loss/reconnect at every listed boundary | `UNEXECUTED` | `UNEXECUTED` |
+| `ios_webview_domain_configuration` | iOS WebView domain configuration | `UNEXECUTED` | not applicable |
+| `android_third_party_cookie_behavior` | Android third-party-cookie behavior | not applicable | `UNEXECUTED` |
 
-For the offline row, exercise loss and reconnect at every boundary listed in the
-JSON fixture, including login, refresh, lifecycle transitions, logout/deletion,
-verification/reset returns, guest acceptance/relaunch/claim/expiry/revocation,
-trip REST read/write, and SSE.
+For the offline row, exercise loss and reconnect at every boundary listed in each
+platform's JSON result object, including login, refresh, lifecycle transitions,
+logout/deletion, verification/reset returns, guest acceptance/relaunch/claim/
+expiry/revocation, trip REST read/write, and SSE. Each boundary needs separate iOS
+and Android status/evidence and may legitimately have divergent outcomes.
 
 ## Credential and network evidence
 
