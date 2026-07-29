@@ -26,10 +26,13 @@ pass:
    member names and external file types are inspected without line-oriented
    tool output. Entries must be safe and unique and contain only regular files
    and directories. Absolute, ambiguous, parent-traversal, backslash, duplicate,
-   control-character, non-UTF-8, encrypted, extra-field, unsupported-creator,
-   symlink, and special-file entries are rejected before extraction. Local and
-   central names/flags must match, and Info-ZIP alternate Unicode-name handling
-   is disabled for both integrity checking and extraction.
+   control-character, non-UTF-8, encrypted, unsupported-creator, symlink, and
+   special-file entries are rejected before extraction. The only accepted ZIP
+   extra field is one structurally valid Info-ZIP extended timestamp (`0x5455`)
+   per entry; its local and central flags and modification time must agree. All
+   other, duplicate, or malformed extra fields are rejected. Local and central
+   names/flags must match, and Info-ZIP alternate Unicode-name handling is
+   disabled for both integrity checking and extraction.
 2. `BundleConfig.pb`, the base module manifest, and
    `base/assets/public/index.html` are present. JAR signature entries are absent.
 3. Google's official bundletool 1.18.3 validates the bundle and reports the

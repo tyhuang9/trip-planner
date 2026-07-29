@@ -8,6 +8,7 @@ import { assertUnsignedJarsignerResult, checkAndroidUnsignedBundle } from './che
 import {
   bundletoolValidation,
   emptyZip,
+  extendedTimestampExtra,
   expectedManifest,
   requiredEntries,
   unicodePathExtra,
@@ -318,6 +319,55 @@ test('rejects alternate path metadata and unsupported ZIP creator/type combinati
     dos.bundle,
     options(dos.bundletoolJar, fixtureRunner()),
   ))
+})
+
+test('accepts canonical extended timestamps with matching local and central modification time', async (t) => {
+  const entry = requiredEntries[0]
+  const modifiedTime = 1_785_369_600
+  for (const [centralExtra, localExtra] of [
+    [extendedTimestampExtra({ modifiedTime }), extendedTimestampExtra({ modifiedTime })],
+    [
+      extendedTimestampExtra({ modifiedTime }),
+      extendedTimestampExtra({ modifiedTime, accessedTime: modifiedTime + 1 }),
+    ],
+  ]) {
+    centralExtra.writeUInt8(localExtra.readUInt8(4), 4)
+    const { bundle, bundletoolJar } = await fixturePaths(t, zipFixture(requiredEntries, {}, {
+      centralExtraFields: { [entry]: centralExtra },
+      localExtraFields: { [entry]: localExtra },
+    }))
+    assert.doesNotThrow(() => checkAndroidUnsignedBundle(
+      bundle,
+      options(bundletoolJar, fixtureRunner()),
+    ))
+  }
+})
+
+test('rejects malformed, duplicate, or mismatched extended timestamp metadata', async (t) => {
+  const entry = requiredEntries[0]
+  const valid = extendedTimestampExtra({ modifiedTime: 1_785_369_600 })
+  const invalidFlags = Buffer.from(valid)
+  invalidFlags.writeUInt8(0x81, 4)
+  const missingModificationTime = Buffer.from(valid)
+  missingModificationTime.writeUInt8(0x02, 4)
+  const mismatchedTime = extendedTimestampExtra({ modifiedTime: 1_785_369_601 })
+  const cases = [
+    { centralExtraFields: { [entry]: invalidFlags }, localExtraFields: { [entry]: valid } },
+    { centralExtraFields: { [entry]: missingModificationTime }, localExtraFields: { [entry]: valid } },
+    { centralExtraFields: { [entry]: Buffer.concat([valid, valid]) }, localExtraFields: { [entry]: valid } },
+    { centralExtraFields: { [entry]: valid }, localExtraFields: { [entry]: mismatchedTime } },
+    { centralExtraFields: { [entry]: valid }, localExtraFields: {} },
+  ]
+  for (const extraFields of cases) {
+    const { bundle, bundletoolJar } = await fixturePaths(
+      t,
+      zipFixture(requiredEntries, {}, extraFields),
+    )
+    assert.throws(
+      () => checkAndroidUnsignedBundle(bundle, options(bundletoolJar, fixtureRunner())),
+      /timestamp metadata/,
+    )
+  }
 })
 
 test('reports bounded extra-field metadata without echoing archive names or payloads', async (t) => {

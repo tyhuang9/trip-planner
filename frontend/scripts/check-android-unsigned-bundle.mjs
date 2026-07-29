@@ -28,6 +28,9 @@ const ZIP64_UINT16_SENTINEL = 0xffff
 const ZIP64_UINT32_SENTINEL = 0xffffffff
 const ZIP_HOST_DOS = 0
 const ZIP_HOST_UNIX = 3
+const ZIP_EXTENDED_TIMESTAMP_FIELD_ID = 0x5455
+const ZIP_EXTENDED_TIMESTAMP_FLAGS_MASK = 0x07
+const ZIP_EXTENDED_TIMESTAMP_MODIFIED_FLAG = 0x01
 const ZIP_UNIX_DIRECTORY = 0x4000
 const ZIP_UNIX_FILE_TYPE_MASK = 0xf000
 const ZIP_UNIX_REGULAR_FILE = 0x8000
@@ -184,22 +187,51 @@ function assertSupportedEntryType(name, versionMadeBy, externalAttributes) {
   }
 }
 
-function assertNoUnsupportedExtraFields(bytes, start, length, location) {
-  if (length === 0) return
+function readSupportedExtraFields(bytes, start, length, location) {
+  if (length === 0) return null
   const end = start + length
-  if (start + 4 > end) {
-    throw new Error(`AAB contains malformed ${location} ZIP extra metadata`)
+  let offset = start
+  let timestamp = null
+  while (offset < end) {
+    if (offset + 4 > end) {
+      throw new Error(`AAB contains malformed ${location} ZIP extra metadata`)
+    }
+    const fieldId = bytes.readUInt16LE(offset)
+    const fieldSize = bytes.readUInt16LE(offset + 2)
+    const dataStart = offset + 4
+    const nextOffset = dataStart + fieldSize
+    if (nextOffset > end) {
+      throw new Error(`AAB contains malformed ${location} ZIP extra metadata`)
+    }
+    if (fieldId !== ZIP_EXTENDED_TIMESTAMP_FIELD_ID) {
+      const formattedId = fieldId.toString(16).padStart(4, '0')
+      throw new Error(`AAB contains unsupported ${location} ZIP extra field 0x${formattedId} (${fieldSize} bytes)`)
+    }
+    if (timestamp !== null || fieldSize < 1) {
+      throw new Error(`AAB contains duplicate or malformed ${location} ZIP timestamp metadata`)
+    }
+    const flags = bytes[dataStart]
+    const timestampCount = (flags & 1) + ((flags >>> 1) & 1) + ((flags >>> 2) & 1)
+    const expectedSize = location === 'central' ? 5 : 1 + (4 * timestampCount)
+    if ((flags & ~ZIP_EXTENDED_TIMESTAMP_FLAGS_MASK) !== 0
+      || (flags & ZIP_EXTENDED_TIMESTAMP_MODIFIED_FLAG) === 0
+      || fieldSize !== expectedSize) {
+      throw new Error(`AAB contains malformed ${location} ZIP timestamp metadata`)
+    }
+    timestamp = { flags, modifiedTime: bytes.readUInt32LE(dataStart + 1) }
+    offset = nextOffset
   }
-  const fieldId = bytes.readUInt16LE(start)
-  const fieldSize = bytes.readUInt16LE(start + 2)
-  if (start + 4 + fieldSize > end) {
-    throw new Error(`AAB contains malformed ${location} ZIP extra metadata`)
-  }
-  const formattedId = fieldId.toString(16).padStart(4, '0')
-  throw new Error(`AAB contains unsupported ${location} ZIP extra field 0x${formattedId} (${fieldSize} bytes)`)
+  return timestamp
 }
 
-function assertMatchingLocalHeader(bytes, centralDirectoryOffset, centralOffset, flags, nameBytes) {
+function assertMatchingLocalHeader(
+  bytes,
+  centralDirectoryOffset,
+  centralOffset,
+  flags,
+  nameBytes,
+  centralTimestamp,
+) {
   const localOffset = bytes.readUInt32LE(centralOffset + 42)
   if (localOffset === ZIP64_UINT32_SENTINEL || localOffset + 30 > centralDirectoryOffset
     || bytes.readUInt32LE(localOffset) !== ZIP_LOCAL_FILE_HEADER_SIGNATURE) {
@@ -216,12 +248,18 @@ function assertMatchingLocalHeader(bytes, centralDirectoryOffset, centralOffset,
   if (localFlags !== flags || !localName.equals(nameBytes)) {
     throw new Error('AAB local and central ZIP metadata do not match')
   }
-  assertNoUnsupportedExtraFields(
+  const localTimestamp = readSupportedExtraFields(
     bytes,
     localOffset + 30 + localNameLength,
     localExtraLength,
     'local',
   )
+  if ((localTimestamp === null) !== (centralTimestamp === null)
+    || (localTimestamp !== null
+      && (localTimestamp.flags !== centralTimestamp.flags
+        || localTimestamp.modifiedTime !== centralTimestamp.modifiedTime))) {
+    throw new Error('AAB local and central ZIP timestamp metadata do not match')
+  }
 }
 
 export function readCentralDirectoryEntries(bytes, eocdOffset) {
@@ -254,12 +292,24 @@ export function readCentralDirectoryEntries(bytes, eocdOffset) {
     const nextOffset = offset + 46 + nameLength + extraLength + commentLength
     if ((flags & 0x1) !== 0) throw new Error('AAB contains an encrypted ZIP entry')
     if (nextOffset > eocdOffset) throw new Error('AAB contains a truncated ZIP entry')
-    assertNoUnsupportedExtraFields(bytes, offset + 46 + nameLength, extraLength, 'central')
+    const centralTimestamp = readSupportedExtraFields(
+      bytes,
+      offset + 46 + nameLength,
+      extraLength,
+      'central',
+    )
     const nameBytes = bytes.subarray(offset + 46, offset + 46 + nameLength)
     if ((flags & 0x800) === 0 && nameBytes.some((byte) => byte >= 0x80)) {
       throw new Error('AAB contains a non-UTF-8 archive path')
     }
-    assertMatchingLocalHeader(bytes, centralDirectoryOffset, offset, flags, nameBytes)
+    assertMatchingLocalHeader(
+      bytes,
+      centralDirectoryOffset,
+      offset,
+      flags,
+      nameBytes,
+      centralTimestamp,
+    )
     const name = decodeEntryName(nameBytes)
     assertSupportedEntryType(name, versionMadeBy, externalAttributes)
     entries.push(name)

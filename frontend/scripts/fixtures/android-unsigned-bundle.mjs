@@ -48,6 +48,24 @@ export function unicodePathExtra(path) {
   return field
 }
 
+export function extendedTimestampExtra({ accessedTime, createdTime, modifiedTime = 0 } = {}) {
+  const values = [modifiedTime, accessedTime, createdTime]
+  const flags = values.reduce((result, value, index) => (
+    value === undefined ? result : result | (1 << index)
+  ), 0)
+  const field = Buffer.alloc(5 + (4 * values.filter((value) => value !== undefined).length))
+  field.writeUInt16LE(0x5455, 0)
+  field.writeUInt16LE(field.length - 4, 2)
+  field.writeUInt8(flags, 4)
+  let offset = 5
+  for (const value of values) {
+    if (value === undefined) continue
+    field.writeUInt32LE(value, offset)
+    offset += 4
+  }
+  return field
+}
+
 export function zipFixture(entries = requiredEntries, types = {}, {
   centralExtraFields = {},
   declaredEntryCount = entries.length,
