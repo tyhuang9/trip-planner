@@ -15,8 +15,8 @@ export function DeepLinkScrubber() {
   useEffect(() => {
     const link = parseDeepLinkPath(location.pathname, location.search)
     if (link) navigate(targetFor(link), { replace: true })
-    else if (!location.search && location.pathname === '/verify-email') navigate('/link-invalid/verify-email', { replace: true })
-    else if (!location.search && location.pathname === '/reset-password') navigate('/link-invalid/reset-password', { replace: true })
+    else if (location.pathname === '/verify-email') navigate('/link-invalid/verify-email', { replace: true })
+    else if (location.pathname === '/reset-password') navigate('/link-invalid/reset-password', { replace: true })
     else navigate('/404', { replace: true })
   }, [location.pathname, location.search, navigate])
   return null

@@ -2,6 +2,7 @@ import { deepLinkTarget, type DeepLink } from './policy'
 import { clearDeepLinkHandoff, findDeepLinkHandoff, putDeepLinkHandoff } from './vault'
 
 const TTL_MS = 5 * 60_000
+const TRIP_REPLAY_DEDUPE_MS = 5_000
 const CAPACITY = 16
 export type QueuedDeepLink = { target: string; handoffId?: string }
 let pending: Array<QueuedDeepLink & { key: string; expiresAt: number }> = []
@@ -27,7 +28,7 @@ export function enqueueDeepLink(link: DeepLink) {
   const key = handoffId ?? target
   if (pending.some((entry) => entry.key === key)) return
   if (link.kind === 'trip') {
-    recentTripTargets.set(target, Date.now() + TTL_MS)
+    recentTripTargets.set(target, Date.now() + TRIP_REPLAY_DEDUPE_MS)
     while (recentTripTargets.size > CAPACITY) {
       const oldestTarget = recentTripTargets.keys().next().value
       if (oldestTarget) recentTripTargets.delete(oldestTarget)

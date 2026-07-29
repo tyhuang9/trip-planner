@@ -25,6 +25,18 @@ describe('deep-link queue', () => {
     expect(takeDeepLink()).toBeUndefined()
   })
 
+  it('collapses only immediate trip replays and permits a later reopen', () => {
+    vi.useFakeTimers()
+    enqueueDeepLink({ kind: 'trip', publicId: 'abc123' })
+    expect(takeDeepLink()).toEqual({ target: '/trips/abc123', handoffId: undefined })
+    enqueueDeepLink({ kind: 'trip', publicId: 'abc123' })
+    expect(takeDeepLink()).toBeUndefined()
+    vi.advanceTimersByTime(5_001)
+    enqueueDeepLink({ kind: 'trip', publicId: 'abc123' })
+    expect(takeDeepLink()).toEqual({ target: '/trips/abc123', handoffId: undefined })
+    vi.useRealTimers()
+  })
+
   it('expires queued handoffs', () => {
     vi.useFakeTimers()
     enqueueDeepLink({ kind: 'verify-email', token: 'verify-secret', returnTo: { kind: 'route', path: '/trips' } })

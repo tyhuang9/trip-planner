@@ -4,6 +4,7 @@ const TTL_MS = 10 * 60_000
 const CAPACITY = 16
 const handoffs = new Map<string, { link: Exclude<DeepLink, { kind: 'trip' }>; expiresAt: number }>()
 const handoffIdsByLink = new Map<string, string>()
+let listeners = new Set<() => void>()
 
 function handoffId(): string {
   const bytes = new Uint8Array(16)
@@ -19,6 +20,7 @@ export function putDeepLinkHandoff(link: Exclude<DeepLink, { kind: 'trip' }>): s
   handoffs.set(id, { link, expiresAt: Date.now() + TTL_MS })
   handoffIdsByLink.set(JSON.stringify(link), id)
   while (handoffs.size > CAPACITY) clearDeepLinkHandoff(handoffs.keys().next().value)
+  listeners.forEach((listener) => listener())
   return id
 }
 
@@ -43,6 +45,7 @@ export function clearDeepLinkHandoff(id: string | undefined) {
   const handoff = handoffs.get(id)
   if (handoff) handoffIdsByLink.delete(JSON.stringify(handoff.link))
   handoffs.delete(id)
+  listeners.forEach((listener) => listener())
 }
 
 export function pruneDeepLinkHandoffs() {
@@ -50,7 +53,13 @@ export function pruneDeepLinkHandoffs() {
   for (const [id, handoff] of handoffs) if (handoff.expiresAt <= now) clearDeepLinkHandoff(id)
 }
 
+export function subscribeToDeepLinkVault(listener: () => void) {
+  listeners.add(listener)
+  return () => { listeners.delete(listener) }
+}
+
 export function __resetDeepLinkVaultForTests() {
   handoffs.clear()
   handoffIdsByLink.clear()
+  listeners = new Set()
 }
