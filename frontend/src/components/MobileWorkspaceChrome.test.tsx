@@ -75,6 +75,19 @@ describe('<MobileWorkspaceChrome>', () => {
     })
   })
 
+  it('closes from the relocated close control and restores focus to the menu trigger', async () => {
+    const user = userEvent.setup()
+    renderChrome()
+
+    const { trigger } = await openDrawer()
+    await user.click(screen.getByRole('button', { name: /close trip menu/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /monterey/i })).not.toBeInTheDocument()
+      expect(trigger).toHaveFocus()
+    })
+  })
+
   it('traps keyboard focus inside the trip popup', async () => {
     const user = userEvent.setup()
     renderChrome()
