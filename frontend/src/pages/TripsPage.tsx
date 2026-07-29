@@ -10,7 +10,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router'
 import { useAuth } from '../auth/useAuth'
 import { parseApiError } from '../api/errors'
 import { useDeleteTrip, useTrips } from '../hooks/useTrips'

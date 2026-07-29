@@ -149,6 +149,21 @@ class CorsConfigTest {
             .contains("X-Correlation-Id", "Server-Timing");
     }
 
+    @Test
+    void healthProbeCorsDoesNotEnableCredentials() {
+        AppProperties props = appProperties("http://localhost:3000");
+        MockEnvironment environment = new MockEnvironment();
+        environment.setActiveProfiles("dev");
+
+        var source = new CorsConfig().corsConfigurationSource(props, environment);
+        var config = source.getCorsConfiguration(
+            new MockHttpServletRequest("OPTIONS", "/actuator/health/liveness"));
+
+        assertThat(config).isNotNull();
+        assertThat(config.getAllowedMethods()).containsExactly("GET", "OPTIONS");
+        assertThat(config.getAllowCredentials()).isFalse();
+    }
+
     private static AppProperties appProperties(String frontendOrigin) {
         return appProperties(frontendOrigin, "");
     }
