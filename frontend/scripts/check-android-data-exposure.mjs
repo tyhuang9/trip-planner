@@ -13,6 +13,10 @@ function broadPath(contents) {
   return /<(?:external-path|cache-path)\b[^>]*\bpath\s*=\s*(["'])(?:\.{1,2}\/?|\/?)\1/i.test(contents)
 }
 
+function withoutXmlComments(contents) {
+  return contents.replace(/<!--[\s\S]*?-->/g, '')
+}
+
 export function inspectAndroidDataExposure(androidAppDirectory) {
   const appDirectory = resolve(androidAppDirectory)
   const sourceSetsDirectory = join(appDirectory, 'src')
@@ -21,7 +25,7 @@ export function inspectAndroidDataExposure(androidAppDirectory) {
 
   if (!existsSync(manifestPath)) return [`Android manifest is missing: ${manifestPath}`]
 
-  const manifest = readFileSync(manifestPath, 'utf8')
+  const manifest = withoutXmlComments(readFileSync(manifestPath, 'utf8'))
   const application = manifest.match(/<application\b[^>]*>/i)?.[0]
   const allowBackup = [...(application?.matchAll(/\bandroid:allowBackup\s*=\s*(["'])([^"']*)\1/gi) ?? [])]
   if (allowBackup.length !== 1) violations.push('Android application must declare exactly one android:allowBackup="false" attribute')
@@ -29,7 +33,10 @@ export function inspectAndroidDataExposure(androidAppDirectory) {
     violations.push('Android application must set android:allowBackup="false"')
   }
   for (const path of collectFiles(sourceSetsDirectory)) {
-    const contents = readFileSync(path, 'utf8')
+    const contents = withoutXmlComments(readFileSync(path, 'utf8'))
+    if (path !== manifestPath && basename(path) === 'AndroidManifest.xml' && /\bandroid:allowBackup\s*=/i.test(contents)) {
+      violations.push(`Android variant manifests must not override android:allowBackup: ${path.slice(appDirectory.length + 1)}`)
+    }
     if (/androidx\.core\.content\.FileProvider/i.test(contents)) {
       violations.push(`Android source must not declare androidx.core.content.FileProvider without a reviewed scoped sharing design: ${path.slice(appDirectory.length + 1)}`)
     }

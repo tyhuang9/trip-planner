@@ -124,9 +124,10 @@ rather than adding direct Capacitor globals.
 
 ## Android data exposure boundary
 
-The committed Android manifest sets `android:allowBackup="false"` and contains
-no `FileProvider`. `npm run check:android-data-exposure` fails if that backup
-setting is missing, unsafe, or duplicated; if a `FileProvider` or
+The committed main Android manifest sets `android:allowBackup="false"`, variant
+manifests cannot override it, and no source set contains a `FileProvider`.
+`npm run check:android-data-exposure` fails if that backup setting is missing,
+unsafe, duplicated, or overridden; if a `FileProvider` or
 `file_paths.xml` returns; or if a broad `external-path` or `cache-path` is
 introduced. This is a source policy, not device evidence: Android 12+ device-
 to-device transfer behavior can vary by OEM, so `allowBackup="false"` is not a

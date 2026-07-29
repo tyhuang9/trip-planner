@@ -7,16 +7,18 @@ import { inspectAndroidDataExposure } from './check-android-data-exposure.mjs'
 
 const manifest = '<manifest><application android:allowBackup="false" /></manifest>'
 
+async function writeSource(directory, path, contents) {
+  const file = join(directory, 'src', path)
+  await mkdir(dirname(file), { recursive: true })
+  await writeFile(file, contents)
+}
+
 async function createAndroidApp(manifestContents = manifest, files = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'dupert-android-policy-'))
-  const source = join(directory, 'src', 'main')
-  await mkdir(source, { recursive: true })
-  await writeFile(join(source, 'AndroidManifest.xml'), manifestContents)
-  await Promise.all(Object.entries(files).map(async ([path, contents]) => {
-    const file = join(source, path)
-    await mkdir(join(file, '..'), { recursive: true })
-    await writeFile(file, contents)
-  }))
+  await writeSource(directory, 'main/AndroidManifest.xml', manifestContents)
+  await Promise.all(Object.entries(files).map(([path, contents]) =>
+    writeSource(directory, `main/${path}`, contents),
+  ))
   return directory
 }
 
@@ -37,6 +39,17 @@ test('rejects missing, unsafe, and duplicate backup declarations', async (t) => 
   }
 })
 
+test('ignores a commented application decoy before the real declaration', async (t) => {
+  const directory = await createAndroidApp(
+    '<manifest><!-- <application android:allowBackup="false"><provider android:name="androidx.core.content.FileProvider" /></application> --><application android:allowBackup="true" /></manifest>',
+  )
+  t.after(() => rm(directory, { force: true, recursive: true }))
+
+  const result = inspectAndroidDataExposure(directory).join('\n')
+  assert.match(result, /must set android:allowBackup="false"/)
+  assert.doesNotMatch(result, /FileProvider/)
+})
+
 test('rejects a FileProvider, file_paths.xml, and broad paths', async (t) => {
   const directory = await createAndroidApp(
     '<manifest><application android:allowBackup="false"><provider android:name="androidx.core.content.FileProvider" /></application></manifest>',
@@ -55,12 +68,14 @@ test('rejects a FileProvider, file_paths.xml, and broad paths', async (t) => {
   assert.match(inspectAndroidDataExposure(cacheDirectory).join('\n'), /broad external-path or cache-path/)
 })
 
-test('rejects unsafe release-source-set additions', async (t) => {
+test('rejects release and debug backup overrides', async (t) => {
   const directory = await createAndroidApp()
-  const releaseManifest = join(directory, 'src', 'release', 'AndroidManifest.xml')
-  await mkdir(dirname(releaseManifest), { recursive: true })
-  await writeFile(releaseManifest, '<manifest><application><provider android:name="androidx.core.content.FileProvider" /></application></manifest>')
+  await writeSource(directory, 'release/AndroidManifest.xml', '<manifest><application android:allowBackup="true"><provider android:name="androidx.core.content.FileProvider" /></application></manifest>')
+  await writeSource(directory, 'debug/AndroidManifest.xml', '<manifest><application android:allowBackup="false" /></manifest>')
   t.after(() => rm(directory, { force: true, recursive: true }))
 
-  assert.match(inspectAndroidDataExposure(directory).join('\n'), /FileProvider/)
+  const result = inspectAndroidDataExposure(directory).join('\n')
+  assert.match(result, /src\/release\/AndroidManifest\.xml/)
+  assert.match(result, /src\/debug\/AndroidManifest\.xml/)
+  assert.match(result, /FileProvider/)
 })
