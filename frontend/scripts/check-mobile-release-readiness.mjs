@@ -6,16 +6,19 @@ const REQUIRED_GATES = ['Repository contract', 'Artifact provenance', 'Signing a
 const ALLOWED_GATE_STATUSES = new Set(['PASS', 'BLOCKED', 'UNVERIFIED', 'FAIL'])
 const FORBIDDEN_TRACKED_RELEASE_FILES = /(?:^|\/)(?:[^/]+\.(?:jks|keystore|p12|p8|pfx|pem|key|cer|crt|mobileprovision|provisionprofile)|keystore\.properties)$/i
 const RESULT_PATH = /^docs\/mobile\/evidence\/issue-64\/(\d{4}-\d{2}-\d{2})\/([a-z0-9]+(?:-[a-z0-9]+)*)\/results\.json$/
+const RESULT_SHAPE = /^docs\/mobile\/evidence\/issue-64\/([^/]+)\/([^/]+)\/results\.json$/
 const REQUIRED_SOURCE_FILES = ['docs/mobile/auth-session-device-evidence.template.json', 'docs/mobile/auth-session-device-spike.md', 'docs/mobile/auth-session-transport-adr-template.md']
 const EVIDENCE_KEYS = ['safe_reference', 'observed_result', 'network_trace_reference', 'artifact_identity_checksum', 'redaction_notes']
 const CASE_KEYS = ['case_id', 'preconditions', 'actions', 'expected_outcome', 'cleanup', 'status', 'evidence']
+// Version-2 source of truth: each physical platform must independently execute these member and guest sets.
 const CONTEXT_CASES = {
   member: ['member_login', 'access_token_expiry_refresh_rotation', 'background_resume', 'force_kill_relaunch', 'logout', 'account_deletion', 'email_verification_return', 'password_reset_return', 'trip_rest_read', 'trip_write', 'sse_streaming_genuine_without_global_native_http_patch', 'offline_loss_reconnect_each_session_boundary'],
   guest: ['guest_acceptance', 'background_resume', 'force_kill_relaunch', 'guest_relaunch', 'trip_rest_read', 'trip_write', 'sse_streaming_genuine_without_global_native_http_patch', 'guest_claim', 'guest_expiry', 'guest_revocation', 'offline_loss_reconnect_each_session_boundary'],
 }
 const CONTEXT_STAGES = { member: ['issued', 'stored', 'attached', 'rotated', 'revoked'], guest: ['issued', 'stored', 'attached', 'claimed', 'revoked'] }
 const PLATFORM_CASE = { ios: 'ios_webview_domain_configuration', android: 'android_third_party_cookie_behavior' }
-const RAW_SECRET = /(?:authorization\s*[:=]\s*bearer|\bbearer\s+[a-z0-9._-]+|\beyJ[a-z0-9_-]{10,}\.[a-z0-9_-]+\.|(?:access|refresh|guest)[_-]?token\s*[:=]|(?:set-)?cookie\s*[:=]|[?&](?:token|secret|api[_-]?key|password)=)/i
+const RAW_SECRET = /(?:authorization\s*[:=]\s*bearer|\bbearer\s+[a-z0-9._-]{20,}|\beyJ[a-z0-9_-]{10,}\.[a-z0-9_-]+\.|(?:access|refresh|guest)[_-]?token\s*[:=]|(?:set-)?cookie\s*[:=]|[?&](?:token|secret|api[_-]?key|password)=)/i
+const SAFE_ARTIFACT_REFERENCE = /^restricted:\/\/issue-64\/[a-z0-9][a-z0-9._-]*$/
 
 function capture(text, pattern, label, violations) { const match = text.match(pattern); if (!match) { violations.push(`${label} is missing`); return null }; return match[1] }
 function uniqueCaptures(text, pattern) { return [...new Set([...text.matchAll(pattern)].map((match) => match[1]))] }
@@ -33,6 +36,7 @@ function inspectEvidence(value, label, template, violations) {
     for (const key of EVIDENCE_KEYS) if (value[key] !== 'UNEXECUTED') violations.push(`${label} ${key} must remain UNEXECUTED`)
   } else {
     for (const key of EVIDENCE_KEYS) if (typeof value[key] !== 'string' || !value[key].trim() || value[key] === 'UNEXECUTED') violations.push(`${label} ${key} must be a completed redaction-safe string`)
+    for (const key of ['safe_reference', 'network_trace_reference']) if (!SAFE_ARTIFACT_REFERENCE.test(value[key] ?? '')) violations.push(`${label} ${key} must be a restricted issue-64 artifact identifier`)
     if (!/^sha256:[a-f0-9]{64}$/i.test(value.artifact_identity_checksum)) violations.push(`${label} artifact_identity_checksum must be sha256:<64 hex>`)
   }
 }
@@ -41,7 +45,7 @@ function inspectCase(entry, expectedId, label, template, violations) {
   if (!requireExactKeys(entry, keys, label, violations)) return
   if (entry.case_id !== expectedId) violations.push(`${label} case_id must be ${expectedId}`)
   for (const key of ['preconditions', 'actions', 'expected_outcome', 'cleanup', 'status']) {
-    if (template ? entry[key] !== 'UNEXECUTED' : typeof entry[key] !== 'string' || !entry[key].trim() || entry[key] === 'UNEXECUTED') violations.push(`${label} ${key} is invalid`)
+    if (key === 'status' ? (template ? entry[key] !== 'UNEXECUTED' : !ALLOWED_GATE_STATUSES.has(entry[key])) : (template ? entry[key] !== 'UNEXECUTED' : typeof entry[key] !== 'string' || !entry[key].trim() || entry[key] === 'UNEXECUTED')) violations.push(`${label} ${key} is invalid`)
   }
   inspectEvidence(entry.evidence, `${label} evidence`, template, violations)
   if (expectedId === 'offline_loss_reconnect_each_session_boundary') {
@@ -52,10 +56,13 @@ function inspectCase(entry, expectedId, label, template, violations) {
   }
 }
 function inspectResults(document, label, template, violations) {
+  if (!template && RAW_SECRET.test(JSON.stringify(document))) violations.push(`${label} contains a raw credential or capture`)
   const topKeys = ['schema_version', 'template_status', 'notice', 'copy_results_to', 'result_status_vocabulary', 'platforms', 'redaction_policy', 'adr_contract', 'references']
   if (!requireExactKeys(document, topKeys, label, violations) || document.schema_version !== 2) return
   if (template && document.template_status !== 'UNEXECUTED') violations.push('device evidence template status must remain UNEXECUTED')
   if (!template && document.template_status !== 'COMPLETED') violations.push(`${label} template_status must be COMPLETED`)
+  if (!template && document.notice !== 'COMPLETED RESULTS / CLAIM-BEARING ARTIFACT') violations.push(`${label} notice must be the completed-results marker`)
+  if (!template && /TEMPLATE\s*\/\s*NOT EVIDENCE/i.test(document.notice ?? '')) violations.push(`${label} notice must not claim TEMPLATE / NOT EVIDENCE`)
   if (!/TEMPLATE \/ NOT EVIDENCE/.test(document.notice ?? '') && template) violations.push('device evidence template must be prominently labeled TEMPLATE / NOT EVIDENCE')
   if (document.copy_results_to !== 'docs/mobile/evidence/issue-64/YYYY-MM-DD/<lowercase-run-id>/results.json') violations.push(`${label} copy_results_to is invalid`)
   if (JSON.stringify(document.result_status_vocabulary) !== JSON.stringify(['UNEXECUTED', 'PASS', 'FAIL', 'BLOCKED', 'UNVERIFIED'])) violations.push(`${label} result status vocabulary is invalid`)
@@ -68,7 +75,7 @@ function inspectResults(document, label, template, violations) {
     if (requireExactKeys(platform.metadata, metadataKeys, `${label} ${name} metadata`, violations)) {
       if (template) {
         for (const key of metadataKeys) if (platform.metadata[key] !== 'UNEXECUTED') violations.push(`${label} ${name} metadata ${key} must remain UNEXECUTED`)
-      } else { if (platform.metadata.device_type !== (name === 'ios' ? 'physical_iphone' : 'physical_android') || platform.metadata.is_simulator !== false || platform.metadata.is_emulator !== false) violations.push(`${label} ${name} must record a physical device, not simulator/emulator`); for (const key of metadataKeys.slice(3)) if (typeof platform.metadata[key] !== 'string' || !platform.metadata[key].trim() || platform.metadata[key] === 'UNEXECUTED') violations.push(`${label} ${name} metadata ${key} is invalid`) }
+      } else { if (platform.metadata.device_type !== (name === 'ios' ? 'physical_iphone' : 'physical_android') || platform.metadata.is_simulator !== false || platform.metadata.is_emulator !== false) violations.push(`${label} ${name} must record a physical device, not simulator/emulator`); for (const key of metadataKeys.slice(3)) if (typeof platform.metadata[key] !== 'string' || !platform.metadata[key].trim() || platform.metadata[key] === 'UNEXECUTED') violations.push(`${label} ${name} metadata ${key} is invalid`); if (!/^sha256:[a-f0-9]{64}$/i.test(platform.metadata.artifact_identity_checksum ?? '')) violations.push(`${label} ${name} metadata artifact_identity_checksum must be sha256:<64 hex>`); if (Number.isNaN(Date.parse(platform.metadata.test_date_time ?? '')) || !/^\d{4}-\d{2}-\d{2}T/.test(platform.metadata.test_date_time ?? '')) violations.push(`${label} ${name} metadata test_date_time must be an ISO timestamp`) }
     }
     if (!Array.isArray(platform.contexts)) { violations.push(`${label} ${name} contexts must be an array`); continue }
     exactIds(platform.contexts, 'context_id', ['member', 'guest'], `${label} ${name} contexts`, violations)
@@ -87,7 +94,7 @@ function inspectDeviceEvidenceContract(sources, violations) {
   if (!sources.releaseDocument.includes('auth-session-device-evidence.template.json')) violations.push('release-readiness must reference issue #64 template')
   if ((sources.trackedFiles ?? []).length) {
     for (const source of REQUIRED_SOURCE_FILES) if (!sources.trackedFiles.includes(source)) violations.push(`immutable issue #64 source must be tracked: ${source}`)
-    for (const path of sources.trackedFiles) { const match = path.match(RESULT_PATH); if (path.startsWith('docs/mobile/evidence/issue-64/') && !match) violations.push(`tracked issue #64 evidence path is unauthorized: ${path}`); if (match && (!isCalendarDate(match[1]) || !match[2])) violations.push(`tracked issue #64 evidence path has invalid date or run ID: ${path}`) }
+    for (const path of sources.trackedFiles) { const match = path.match(RESULT_PATH); const shape = path.match(RESULT_SHAPE); if (shape && (!isCalendarDate(shape[1]) || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(shape[2]))) violations.push(`tracked issue #64 evidence path has invalid date or run ID: ${path}`); else if (path.startsWith('docs/mobile/evidence/issue-64/') && !match) violations.push(`tracked issue #64 evidence path is unauthorized: ${path}`) }
     for (const path of sources.trackedFiles.filter((path) => RESULT_PATH.test(path))) if (!(path in (sources.resultCopies ?? {}))) violations.push(`tracked issue #64 result copy could not be safely read: ${path}`)
     for (const [path, raw] of Object.entries(sources.resultCopies ?? {})) { const result = parseJsonDocument(raw, path, violations); if (result) inspectResults(result, path, false, violations) }
   }
