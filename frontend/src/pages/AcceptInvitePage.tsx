@@ -6,6 +6,7 @@ import { useAcceptShareLink } from '../hooks/useShareLinks'
 import { usePageTitle } from '../utils/usePageTitle'
 import { getDeepLinkHandoff } from '../deep-links/vault'
 import { clearDeepLinkHandoff } from '../deep-links/vault'
+import { requestDeepLinkRouteFocus } from '../deep-links/DeepLinkRouteFocus'
 import styles from './SharePages.module.css'
 
 export default function AcceptInvitePage() {
@@ -26,7 +27,9 @@ export default function AcceptInvitePage() {
     try {
       const accepted = await acceptMutation.mutateAsync(token)
       clearDeepLinkHandoff(handoffId)
-      navigate(`/trips/${encodeURIComponent(accepted.publicId)}`, { replace: true })
+      const destination = `/trips/${encodeURIComponent(accepted.publicId)}`
+      requestDeepLinkRouteFocus(destination)
+      navigate(destination, { replace: true })
     } catch {
       // React Query owns the visible error state.
     }
@@ -41,7 +44,9 @@ export default function AcceptInvitePage() {
       .mutateAsync(token)
       .then((accepted) => {
         clearDeepLinkHandoff(handoffId)
-        navigate(`/trips/${encodeURIComponent(accepted.publicId)}`, { replace: true })
+        const destination = `/trips/${encodeURIComponent(accepted.publicId)}`
+        requestDeepLinkRouteFocus(destination)
+        navigate(destination, { replace: true })
       })
       .catch(() => {
         // React Query owns the visible error state; this prevents an unhandled rejection.
@@ -69,7 +74,7 @@ export default function AcceptInvitePage() {
         ) : isAuthenticated ? (
           <div className={styles.actions}>
             {acceptMutation.isPending ? (
-              <p className={styles.subheading}>Accepting invite...</p>
+              <p className={styles.subheading} role="status" aria-live="polite">Accepting invite...</p>
             ) : null}
             <button
               type="button"

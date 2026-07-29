@@ -95,6 +95,11 @@ afterEach(() => {
 })
 
 describe('<LoginPage>', () => {
+  it('opens the password reset request state from a recovery link', () => {
+    renderLogin(makeAuth(), '/login?mode=password-reset')
+    expect(screen.getByRole('heading', { name: 'Reset password' })).toBeInTheDocument()
+    expect(screen.getByLabelText(/email/i)).toBeInTheDocument()
+  })
   it('shows a page shell while auth restoration is pending', () => {
     renderLogin(makeAuth({ isInitializing: true }))
     expect(screen.getByRole('heading', { name: /preparing your trip planner/i })).toBeInTheDocument()

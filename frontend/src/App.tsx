@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect, useRef } from 'react'
 import { BrowserRouter, Link, Route, Routes } from 'react-router'
 import './App.css'
 import { RequireAuth } from './auth/RequireAuth'
@@ -9,6 +9,8 @@ import { TripRealtimeBoundary } from './realtime/TripRealtimeBoundary'
 import { LaunchRoute } from './launch/LaunchRoute'
 import { DeepLinkBridge } from './deep-links/DeepLinkBridge'
 import { DeepLinkHandoffRoute, DeepLinkScrubber } from './deep-links/DeepLinkRoutes'
+import { DeepLinkRouteFocus } from './deep-links/DeepLinkRouteFocus'
+import { usePageTitle } from './utils/usePageTitle'
 
 const AcceptInvitePage = lazy(() => import('./pages/AcceptInvitePage'))
 const EmailVerificationPage = lazy(() => import('./pages/EmailVerificationPage').then(({ EmailVerificationPage: Page }) => ({ default: Page })))
@@ -44,10 +46,14 @@ function ForbiddenPage() {
   return <TodoPage title="403 — Forbidden" />
 }
 
-function NotFoundPage() {
+export function NotFoundPage() {
+  usePageTitle('Page not found – Dupert')
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  useEffect(() => headingRef.current?.focus(), [])
+
   return (
-    <main style={{ maxWidth: 640, margin: '4rem auto', padding: '0 1rem' }}>
-      <h1>404 — Not found</h1>
+    <main id="main" style={{ maxWidth: 640, margin: '4rem auto', padding: '0 1rem' }}>
+      <h1 ref={headingRef} tabIndex={-1}>404 — Not found</h1>
       <p>
         We couldn&apos;t find what you were looking for.{' '}
         <Link to="/">Go home</Link>.
@@ -62,6 +68,7 @@ export default function App() {
       <SkipLink />
       <RouteAnnouncer />
       <DeepLinkBridge />
+      <DeepLinkRouteFocus />
       <Routes>
         {/* Public routes — auth pages and share-accept landing flows */}
         <Route path="/login" element={<LazyRoute kind="auth"><LoginPage /></LazyRoute>} />

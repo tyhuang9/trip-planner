@@ -9,6 +9,7 @@ import { safeReturnPath } from '../auth/safeReturnPath'
 import { tripKeys } from '../hooks/useTrips'
 import { usePageTitle } from '../utils/usePageTitle'
 import { clearDeepLinkHandoff, getDeepLinkHandoff, putDeepLinkHandoff } from '../deep-links/vault'
+import { requestDeepLinkRouteFocus } from '../deep-links/DeepLinkRouteFocus'
 import styles from './AuthForm.module.css'
 
 type VerificationState = 'verifying' | 'verified' | 'error'
@@ -60,6 +61,7 @@ export function EmailVerificationPage() {
             ? `/link/${putDeepLinkHandoff(returnTo)}`
             : returnTo.path
         clearDeepLinkHandoff(handoffId)
+        if (handoffId) requestDeepLinkRouteFocus(destination)
         navigate(destination, { replace: true })
       })
       .catch((err) => {

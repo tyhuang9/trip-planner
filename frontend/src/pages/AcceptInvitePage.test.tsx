@@ -4,15 +4,17 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import { AuthContext, type AuthContextValue } from '../auth/authContextValue'
 import AcceptInvitePage from './AcceptInvitePage'
 import { putDeepLinkHandoff, __resetDeepLinkVaultForTests } from '../deep-links/vault'
+import { DeepLinkRouteFocus, __resetDeepLinkRouteFocusForTests } from '../deep-links/DeepLinkRouteFocus'
 
 const shareMocks = vi.hoisted(() => ({
   mutateAsync: vi.fn(),
+  isPending: false,
 }))
 
 vi.mock('../hooks/useShareLinks', () => ({
   useAcceptShareLink: () => ({
     mutateAsync: shareMocks.mutateAsync,
-    isPending: false,
+    isPending: shareMocks.isPending,
     error: null,
   }),
 }))
@@ -40,11 +42,12 @@ function renderInvite(ctx: AuthContextValue) {
   return render(
     <AuthContext.Provider value={ctx}>
       <MemoryRouter initialEntries={['/share/raw-token']}>
+        <DeepLinkRouteFocus />
         <Routes>
           <Route path="/share/:token" element={<AcceptInvitePage />} />
           <Route
             path="/trips/:publicId"
-            element={<div data-testid="shared-trip">Shared trip</div>}
+            element={<main id="main" data-testid="shared-trip"><h1>Shared trip</h1></main>}
           />
           <Route path="/login" element={<div>Login</div>} />
           <Route path="/register" element={<div>Register</div>} />
@@ -56,7 +59,9 @@ function renderInvite(ctx: AuthContextValue) {
 
 beforeEach(() => {
   shareMocks.mutateAsync.mockReset()
+  shareMocks.isPending = false
   __resetDeepLinkVaultForTests()
+  __resetDeepLinkRouteFocusForTests()
 })
 
 describe('<AcceptInvitePage>', () => {
@@ -72,6 +77,7 @@ describe('<AcceptInvitePage>', () => {
       expect(shareMocks.mutateAsync).toHaveBeenCalledWith('raw-token')
     })
     expect(await screen.findByTestId('shared-trip')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Shared trip' })).toHaveFocus())
   })
 
   it('preserves the share path in login and register links', () => {
@@ -101,5 +107,14 @@ describe('<AcceptInvitePage>', () => {
 
     expect(screen.getByRole('link', { name: /sign in/i })).toHaveAttribute('href', `/login?return=%2Flink%2F${handoffId}`)
     expect(screen.getByRole('link', { name: /continue as guest/i })).toHaveAttribute('href', `/link/${handoffId}/guest`)
+  })
+
+  it('announces automatic invite acceptance progress politely', () => {
+    shareMocks.isPending = true
+    shareMocks.mutateAsync.mockReturnValue(new Promise(() => undefined))
+    renderInvite(makeAuth({ isAuthenticated: true }))
+    const status = screen.getByRole('status')
+    expect(status).toHaveTextContent('Accepting invite...')
+    expect(status).toHaveAttribute('aria-live', 'polite')
   })
 })

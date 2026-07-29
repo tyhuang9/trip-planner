@@ -8,6 +8,7 @@ import { verifyEmail } from '../api/auth'
 import { useAuthStore } from '../auth/authStore'
 import type { AuthResponse } from '../types/auth'
 import { putDeepLinkHandoff, __resetDeepLinkVaultForTests } from '../deep-links/vault'
+import { DeepLinkRouteFocus, __resetDeepLinkRouteFocusForTests } from '../deep-links/DeepLinkRouteFocus'
 
 vi.mock('../api/auth', () => ({
   verifyEmail: vi.fn(),
@@ -30,10 +31,11 @@ function renderEmailVerification(path: string) {
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[path]}>
+        <DeepLinkRouteFocus />
         <Routes>
           <Route path="/verify-email" element={<EmailVerificationPage />} />
           <Route path="/login" element={<div>Sign in page</div>} />
-          <Route path="/trips" element={<div data-testid="trips-page">Trips page</div>} />
+          <Route path="/trips" element={<main id="main" data-testid="trips-page"><h1>Trips page</h1></main>} />
           <Route path="/share/:token" element={<div data-testid="share-page">Share page</div>} />
         </Routes>
       </MemoryRouter>
@@ -67,6 +69,7 @@ beforeEach(() => {
   verifyEmailMock.mockReset()
   useAuthStore.getState().clearSession()
   __resetDeepLinkVaultForTests()
+  __resetDeepLinkRouteFocusForTests()
 })
 
 describe('<EmailVerificationPage>', () => {
@@ -106,18 +109,21 @@ describe('<EmailVerificationPage>', () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[`/link/${handoffId}`]}>
+        <MemoryRouter initialEntries={[`/verify/${handoffId}`]}>
           <LocationProbe />
+          <DeepLinkRouteFocus />
           <Routes>
-            <Route path="/link/:handoffId" element={<EmailVerificationPage />} />
+            <Route path="/verify/:handoffId" element={<EmailVerificationPage />} />
+            <Route path="/link/:handoffId" element={<main id="main"><h1>Accept invite</h1></main>} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
     )
 
-    const location = await screen.findByTestId('location')
-    expect(location).toHaveTextContent(/^\/link\/dl_[a-f0-9]{32}$/)
+    const location = screen.getByTestId('location')
+    await vi.waitFor(() => expect(location).toHaveTextContent(/^\/link\/dl_[a-f0-9]{32}$/))
     expect(location).not.toHaveTextContent(/verify-secret|invite-secret/)
+    await vi.waitFor(() => expect(screen.getByRole('heading', { name: 'Accept invite' })).toHaveFocus())
   })
 
   it('does not call the verify API when the token is missing', () => {

@@ -24,7 +24,9 @@ export default function PasswordResetPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const passwordId = useId()
   const confirmPasswordId = useId()
+  const passwordMismatchId = useId()
   const hasResetToken = token.trim().length > 0
+  const hasPasswordMismatch = errorMessage === 'New passwords do not match.'
 
   useEffect(() => {
     if (!searchParams.has('token') && !searchParams.has('code')) return
@@ -81,7 +83,7 @@ export default function PasswordResetPage() {
           </div>
         )}
         {errorMessage && (
-          <div className={styles.banner} role="alert">
+          <div id={hasPasswordMismatch ? passwordMismatchId : undefined} className={styles.banner} role="alert">
             <span className={styles.bannerIcon} aria-hidden="true">
               !
             </span>
@@ -89,7 +91,7 @@ export default function PasswordResetPage() {
           </div>
         )}
 
-        <form className={styles.form} onSubmit={onSubmit} noValidate>
+        {hasResetToken ? <form className={styles.form} onSubmit={onSubmit} noValidate>
           <label className={styles.field} htmlFor={passwordId}>
             <span className={styles.label}>New password</span>
             <input
@@ -101,6 +103,8 @@ export default function PasswordResetPage() {
               onChange={(event) => setPassword(event.target.value)}
               required
               disabled={isSubmitting}
+              aria-invalid={hasPasswordMismatch}
+              aria-describedby={hasPasswordMismatch ? passwordMismatchId : undefined}
             />
           </label>
           <label className={styles.field} htmlFor={confirmPasswordId}>
@@ -114,12 +118,18 @@ export default function PasswordResetPage() {
               onChange={(event) => setConfirmPassword(event.target.value)}
               required
               disabled={isSubmitting}
+              aria-invalid={hasPasswordMismatch}
+              aria-describedby={hasPasswordMismatch ? passwordMismatchId : undefined}
             />
           </label>
           <button className={styles.submit} type="submit" disabled={isSubmitting || !hasResetToken}>
             {isSubmitting ? 'Resetting...' : 'Reset password'}
           </button>
-        </form>
+        </form> : (
+          <p className={styles.altLink}>
+            <Link to="/login?mode=password-reset">Request a new password reset link</Link>
+          </p>
+        )}
 
         <p className={styles.altLink}>
           <Link to="/login">Back to sign in</Link>

@@ -32,7 +32,7 @@ export function LoginPage() {
   const [errorInfo, setErrorInfo] = useState<ParsedApiError | null>(null)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [mode, setMode] = useState<LoginMode>('signIn')
+  const [mode, setMode] = useState<LoginMode>(() => searchParams.get('mode') === 'password-reset' ? 'passwordReset' : 'signIn')
   const [resetEmail, setResetEmail] = useState('')
   const [resetMessage, setResetMessage] = useState<string | null>(null)
   const [resetError, setResetError] = useState<string | null>(null)

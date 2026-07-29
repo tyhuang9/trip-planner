@@ -4,6 +4,7 @@ import { parseApiError } from '../api/errors'
 import { useAcceptGuestShareLink } from '../hooks/useShareLinks'
 import { usePageTitle } from '../utils/usePageTitle'
 import { clearDeepLinkHandoff, getDeepLinkHandoff } from '../deep-links/vault'
+import { requestDeepLinkRouteFocus } from '../deep-links/DeepLinkRouteFocus'
 import styles from './SharePages.module.css'
 
 export default function GuestOnboardingPage() {
@@ -30,7 +31,9 @@ export default function GuestOnboardingPage() {
       body: { displayName },
     })
     clearDeepLinkHandoff(handoffId)
-    navigate(`/trips/${encodeURIComponent(accepted.publicId)}`, { replace: true })
+    const destination = `/trips/${encodeURIComponent(accepted.publicId)}`
+    requestDeepLinkRouteFocus(destination)
+    navigate(destination, { replace: true })
   }
 
   return (

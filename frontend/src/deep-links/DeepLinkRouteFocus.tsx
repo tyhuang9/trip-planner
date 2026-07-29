@@ -1,0 +1,54 @@
+import { useEffect } from 'react'
+import { useLocation } from 'react-router'
+
+let focusTarget: string | null = null
+
+export function requestDeepLinkRouteFocus(target: string) {
+  focusTarget = target
+}
+
+export function __resetDeepLinkRouteFocusForTests() {
+  focusTarget = null
+}
+
+/** Moves focus only after navigation initiated by the deep-link subsystem. */
+export function DeepLinkRouteFocus() {
+  const location = useLocation()
+
+  useEffect(() => {
+    if (focusTarget !== location.pathname) return
+    focusTarget = null
+    let loadingFocused = false
+    let completed = false
+    let observer: MutationObserver | undefined
+
+    const focusRoute = () => {
+      const main = document.getElementById('main')
+      const heading = main?.querySelector('h1')
+      if (heading instanceof HTMLElement) {
+        heading.tabIndex = -1
+        heading.focus()
+        completed = true
+        observer?.disconnect()
+        return
+      }
+      if (main && !loadingFocused) {
+        main.tabIndex = -1
+        main.focus()
+        loadingFocused = true
+      }
+    }
+
+    focusRoute()
+    if (completed) return
+    observer = new MutationObserver(focusRoute)
+    observer.observe(document.body, { childList: true, subtree: true })
+    const timeout = window.setTimeout(() => observer?.disconnect(), 2_000)
+    return () => {
+      window.clearTimeout(timeout)
+      observer?.disconnect()
+    }
+  }, [location.key])
+
+  return null
+}

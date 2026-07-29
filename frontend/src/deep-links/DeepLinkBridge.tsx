@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router'
 import { useAuth } from '../auth/useAuth'
 import { subscribeToDeepLinks, takeDeepLink } from './queue'
 import { getDeepLinkHandoff, subscribeToDeepLinkVault } from './vault'
+import { requestDeepLinkRouteFocus } from './DeepLinkRouteFocus'
 
 /** Bridges native URLs only after auth has reached a conclusive state. */
 export function DeepLinkBridge() {
@@ -30,6 +31,7 @@ export function DeepLinkBridge() {
     const link = takeDeepLink()
     if (link) {
       inFlightTarget.current = link
+      requestDeepLinkRouteFocus(link.target)
       navigate(link.target, { replace: true })
     }
   }, [isInitializing, location.pathname, navigate, version])

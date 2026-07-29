@@ -2,6 +2,8 @@ import { useEffect, type ReactNode } from 'react'
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router'
 import { deepLinkTarget, parseDeepLinkPath } from './policy'
 import { putDeepLinkHandoff, getDeepLinkHandoff } from './vault'
+import { requestDeepLinkRouteFocus } from './DeepLinkRouteFocus'
+import { RouteLoadingFallback } from '../components/RouteLoadingFallback'
 
 function targetFor(link: NonNullable<ReturnType<typeof parseDeepLinkPath>>) {
   if (link.kind === 'trip') return deepLinkTarget(link)
@@ -14,12 +16,17 @@ export function DeepLinkScrubber() {
   const navigate = useNavigate()
   useEffect(() => {
     const link = parseDeepLinkPath(location.pathname, location.search)
-    if (link) navigate(targetFor(link), { replace: true })
-    else if (location.pathname === '/verify-email') navigate('/link-invalid/verify-email', { replace: true })
-    else if (location.pathname === '/reset-password') navigate('/link-invalid/reset-password', { replace: true })
-    else navigate('/404', { replace: true })
+    const destination = link
+      ? targetFor(link)
+      : location.pathname === '/verify-email'
+        ? '/link-invalid/verify-email'
+        : location.pathname === '/reset-password'
+          ? '/link-invalid/reset-password'
+          : '/404'
+    requestDeepLinkRouteFocus(destination)
+    navigate(destination, { replace: true })
   }, [location.pathname, location.search, navigate])
-  return null
+  return <RouteLoadingFallback kind="auth" />
 }
 
 export function DeepLinkHandoffRoute({

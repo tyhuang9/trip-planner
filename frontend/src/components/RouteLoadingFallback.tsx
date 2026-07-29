@@ -13,6 +13,9 @@ export function RouteLoadingFallback({ kind }: { kind: RouteLoadingKind }) {
   return (
     <main id="main" className={styles.page} aria-busy="true" aria-label={labels[kind]}>
       <section className={styles.content}>
+        <p className={styles.status} role="status" aria-live="polite">
+          {labels[kind]}…
+        </p>
         <span className={`${styles.line} ${styles.title}`} />
         <span className={styles.line} />
         <span className={styles.line} />
