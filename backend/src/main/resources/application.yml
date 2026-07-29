@@ -39,8 +39,6 @@ spring:
   flyway:
     # DatabaseMigrationCoordinator owns migration so database loss cannot block boot.
     enabled: false
-    baseline-on-migrate: false
-    locations: classpath:db/migration
   jackson:
     deserialization:
       fail-on-unknown-properties: true
