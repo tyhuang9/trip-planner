@@ -32,7 +32,7 @@ export function getDeepLinkHandoff(id: string | undefined) {
   if (!id) return undefined
   const handoff = handoffs.get(id)
   if (!handoff || handoff.expiresAt <= Date.now()) {
-    handoffs.delete(id)
+    clearDeepLinkHandoff(id)
     return undefined
   }
   return handoff.link
