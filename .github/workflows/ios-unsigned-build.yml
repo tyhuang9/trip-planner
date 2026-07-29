@@ -1,0 +1,183 @@
+name: iOS unsigned build
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ios-unsigned-build.yml'
+      - 'frontend/.env.native-production'
+      - 'frontend/capacitor.config.ts'
+      - 'frontend/index.html'
+      - 'frontend/ios/**'
+      - 'frontend/package-lock.json'
+      - 'frontend/package.json'
+      - 'frontend/public/**'
+      - 'frontend/scripts/check-native-bundle-policy.mjs'
+      - 'frontend/src/**'
+      - 'frontend/tsconfig*.json'
+      - 'frontend/vite.config.ts'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build unsigned iOS app
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.4.1.app/Contents/Developer
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Verify Xcode
+        shell: bash
+        run: test "$(/usr/bin/xcodebuild -version)" = $'Xcode 26.4.1\nBuild version 17E202'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and sync production native bundle
+        env:
+          VITE_BACKEND_API_URL: https://api.dupert.test
+          VITE_GOOGLE_MAPS_API_KEY: ''
+          VITE_APP_ACCESS_PASSWORD: ''
+        run: npm run sync:native:production
+
+      - name: Verify generated project inputs remain deterministic
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          PATH: /Applications/Xcode_26.4.1.app/Contents/Developer/usr/bin:/Applications/Xcode_26.4.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin
+        run: |
+          /usr/bin/git diff --exit-code -- ios android capacitor.config.ts
+
+          untracked_files="$(/usr/bin/git ls-files --others --exclude-standard -- ios android capacitor.config.ts)"
+          if [ -n "$untracked_files" ]; then
+            echo 'Capacitor sync created nonignored untracked project inputs:' >&2
+            printf '%s\n' "$untracked_files" >&2
+            exit 1
+          fi
+
+      - name: Build unsigned app
+        env:
+          BASH_ENV: /dev/null
+          DEVELOPER_DIR: /Applications/Xcode_26.4.1.app/Contents/Developer
+          ENV: /dev/null
+          PATH: /Applications/Xcode_26.4.1.app/Contents/Developer/usr/bin:/Applications/Xcode_26.4.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin
+        run: |
+          test "$(/usr/bin/xcodebuild -version)" = $'Xcode 26.4.1\nBuild version 17E202'
+
+          /usr/bin/xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "${RUNNER_TEMP}/dupert-ios-derived-data" \
+            -clonedSourcePackagesDirPath "${RUNNER_TEMP}/dupert-ios-source-packages" \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build \
+            -quiet
+
+      - name: Inspect unsigned app
+        shell: bash
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          PATH: /Applications/Xcode_26.4.1.app/Contents/Developer/usr/bin:/Applications/Xcode_26.4.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin
+        run: |
+          app_path="${RUNNER_TEMP}/dupert-ios-derived-data/Build/Products/Debug-iphoneos/App.app"
+          info_plist="${app_path}/Info.plist"
+
+          test -d "$app_path"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info_plist")" = 'io.github.tyhuang9.dupert'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info_plist")" = '1.0'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info_plist")" = '1'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$info_plist")" = '15.0'
+          test -f "${app_path}/public/index.html"
+          /usr/bin/diff -qr ios/App/App/public "${app_path}/public"
+
+          if ! /usr/bin/cmp -s ios/App/App/capacitor.config.json "${app_path}/capacitor.config.json"; then
+            echo 'Built capacitor.config.json differs from the synced source.' >&2
+            exit 1
+          fi
+
+          /usr/bin/python3 - "${app_path}/capacitor.config.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding='utf-8') as config_file:
+              config = json.load(config_file)
+
+          expected = {
+              'appId': 'io.github.tyhuang9.dupert',
+              'appName': 'Dupert',
+              'webDir': 'dist',
+              'server': {
+                  'hostname': 'localhost',
+                  'iosScheme': 'capacitor',
+                  'androidScheme': 'https',
+              },
+          }
+
+          for key, expected_value in expected.items():
+              if config.get(key) != expected_value:
+                  raise SystemExit(
+                      f"capacitor.config.json has unexpected {key}: "
+                      f"{config.get(key)!r} != {expected_value!r}"
+                  )
+          PY
+
+          /usr/bin/python3 - ios/App/App/PrivacyInfo.xcprivacy "${app_path}/PrivacyInfo.xcprivacy" <<'PY'
+          import plistlib
+          import sys
+
+          with open(sys.argv[1], 'rb') as source_file:
+              source_manifest = plistlib.load(source_file)
+          with open(sys.argv[2], 'rb') as built_file:
+              built_manifest = plistlib.load(built_file)
+
+          if source_manifest != built_manifest:
+              raise SystemExit('Built PrivacyInfo.xcprivacy differs semantically from the synced source.')
+          PY
+          /usr/bin/plutil -lint "${app_path}/PrivacyInfo.xcprivacy"
+
+          if codesign_output="$(/usr/bin/codesign --display "$app_path" 2>&1)"; then
+            echo 'Expected the app to be unsigned, but codesign accepted it.' >&2
+            exit 1
+          fi
+          if ! printf '%s\n' "$codesign_output" | /usr/bin/grep -Fq 'code object is not signed at all'; then
+            echo 'codesign failed without confirming that the app is unsigned:' >&2
+            printf '%s\n' "$codesign_output" >&2
+            exit 1
+          fi
+          test ! -e "${app_path}/_CodeSignature"
+          test ! -e "${app_path}/embedded.mobileprovision"
+
+      - name: Verify Swift package lock remains unchanged
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          PATH: /Applications/Xcode_26.4.1.app/Contents/Developer/usr/bin:/Applications/Xcode_26.4.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin
+        run: /usr/bin/git diff --exit-code -- ios/App/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
