@@ -24,6 +24,8 @@ function completed() {
     platform.metadata.device_type = platform.platform === 'ios' ? 'physical_iphone' : 'physical_android'
     platform.metadata.is_simulator = false
     platform.metadata.is_emulator = false
+    platform.metadata.app_version = '1.2.3'
+    platform.metadata.platform_build = platform.platform === 'ios' ? 'ios-101' : 'android-202'
     platform.metadata.artifact_identity_checksum = checksum
     platform.attestation = { platform: platform.platform, device_type: platform.metadata.device_type, safe_reference: `restricted://issue-64/safe-run-1/${platform.platform}/attestation`, artifact_identity_checksum: checksum, captured_at: platform.metadata.test_date_time }
     const setEvidence = (evidence, context) => { evidence.safe_reference = `restricted://issue-64/safe-run-1/${platform.platform}/${context}/artifact-${referenceId++}`; evidence.network_trace_reference = `restricted://issue-64/safe-run-1/${platform.platform}/${context}/trace-${referenceId++}`; evidence.artifact_identity_checksum = checksum }
@@ -119,7 +121,7 @@ test('rejects missing boundary, lifecycle stage, and evidence field', () => {
 })
 
 test('rejects source template claims and redaction or ADR drift', () => {
-  const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.platforms[0].contexts[0].cases[0].status = 'PASS'; delete document.redaction_policy.raw_capture_policy; document.adr_contract.allowed_outcomes.push('endpoint_only_fallback'); candidate.authSessionEvidenceTemplate = JSON.stringify(document); const output = messages(candidate); assert.match(output, /status is invalid/); assert.match(output, /redaction policy must contain exactly/); assert.match(output, /ADR catalogs are invalid/)
+  const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.platforms[0].contexts[0].cases[0].status = 'PASS'; delete document.redaction_policy.raw_capture_policy; document.adr_contract.allowed_outcomes.push('endpoint_only_fallback'); candidate.authSessionEvidenceTemplate = JSON.stringify(document); const output = messages(candidate); assert.match(output, /status must be PASS/); assert.match(output, /redaction policy must contain exactly/); assert.match(output, /ADR catalogs are invalid/)
 })
 
 test('rejects falsely completed source template status and evidence', () => {
@@ -150,9 +152,9 @@ test('rejects session collapse, raw evidence, invalid device and unknown keys', 
 
 test('rejects completed-result status, metadata, references, and procedural secrets independently', () => {
   const cases = [
-    ['MAYBE', /status is invalid/, (r) => { r.platforms[0].contexts[0].cases[0].status = 'MAYBE' }],
+    ['MAYBE', /status must be PASS/, (r) => { r.platforms[0].contexts[0].cases[0].status = 'MAYBE' }],
     ['bad reference', /safe_reference must be scoped/, (r) => { r.platforms[0].contexts[0].cases[0].evidence.safe_reference = 'https://x/?token=no' }],
-    ['bad metadata', /test_date_time must be RFC3339/, (r) => { r.platforms[0].metadata.test_date_time = 'tomorrow' }],
+    ['bad metadata', /test_date_time must be component-valid RFC3339/, (r) => { r.platforms[0].metadata.test_date_time = 'tomorrow' }],
     ['bad checksum', /metadata artifact_identity_checksum must be sha256/, (r) => { r.platforms[0].metadata.artifact_identity_checksum = 'bad' }],
     ['procedural Bearer', /contains a raw credential/, (r) => { r.platforms[0].contexts[0].cases[0].actions = 'Bearer abcdefghijklmnopqrstuvwxyz' }],
   ]
@@ -253,4 +255,72 @@ test('rejects reused references and cloned cross-platform evidence', () => {
 
 test('unrelated release violations do not suppress device-contract violations', () => {
   const candidate = sources(); candidate.workflow = candidate.workflow.replace("node-version: '22'", "node-version: '24'"); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.schema_version = 3; candidate.authSessionEvidenceTemplate = JSON.stringify(document); const output = messages(candidate); assert.match(output, /CI Node version/); assert.match(output, /schema_version must be 2/)
+})
+
+test('rejects an all-FAIL completed result with cookie-only selected', () => {
+  const result = completed(); const fail = (value) => { if (Array.isArray(value)) value.forEach(fail); else if (value && typeof value === 'object') { for (const [key, child] of Object.entries(value)) { if (key === 'status') value[key] = 'FAIL'; else fail(child) } } }; fail(result.platforms); assert.match(messages(tracked(result)), /must be PASS for a selected ADR decision/)
+})
+
+test('rejects a non-PASS required case', () => {
+  const result = completed(); result.platforms[0].contexts[0].cases[0].status = 'BLOCKED'; assert.match(messages(tracked(result)), /status must be PASS/)
+})
+
+test('rejects a non-PASS offline boundary', () => {
+  const result = completed(); result.platforms[0].contexts[0].cases.find((x) => x.session_boundaries).session_boundaries[0].status = 'UNVERIFIED'; assert.match(messages(tracked(result)), /boundary status must be PASS/)
+})
+
+test('rejects a non-PASS credential lifecycle stage', () => {
+  const result = completed(); result.platforms[1].contexts[1].credential_lifecycle[0].status = 'FAIL'; assert.match(messages(tracked(result)), /lifecycle stage status must be PASS/)
+})
+
+test('rejects a non-PASS platform case while accepting the all-PASS control', () => {
+  assert.deepEqual(inspectMobileReleaseReadiness(tracked()), []); const result = completed(); result.platforms[1].platform_cases[0].status = 'BLOCKED'; assert.match(messages(tracked(result)), /platform case status must be PASS/)
+})
+
+test('rejects reset_token keyed values', () => {
+  const result = completed(); result.platforms[0].contexts[0].cases[0].actions = 'reset_token=raw'; assert.match(messages(tracked(result)), /raw credential/)
+})
+
+test('rejects verification-code keyed values', () => {
+  const result = completed(); result.platforms[0].contexts[0].cases[0].actions = 'verification-code: raw'; assert.match(messages(tracked(result)), /raw credential/)
+})
+
+test('rejects reset-token URL query values', () => {
+  const result = completed(); result.platforms[0].contexts[0].cases[0].actions = 'https://example.test/callback?reset_token=raw'; assert.match(messages(tracked(result)), /raw credential/)
+})
+
+test('rejects X-API-Key headers without flagging safe policy prose', () => {
+  assert.deepEqual(inspectMobileReleaseReadiness(sources()), []); const result = completed(); result.platforms[0].contexts[0].cases[0].actions = 'X-API-Key: raw-secret'; assert.match(messages(tracked(result)), /raw credential/)
+})
+
+test('rejects issue-64 approval claims outside the release gate table', () => {
+  const candidate = sources(); candidate.releaseDocument += '\nAuthentication and guest sessions: PASS. Physical-device evidence APPROVED.\n'; assert.match(messages(candidate), /outside the canonical gate table/)
+})
+
+test('rejects duplicate toolchain and release-gate blocks', () => {
+  const contract = sources().releaseDocument.match(/<!-- mobile-release-contract[\s\S]*?-->/)[0]; const gates = sources().releaseDocument.match(/<!-- mobile-release-gates:start -->[\s\S]*?<!-- mobile-release-gates:end -->/)[0]; const candidate = sources(); candidate.releaseDocument += `\n${contract}\n${gates}\n`; const output = messages(candidate); assert.match(output, /exactly one machine-readable toolchain contract/); assert.match(output, /exactly one release-gate table block/)
+})
+
+test('rejects RFC3339 24:00 rollover and accepts a valid timezone offset', () => {
+  const invalid = completed(); for (const platform of invalid.platforms) { platform.metadata.test_date_time = '2026-07-29T24:00:00Z'; platform.attestation.captured_at = platform.metadata.test_date_time }; assert.match(messages(tracked(invalid)), /component-valid RFC3339/); const valid = completed(); for (const platform of valid.platforms) { platform.metadata.test_date_time = '2026-07-29T12:30:45-05:00'; platform.attestation.captured_at = platform.metadata.test_date_time }; assert.deepEqual(inspectMobileReleaseReadiness(tracked(valid)), [])
+})
+
+test('requires identical commit and semantic app version across platforms', () => {
+  const commitMismatch = completed(); commitMismatch.platforms[1].metadata.commit_or_tag = 'different'; assert.match(messages(tracked(commitMismatch)), /same commit_or_tag/); const versionMismatch = completed(); versionMismatch.platforms[1].metadata.app_version = '1.2.4'; assert.match(messages(tracked(versionMismatch)), /same app_version/); const invalidVersion = completed(); for (const platform of invalidVersion.platforms) platform.metadata.app_version = 'release'; assert.match(messages(tracked(invalidVersion)), /semantic versioning/)
+})
+
+test('rejects simulator wording independently from emulator wording', () => {
+  const simulator = completed(); simulator.platforms[0].metadata.device_model = 'iPhone Simulator'; assert.match(messages(tracked(simulator)), /must not describe a simulator/); const emulator = completed(); emulator.platforms[1].metadata.tooling = 'Android Emulator'; assert.match(messages(tracked(emulator)), /must not describe a simulator/)
+})
+
+test('rejects untracked and outside-path result copies independently', () => {
+  const untracked = sources(); untracked.trackedFiles = sourceFiles; untracked.resultCopies = { [resultPath]: JSON.stringify(completed()) }; assert.match(messages(untracked), /result copy must be tracked/); const outside = sources(); outside.resultCopies = { 'docs/mobile/evidence/issue-64/raw.json': '{}' }; assert.match(messages(outside), /result copy must be tracked/)
+})
+
+test('rejects duplicate ADR markers independently', () => {
+  const candidate = sources(); const block = candidate.authSessionAdrTemplate.match(/<!-- issue64-adr-policy[\s\S]*?-->/)[0]; candidate.authSessionAdrTemplate += `\n${block}\n`; assert.match(messages(candidate), /issue64-adr-policy marker must appear exactly once/)
+})
+
+test('rejects network-reference reuse independently', () => {
+  const result = completed(); result.platforms[0].contexts[0].cases[1].evidence.network_trace_reference = result.platforms[0].contexts[0].cases[0].evidence.network_trace_reference; assert.match(messages(tracked(result)), /must not reuse an evidence reference/)
 })

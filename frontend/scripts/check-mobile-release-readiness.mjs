@@ -11,10 +11,9 @@ const RESULT_SHAPE = /^docs\/mobile\/evidence\/issue-64\/([^/]+)\/([^/]+)\/resul
 const REQUIRED_SOURCE_FILES = ['docs/mobile/auth-session-device-evidence.catalog.json', 'docs/mobile/auth-session-device-evidence.template.json', 'docs/mobile/auth-session-device-spike.md', 'docs/mobile/auth-session-transport-adr-template.md']
 const EVIDENCE_KEYS = ['safe_reference', 'observed_result', 'network_trace_reference', 'artifact_identity_checksum', 'redaction_notes']
 const CASE_KEYS = ['case_id', 'preconditions', 'actions', 'expected_outcome', 'cleanup', 'status', 'evidence']
-const RAW_SECRET = /(?:authorization\s*[:=]\s*(?:bearer|basic)|\bbearer\s+[a-z0-9._-]{20,}|\bbasic\s+[a-z0-9+/=]{12,}|\beyJ[a-z0-9_-]{10,}\.[a-z0-9_-]+\.|(?:access|refresh|guest)[_-]?token\s*[:=]|(?:set-)?cookie\s*[:=]|password\s*[:=]\s*[^\s"']+|https?:\/\/[^\s"']+\/(?:reset|verify|verification)[^\s"']*|[?&](?:token|secret|api[_-]?key|password|code)=)/i
-const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/
+const RAW_SECRET = /(?:authorization\s*[:=]\s*(?:bearer|basic)|x[-_]api[-_]key\s*[:=]|\bbearer\s+[a-z0-9._-]{20,}|\bbasic\s+[a-z0-9+/=]{12,}|\beyJ[a-z0-9_-]{10,}\.[a-z0-9_-]+\.|(?:access|refresh|guest|reset)[_-]?token\s*[:=]|verification[-_]code\s*[:=]|api[-_]?key\s*[:=]|(?:set-)?cookie\s*[:=]|password\s*[:=]\s*[^\s"']+|https?:\/\/[^\s"']+\/(?:reset|verify|verification)[^\s"']*|[?&](?:token|secret|api[-_]?key|password|code|reset[-_]?token|verification[-_]?code)=)/i
 const IMMUTABLE_DOCUMENT_HASHES = {
-  'auth-session-device-spike.md': 'e9fdb385474096f3c78200f12d461797ac309d497e329d1cc511fbe35158640b',
+  'auth-session-device-spike.md': '7df8881bb4f581926fd99dc71a01ddeec80af5ff47300ad1057242c85a381a11',
   'auth-session-transport-adr-template.md': '9d8da67a404a53fa0e23b47915c1790d635493454b3d2150789c42955f8a8d81',
 }
 
@@ -26,6 +25,7 @@ function requireExactKeys(value, keys, label, violations) { if (!requireObject(v
 function exactIds(entries, key, expected, label, violations) { const ids = entries.map((x) => x?.[key]); if (new Set(ids).size !== ids.length) violations.push(`${label} must not repeat ${key}s`); if (ids.length !== expected.length || ids.some((id) => !expected.includes(id))) violations.push(`${label} must contain exactly: ${expected.join(', ')}`) }
 function marker(document, name, expected, violations) { const blocks = [...document.matchAll(new RegExp(`<!-- ${name}\\n([\\s\\S]*?)\\n-->`, 'g'))]; if (blocks.length !== 1) { violations.push(`${name} marker must appear exactly once`); return }; const pairs = new Map(); for (const line of blocks[0][1].split('\n').filter(Boolean)) { const [key, ...values] = line.split('='); if (!key || !values.length || pairs.has(key)) violations.push(`${name} marker is malformed`); else pairs.set(key, values.join('=')) }; for (const [key, value] of Object.entries(expected)) if (pairs.get(key) !== value) violations.push(`${name} marker ${key} must equal ${value}`); if (pairs.size !== Object.keys(expected).length) violations.push(`${name} marker must not contain unknown fields`) }
 function isCalendarDate(value) { const date = new Date(`${value}T00:00:00Z`); return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value }
+function isRfc3339(value) { const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|[+-](\d{2}):(\d{2}))$/.exec(value ?? ''); return Boolean(match && isCalendarDate(match[1]) && Number(match[2]) <= 23 && Number(match[3]) <= 59 && Number(match[4]) <= 59 && (!match[6] || (Number(match[6]) <= 23 && Number(match[7]) <= 59))) }
 
 function inspectCatalog(catalog, violations) {
   const violationCount = violations.length
@@ -69,7 +69,7 @@ function inspectCase(entry, expectedId, label, contextId, options, violations) {
   if (!requireExactKeys(entry, keys, label, violations)) return
   if (entry.case_id !== expectedId) violations.push(`${label} case_id must be ${expectedId}`)
   for (const key of ['preconditions', 'actions', 'expected_outcome', 'cleanup', 'status']) {
-    if (key === 'status' ? (options.template ? entry[key] !== 'UNEXECUTED' : !ALLOWED_GATE_STATUSES.has(entry[key])) : (options.template ? entry[key] !== 'UNEXECUTED' : typeof entry[key] !== 'string' || !entry[key].trim() || entry[key] === 'UNEXECUTED')) violations.push(`${label} ${key} is invalid`)
+    if (key === 'status' ? (options.template ? entry[key] !== 'UNEXECUTED' : entry[key] !== 'PASS') : (options.template ? entry[key] !== 'UNEXECUTED' : typeof entry[key] !== 'string' || !entry[key].trim() || entry[key] === 'UNEXECUTED')) violations.push(`${label} ${key} must be PASS for a selected ADR decision`)
   }
   inspectEvidence(entry.evidence, `${label} evidence`, { ...options, context: contextId }, violations)
   if (expectedId === 'offline_loss_reconnect_each_session_boundary') {
@@ -78,7 +78,7 @@ function inspectCase(entry, expectedId, label, contextId, options, violations) {
     exactIds(entry.session_boundaries, 'boundary', expected, `${label} session boundaries`, violations)
     for (const boundary of entry.session_boundaries) {
       if (!requireExactKeys(boundary, ['boundary', 'status', 'evidence'], `${label} boundary`, violations)) continue
-      if (options.template ? boundary.status !== 'UNEXECUTED' : !ALLOWED_GATE_STATUSES.has(boundary.status)) violations.push(`${label} boundary status is invalid`)
+      if (options.template ? boundary.status !== 'UNEXECUTED' : boundary.status !== 'PASS') violations.push(`${label} boundary status must be PASS for a selected ADR decision`)
       inspectEvidence(boundary.evidence, `${label} boundary evidence`, { ...options, context: contextId }, violations)
     }
   }
@@ -100,23 +100,28 @@ function inspectResults(document, label, template, violations, catalog, resultIn
   exactIds(document.platforms, 'platform', platformNames, `${label} platforms`, violations)
   const usedReferences = new Set()
   const platformChecksums = new Set()
+  const runCommits = new Set()
+  const runVersions = new Set()
   for (const platform of document.platforms) {
     const name = platform?.platform
     if (!catalog.platforms[name]) continue
     if (!requireExactKeys(platform, ['platform', 'metadata', 'attestation', 'contexts', 'platform_cases'], `${label} ${name}`, violations)) continue
-    const metadataKeys = ['device_type', 'is_simulator', 'is_emulator', 'commit_or_tag', 'app_version_build', 'device_model', 'os_version', 'tooling', 'staging_environment', 'test_date_time', 'tester_owner', 'artifact_identity_checksum']
+    const metadataKeys = ['device_type', 'is_simulator', 'is_emulator', 'commit_or_tag', 'app_version', 'platform_build', 'device_model', 'os_version', 'tooling', 'staging_environment', 'test_date_time', 'tester_owner', 'artifact_identity_checksum']
     if (requireExactKeys(platform.metadata, metadataKeys, `${label} ${name} metadata`, violations)) {
       if (template) {
         for (const key of metadataKeys) if (platform.metadata[key] !== 'UNEXECUTED') violations.push(`${label} ${name} metadata ${key} must remain UNEXECUTED`)
       } else {
         if (platform.metadata.device_type !== catalog.platforms[name].device_type || platform.metadata.is_simulator !== false || platform.metadata.is_emulator !== false) violations.push(`${label} ${name} must record a physical device, not simulator/emulator`)
         for (const key of metadataKeys.slice(3)) if (typeof platform.metadata[key] !== 'string' || !platform.metadata[key].trim() || platform.metadata[key] === 'UNEXECUTED') violations.push(`${label} ${name} metadata ${key} is invalid`)
+        runCommits.add(platform.metadata.commit_or_tag)
+        runVersions.add(platform.metadata.app_version)
+        if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(platform.metadata.app_version ?? '')) violations.push(`${label} ${name} metadata app_version must be semantic versioning`)
         if (/simulator|emulator/i.test(`${platform.metadata.device_model} ${platform.metadata.tooling}`)) violations.push(`${label} ${name} device metadata must not describe a simulator or emulator`)
         if (!/^sha256:[a-f0-9]{64}$/i.test(platform.metadata.artifact_identity_checksum ?? '')) violations.push(`${label} ${name} metadata artifact_identity_checksum must be sha256:<64 hex>`)
         if (platformChecksums.has(platform.metadata.artifact_identity_checksum)) violations.push(`${label} platform artifact checksums must differ`)
         platformChecksums.add(platform.metadata.artifact_identity_checksum)
         const timestamp = platform.metadata.test_date_time
-        if (!RFC3339.test(timestamp ?? '') || Number.isNaN(Date.parse(timestamp)) || !isCalendarDate(timestamp.slice(0, 10))) violations.push(`${label} ${name} metadata test_date_time must be RFC3339 with timezone`)
+        if (!isRfc3339(timestamp)) violations.push(`${label} ${name} metadata test_date_time must be component-valid RFC3339 with timezone`)
         else if (timestamp.slice(0, 10) !== resultInfo.date) violations.push(`${label} ${name} metadata test_date_time must match result path date`)
       }
     }
@@ -145,13 +150,15 @@ function inspectResults(document, label, template, violations, catalog, resultIn
       for (const caseId of catalog.contexts[id].cases) { const entry = context.cases.find((x) => x?.case_id === caseId); if (entry) inspectCase(entry, caseId, `${label} ${name} ${id} ${caseId}`, id, options, violations) }
       if (!Array.isArray(context.credential_lifecycle)) { violations.push(`${label} ${name} ${id} lifecycle must be an array`); continue }
       exactIds(context.credential_lifecycle, 'stage_id', catalog.contexts[id].credential_lifecycle, `${label} ${name} ${id} lifecycle`, violations)
-      for (const stage of context.credential_lifecycle) { if (!requireExactKeys(stage, ['stage_id', 'status', 'evidence'], `${label} ${name} ${id} lifecycle stage`, violations)) continue; if (template ? stage.status !== 'UNEXECUTED' : !ALLOWED_GATE_STATUSES.has(stage.status)) violations.push(`${label} ${name} ${id} lifecycle stage status is invalid`); inspectEvidence(stage.evidence, `${label} ${name} ${id} lifecycle evidence`, { ...options, context: id }, violations) }
+      for (const stage of context.credential_lifecycle) { if (!requireExactKeys(stage, ['stage_id', 'status', 'evidence'], `${label} ${name} ${id} lifecycle stage`, violations)) continue; if (template ? stage.status !== 'UNEXECUTED' : stage.status !== 'PASS') violations.push(`${label} ${name} ${id} lifecycle stage status must be PASS for a selected ADR decision`); inspectEvidence(stage.evidence, `${label} ${name} ${id} lifecycle evidence`, { ...options, context: id }, violations) }
     }
     if (!Array.isArray(platform.platform_cases)) { violations.push(`${label} ${name} platform_cases must be an array`); continue }
     const platformCase = catalog.platforms[name].platform_case
     exactIds(platform.platform_cases, 'case_id', [platformCase], `${label} ${name} platform cases`, violations)
     if (platform.platform_cases[0]) inspectCase(platform.platform_cases[0], platformCase, `${label} ${name} platform case`, 'platform', { template, platform: name, runId: resultInfo.runId, platformChecksum: platform.metadata?.artifact_identity_checksum, usedReferences, catalog }, violations)
   }
+  if (!template && runCommits.size !== 1) violations.push(`${label} platforms must use the same commit_or_tag`)
+  if (!template && runVersions.size !== 1) violations.push(`${label} platforms must use the same app_version`)
   if (!requireExactKeys(document.redaction_policy, ['raw_capture_policy', 'safe_reference_policy'], `${label} redaction policy`, violations) || !/never commit raw captures/i.test(document.redaction_policy.raw_capture_policy ?? '')) violations.push(`${label} must prohibit raw captures`)
   const adrKeys = ['selected_outcome', 'decision_artifact_reference', 'allowed_outcomes', 'forbidden_fallbacks']
   if (requireExactKeys(document.adr_contract, adrKeys, `${label} ADR contract`, violations)) {
@@ -188,14 +195,14 @@ function inspectDeviceEvidenceContract(sources, violations) {
   }
 }
 function parseContract(document, violations) {
-  const block = document.match(/<!-- mobile-release-contract\n([\s\S]*?)\n-->/)
-  if (!block) {
-    violations.push('release-readiness document is missing the machine-readable toolchain contract')
+  const blocks = [...document.matchAll(/<!-- mobile-release-contract\n([\s\S]*?)\n-->/g)]
+  if (blocks.length !== 1) {
+    violations.push('release-readiness document must contain exactly one machine-readable toolchain contract')
     return new Map()
   }
 
   const contract = new Map()
-  for (const line of block[1].split('\n').map((entry) => entry.trim()).filter(Boolean)) {
+  for (const line of blocks[0][1].split('\n').map((entry) => entry.trim()).filter(Boolean)) {
     const separator = line.indexOf('=')
     if (separator <= 0 || separator === line.length - 1) {
       violations.push(`release contract entry is malformed: ${line}`)
@@ -214,15 +221,13 @@ function parseGateRow(line) {
 }
 
 function inspectGateTable(document, violations) {
-  const block = document.match(
-    /<!-- mobile-release-gates:start -->([\s\S]*?)<!-- mobile-release-gates:end -->/,
-  )
-  if (!block) {
-    violations.push('release-readiness document is missing the release-gate table markers')
+  const blocks = [...document.matchAll(/<!-- mobile-release-gates:start -->([\s\S]*?)<!-- mobile-release-gates:end -->/g)]
+  if (blocks.length !== 1) {
+    violations.push('release-readiness document must contain exactly one release-gate table block')
     return []
   }
 
-  const lines = block[1].split('\n').map((line) => line.trim()).filter((line) => line.startsWith('|'))
+  const lines = blocks[0][1].split('\n').map((line) => line.trim()).filter((line) => line.startsWith('|'))
   if (lines.length < 3) {
     violations.push('release-gate table is incomplete')
     return []
@@ -260,6 +265,8 @@ function inspectGateTable(document, violations) {
     if (!gateNames.has(requiredGate)) violations.push(`release gate is missing: ${requiredGate}`)
   }
   for (const gate of gateNames) if (!REQUIRED_GATES.includes(gate)) violations.push(`release gate is unknown: ${gate}`)
+  const outsideGateTable = document.replace(blocks[0][0], '')
+  if (/(?:Authentication and guest sessions|Device install smoke)\s*:\s*(?:PASS|APPROVED)|Physical-device evidence\s+APPROVED/i.test(outsideGateTable)) violations.push('release-readiness contains an issue #64 PASS or APPROVED claim outside the canonical gate table')
   return rows
 }
 
