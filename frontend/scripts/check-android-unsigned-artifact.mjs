@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { assertNativeBundlePolicy } from './check-native-bundle-policy.mjs'
+import { assertPackagedNativeBundlePolicy } from './check-native-bundle-policy.mjs'
 
 const APK_NAME = 'app-release-unsigned.apk'
 const APK_SIGNING_BLOCK_MAGIC = Buffer.from('APK Sig Block 42')
@@ -221,15 +221,16 @@ export function checkAndroidUnsignedArtifact(apkPath, { environment = process.en
   const entries = command(runner, 'unzip', ['-Z1', resolvedApk]).split(/\r?\n/).filter(Boolean)
   assertNoSigningMaterial(bytes, eocdOffset, entries)
   assertUnsigned(runner, officialTools, resolvedApk)
-  for (const required of ['assets/public/index.html', 'assets/public/.vite/manifest.json']) {
-    if (!entries.includes(required)) throw new Error(`APK is missing required packaged bundle file: ${required}`)
+  const packagedEntrypoint = 'assets/public/index.html'
+  if (!entries.includes(packagedEntrypoint)) {
+    throw new Error(`APK is missing required packaged bundle file: ${packagedEntrypoint}`)
   }
   for (const entry of entries.filter((entry) => entry.startsWith('assets/public/'))) assertSafeArchiveEntry(entry)
 
   const directory = mkdtempSync(join(tmpdir(), 'dupert-android-apk-'))
   try {
     command(runner, 'unzip', ['-qq', resolvedApk, 'assets/public/*', '-d', directory])
-    assertNativeBundlePolicy(join(directory, 'assets', 'public'), environment)
+    assertPackagedNativeBundlePolicy(join(directory, 'assets', 'public'), environment)
     const libraries = entries.filter((entry) => entry.startsWith('lib/') && entry.endsWith('.so'))
     const elfChecked = assertLibraries16Kb(runner, officialTools, resolvedApk, libraries, directory)
     command(runner, officialTools.zipalign, ['-c', '-P', '16', '-v', '4', resolvedApk])

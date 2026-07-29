@@ -17,7 +17,7 @@ async function fixtureApk(t, contents = emptyZip) {
   return apk
 }
 
-function fixtureRunner({ entries = packagedEntries, badging = validBadging, signature = 'DOES NOT VERIFY\nERROR: No JAR signatures', signatureStatus = 1, signatureStdout = '', signatureSignal = null, apksignerResult, load = alignedLoad, calls, apksignerError } = {}) {
+function fixtureRunner({ entries = packagedEntries, extractedFiles = { 'index.html': '<main>native</main>' }, badging = validBadging, signature = 'DOES NOT VERIFY\nERROR: No JAR signatures', signatureStatus = 1, signatureStdout = '', signatureSignal = null, apksignerResult, load = alignedLoad, calls, apksignerError } = {}) {
   return (executable, args) => {
     calls?.push([executable, args])
     if (executable === 'aapt') return { status: 0, stdout: badging }
@@ -30,10 +30,11 @@ function fixtureRunner({ entries = packagedEntries, badging = validBadging, sign
     if (executable !== 'unzip') throw new Error(`unexpected tool: ${executable}`)
     if (args[0] === '-Z1') return { status: 0, stdout: `${entries.join('\n')}\n` }
     if (args[0] === '-qq' && args.includes('assets/public/*')) {
-      const directory = args[args.indexOf('-d') + 1]
-      mkdirSync(join(directory, 'assets', 'public', '.vite'), { recursive: true })
-      writeFileSync(join(directory, 'assets', 'public', 'index.html'), '<main>native</main>')
-      writeFileSync(join(directory, 'assets', 'public', '.vite', 'manifest.json'), '{}')
+      const publicDirectory = join(args[args.indexOf('-d') + 1], 'assets', 'public')
+      mkdirSync(publicDirectory, { recursive: true })
+      for (const [name, contents] of Object.entries(extractedFiles)) {
+        writeFileSync(join(publicDirectory, name), contents)
+      }
       return { status: 0 }
     }
     return { status: 0 }
@@ -76,7 +77,7 @@ test('requires exact Android package metadata', () => {
   assert.throws(() => assertExpectedBadging(validBadging.replace("targetSdkVersion:'36'", "targetSdkVersion:'35'")), /targetSdk must be 36/)
 })
 
-test('rejects signed APKs and missing packaged public files', async (t) => {
+test('rejects signed APKs and a missing packaged entrypoint', async (t) => {
   const apk = await fixtureApk(t)
   assert.throws(() => checkAndroidUnsignedArtifact(apk, {
     tools,
@@ -85,9 +86,32 @@ test('rejects signed APKs and missing packaged public files', async (t) => {
   }), /did not report an accepted unsigned result/)
   assert.throws(() => checkAndroidUnsignedArtifact(apk, {
     tools,
-    runner: fixtureRunner({ entries: ['assets/public/index.html'] }),
+    runner: fixtureRunner({ entries: ['assets/public/app.js'] }),
     environment: {},
-  }), /manifest\.json/)
+  }), /assets\/public\/index\.html/)
+})
+
+test('scans manifest-free packaged content for browser-only code', async (t) => {
+  const apk = await fixtureApk(t)
+  assert.throws(() => checkAndroidUnsignedArtifact(apk, {
+    tools,
+    runner: fixtureRunner({
+      extractedFiles: {
+        'index.html': '<main>native</main>',
+        'app.js': 'navigator.serviceWorker.register("/sw.js")',
+      },
+    }),
+    environment: {},
+  }), /service-worker registration/)
+})
+
+test('rejects an extraction that omits the packaged entrypoint', async (t) => {
+  const apk = await fixtureApk(t)
+  assert.throws(() => checkAndroidUnsignedArtifact(apk, {
+    tools,
+    runner: fixtureRunner({ extractedFiles: {} }),
+    environment: {},
+  }), /packaged native entrypoint/)
 })
 
 test('rejects case-insensitive v1 signing material', async (t) => {
