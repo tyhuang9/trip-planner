@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
-import { dirname, resolve } from 'node:path'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
-import { assertMobileReleaseReadiness, inspectMobileReleaseReadiness, loadMobileReleaseSources } from './check-mobile-release-readiness.mjs'
+import { assertMobileReleaseReadiness, inspectMobileReleaseReadiness, loadMobileReleaseSources, loadTrackedResultCopies } from './check-mobile-release-readiness.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const sources = () => loadMobileReleaseSources(root)
@@ -323,4 +325,27 @@ test('rejects duplicate ADR markers independently', () => {
 
 test('rejects network-reference reuse independently', () => {
   const result = completed(); result.platforms[0].contexts[0].cases[1].evidence.network_trace_reference = result.platforms[0].contexts[0].cases[0].evidence.network_trace_reference; assert.match(messages(tracked(result)), /must not reuse an evidence reference/)
+})
+
+test('tracked result loader accepts regular in-repository files and rejects outside symlinks', () => {
+  const temporaryRoot = mkdtempSync(join(tmpdir(), 'issue64-result-loader-'))
+  const outsideRoot = mkdtempSync(join(tmpdir(), 'issue64-result-outside-'))
+  try {
+    const regularPath = 'docs/mobile/evidence/issue-64/2026-07-29/regular-run/results.json'
+    const symlinkPath = 'docs/mobile/evidence/issue-64/2026-07-29/symlink-run/results.json'
+    mkdirSync(dirname(join(temporaryRoot, regularPath)), { recursive: true })
+    mkdirSync(dirname(join(temporaryRoot, symlinkPath)), { recursive: true })
+    writeFileSync(join(temporaryRoot, regularPath), '{"safe":true}\n')
+    const outsideFile = join(outsideRoot, 'results.json')
+    writeFileSync(outsideFile, '{"outside":true}\n')
+    symlinkSync(outsideFile, join(temporaryRoot, symlinkPath))
+
+    const loaded = loadTrackedResultCopies(temporaryRoot, [regularPath, symlinkPath])
+    assert.equal(loaded.copies[regularPath], '{"safe":true}\n')
+    assert.equal(loaded.copies[symlinkPath], undefined)
+    assert.match(loaded.violations.join('\n'), /regular non-symlink file inside the repository/)
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true })
+    rmSync(outsideRoot, { recursive: true, force: true })
+  }
 })

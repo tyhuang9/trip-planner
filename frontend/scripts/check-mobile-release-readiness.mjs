@@ -1,6 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { lstatSync, readFileSync, realpathSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { dirname, resolve } from 'node:path'
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const REQUIRED_GATES = ['Repository contract', 'Artifact provenance', 'Signing and secrets', 'Identity and versioning', 'Production configuration', 'Authentication and guest sessions', 'Maps', 'Universal/App Links', 'Privacy and store metadata', 'Device install smoke', 'Backward compatibility and rollback', 'Monitoring and ownership']
@@ -296,9 +296,29 @@ function inspectProductionBackend(environmentFile, violations) {
   }
 }
 
+export function loadTrackedResultCopies(repositoryRoot, trackedFiles = []) {
+  const root = realpathSync(resolve(repositoryRoot))
+  const copies = {}
+  const violations = []
+  for (const path of trackedFiles.filter((entry) => RESULT_PATH.test(entry))) {
+    const candidate = resolve(root, path)
+    try {
+      if (!lstatSync(candidate).isFile()) throw new Error('not a regular file')
+      const realPath = realpathSync(candidate)
+      const relativePath = relative(root, realPath)
+      if (relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) throw new Error('outside repository')
+      copies[path] = readFileSync(realPath, 'utf8')
+    } catch {
+      violations.push(`tracked issue #64 result must be a readable regular non-symlink file inside the repository: ${path}`)
+    }
+  }
+  return { copies, violations }
+}
+
 export function loadMobileReleaseSources(repositoryRoot, trackedFiles = []) {
   const root = resolve(repositoryRoot)
   const read = (path) => readFileSync(resolve(root, path), 'utf8')
+  const loadedResults = loadTrackedResultCopies(root, trackedFiles)
 
   return {
     frontendPackage: read('frontend/package.json'),
@@ -316,13 +336,14 @@ export function loadMobileReleaseSources(repositoryRoot, trackedFiles = []) {
     authSessionEvidenceTemplate: read('docs/mobile/auth-session-device-evidence.template.json'),
     authSessionDeviceSpike: read('docs/mobile/auth-session-device-spike.md'),
     authSessionAdrTemplate: read('docs/mobile/auth-session-transport-adr-template.md'),
-    resultCopies: Object.fromEntries(trackedFiles.filter((path) => RESULT_PATH.test(path)).map((path) => [path, read(path)])),
+    resultCopies: loadedResults.copies,
+    sourceViolations: loadedResults.violations,
     trackedFiles,
   }
 }
 
 export function inspectMobileReleaseReadiness(sources) {
-  const violations = []
+  const violations = [...(sources.sourceViolations ?? [])]
   let frontendPackage
   try {
     frontendPackage = JSON.parse(sources.frontendPackage)
