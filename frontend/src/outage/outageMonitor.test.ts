@@ -63,7 +63,10 @@ describe('outage monitoring', () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(response(200)).mockResolvedValueOnce(response(503))
     vi.stubGlobal('fetch', fetchMock)
 
-    reportAmbiguousBackendFailure({ response: { status: 500 } } as never)
+    reportAmbiguousBackendFailure({
+      isAxiosError: true,
+      response: { status: 500 },
+    })
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
 
     expect(fetchMock.mock.calls[0][0]).toContain('/actuator/health/liveness')
@@ -335,9 +338,31 @@ describe('outage monitoring', () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
 
-    reportAmbiguousBackendFailure({ response: { status: 422 } } as never)
+    reportAmbiguousBackendFailure({
+      isAxiosError: true,
+      response: { status: 422 },
+    })
 
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('does not promote non-Axios failures into outage probes', () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    reportAmbiguousBackendFailure(new Error('local state changed'))
+
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('probes health after an Axios network failure', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response(503))
+    vi.stubGlobal('fetch', fetchMock)
+
+    reportAmbiguousBackendFailure({ isAxiosError: true })
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+
+    expect(fetchMock.mock.calls[0][0]).toContain('/actuator/health/liveness')
   })
 
   it('shares one health probe across concurrent backend failures', async () => {

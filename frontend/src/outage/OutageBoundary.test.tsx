@@ -160,7 +160,10 @@ describe('<OutageBoundary>', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(app())
 
-    reportAmbiguousBackendFailure({ response: { status: 500 } } as never)
+    reportAmbiguousBackendFailure({
+      isAxiosError: true,
+      response: { status: 500 },
+    })
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(/neon database/i)
     expect(alert).toHaveTextContent(/used up its monthly neon free-tier allowance/i)

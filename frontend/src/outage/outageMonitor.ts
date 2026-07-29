@@ -1,4 +1,4 @@
-import type { AxiosError } from 'axios'
+import axios from 'axios'
 import { backendBaseUrl } from '../api/baseUrl'
 
 export type OutageKind =
@@ -79,9 +79,12 @@ async function probeHealth(timeoutMs: number): Promise<ProbeResult> {
   }
 }
 
-export function reportAmbiguousBackendFailure(error?: AxiosError): void {
-  const status = error?.response?.status
-  if (status !== undefined && status < 500) return
+export function reportAmbiguousBackendFailure(error?: unknown): void {
+  if (error !== undefined) {
+    if (!axios.isAxiosError(error)) return
+    const status = error.response?.status
+    if (status !== undefined && status < 500) return
+  }
   void checkHealth()
 }
 
