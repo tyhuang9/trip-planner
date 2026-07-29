@@ -75,6 +75,30 @@ test('keeps both issue 64 release gates blocked', () => {
   }
 })
 
+test('rejects missing iOS and Android platform entries', () => {
+  for (const name of ['ios', 'android']) { const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.platforms = document.platforms.filter((x) => x.platform !== name); candidate.authSessionEvidenceTemplate = JSON.stringify(document); assert.match(messages(candidate), /platforms must contain exactly/) }
+})
+
+test('rejects missing platform metadata and context cases', () => {
+  const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); delete document.platforms[0].metadata.device_model; document.platforms[1].contexts[1].cases.pop(); candidate.authSessionEvidenceTemplate = JSON.stringify(document); const output = messages(candidate); assert.match(output, /metadata must contain exactly/); assert.match(output, /guest cases must contain exactly/)
+})
+
+test('requires distinct platform and context structures', () => {
+  const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.platforms[0].contexts[1].cases = document.platforms[0].contexts[0].cases; candidate.authSessionEvidenceTemplate = JSON.stringify(document); assert.match(messages(candidate), /ios guest cases must contain exactly/)
+})
+
+test('rejects dated-copy workflow drift', () => {
+  const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.copy_results_to = 'docs/mobile/evidence/results.json'; candidate.authSessionEvidenceTemplate = JSON.stringify(document); assert.match(messages(candidate), /copy_results_to is invalid/)
+})
+
+test('rejects missing boundary, lifecycle stage, and evidence field', () => {
+  const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); const member = document.platforms[0].contexts[0]; member.credential_lifecycle.pop(); member.cases.find((x) => x.case_id === 'offline_loss_reconnect_each_session_boundary').session_boundaries.pop(); delete member.cases[0].evidence.safe_reference; candidate.authSessionEvidenceTemplate = JSON.stringify(document); const output = messages(candidate); assert.match(output, /lifecycle must contain exactly/); assert.match(output, /session boundaries must contain exactly/); assert.match(output, /evidence must contain exactly/)
+})
+
+test('rejects source template claims and redaction or ADR drift', () => {
+  const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.platforms[0].contexts[0].cases[0].status = 'PASS'; delete document.redaction_policy.raw_capture_policy; document.adr_contract.allowed_outcomes.push('endpoint_only_fallback'); candidate.authSessionEvidenceTemplate = JSON.stringify(document); const output = messages(candidate); assert.match(output, /status is invalid/); assert.match(output, /redaction policy must contain exactly/); assert.match(output, /ADR contract is invalid/)
+})
+
 test('rejects session collapse, raw evidence, invalid device and unknown keys', () => {
   const result = completed()
   const ios = result.platforms[0]
