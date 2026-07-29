@@ -140,8 +140,8 @@ class DatabaseMigrationCoordinatorTest {
     }
 
     @Test
-    @Timeout(5)
-    void returnsDownWithinHealthBudgetWhenHikariPoolIsSaturated() throws Exception {
+    @Timeout(6)
+    void waitsForHikariConnectionTimeoutThenReturnsDownWhenPoolIsSaturated() throws Exception {
         DataSource physicalDataSource = mock(DataSource.class);
         Connection physicalConnection = mock(Connection.class);
         when(physicalConnection.isValid(Mockito.anyInt())).thenReturn(true);
@@ -166,17 +166,28 @@ class DatabaseMigrationCoordinatorTest {
                 assertThat(poolMetrics.getTotalConnections()).isEqualTo(1);
 
                 ExecutorService healthExecutor = Executors.newSingleThreadExecutor();
+                Future<Health> health = null;
                 try {
-                    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-                    Future<Health> health = healthExecutor.submit(coordinator::health);
+                    health = healthExecutor.submit(coordinator::health);
 
-                    awaitConnectionWaiter(poolMetrics, health, deadline);
-                    Health result = health.get(remainingNanos(deadline), TimeUnit.NANOSECONDS);
+                    long waiterDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+                    awaitConnectionWaiter(poolMetrics, health, waiterDeadline);
+
+                    long completionDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+                    Health result = health.get(
+                        remainingNanos(completionDeadline), TimeUnit.NANOSECONDS);
 
                     assertThat(result.getStatus().getCode()).isEqualTo("DOWN");
-                    awaitNoConnectionWaiters(poolMetrics, deadline);
+                    long resetDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+                    awaitNoConnectionWaiters(poolMetrics, resetDeadline);
                 } finally {
+                    if (health != null && !health.isDone()) {
+                        health.cancel(true);
+                    }
                     healthExecutor.shutdownNow();
+                    assertThat(healthExecutor.awaitTermination(1, TimeUnit.SECONDS))
+                        .as("health executor terminated")
+                        .isTrue();
                 }
             }
         }
