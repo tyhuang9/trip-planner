@@ -176,7 +176,7 @@ async function performRefresh(): Promise<AuthResponse> {
     useAuthStore.getState().setSession({ accessToken, expiresInSeconds, user })
     return response.data
   } catch (err) {
-    reportAmbiguousBackendFailure(err as AxiosError)
+    reportAmbiguousBackendFailure(err)
     if (useAuthStore.getState().accessToken === accessTokenAtStart) {
       useAuthStore
         .getState()

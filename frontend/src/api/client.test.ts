@@ -60,6 +60,7 @@ afterEach(() => {
     Reflect.deleteProperty(globalThis.navigator, 'locks')
   }
   clearPendingLogoutIntent()
+  vi.unstubAllGlobals()
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
@@ -423,6 +424,8 @@ describe('apiClient response interceptor — refresh on 401', () => {
 
 describe('refreshSession cross-tab coordination', () => {
   it('serializes delayed refresh work before another tab can revoke the session', async () => {
+    const healthFetch = vi.fn()
+    vi.stubGlobal('fetch', healthFetch)
     let lockTail = Promise.resolve<unknown>(undefined)
     const request = vi.fn(
       <T,>(
@@ -482,6 +485,7 @@ describe('refreshSession cross-tab coordination', () => {
     await logoutWork
     expect(revoke).toHaveBeenCalledOnce()
     expect(useAuthStore.getState().accessToken).toBeNull()
+    expect(healthFetch).not.toHaveBeenCalled()
   })
 
   it('does not refresh while logout revocation is pending', async () => {
