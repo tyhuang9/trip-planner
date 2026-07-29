@@ -166,6 +166,25 @@ describe('apiClient request interceptor', () => {
     expect(response.data.auth).toBeNull()
   })
 
+  it('keeps public guest share acceptance cookie-only when member state is present', async () => {
+    useAuthStore.getState().setSession({
+      accessToken: 'live-tok',
+      expiresInSeconds: 900,
+      user: SAMPLE_USER,
+    })
+
+    apiMock.onPost('/share/guest').reply((cfg) => {
+      const auth = cfg.headers?.['Authorization'] ?? cfg.headers?.['authorization']
+      return [200, { auth: auth ?? null }]
+    })
+
+    const response = await apiClient.post('/share/guest', {
+      token: 'share-token',
+      displayName: 'Guest Alice',
+    })
+    expect(response.data.auth).toBeNull()
+  })
+
   it('does NOT treat suffix matches like /admin/audit-auth/login as public (regression)', async () => {
     // The previous `path.endsWith(p)` check would have wrongly classified
     // this URL as public and stripped the bearer header. Exact-match

@@ -43,6 +43,7 @@ const PUBLIC_PATHS = new Set<string>([
   '/auth/refresh',
   '/auth/logout',
   '/guest-session/bootstrap',
+  '/share/guest',
 ])
 
 const GUEST_WRITE_HEADER = 'X-Dupert-Guest-Write'
