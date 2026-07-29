@@ -110,4 +110,3 @@ Before any row above moves to `PASS`, record:
 
 Issue #68 stays open until signed artifacts install and all acceptance evidence is
 recorded. This preflight deliberately performs no signing and reads no release secret.
-
