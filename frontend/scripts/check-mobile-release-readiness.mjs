@@ -12,6 +12,7 @@ const REQUIRED_SOURCE_FILES = ['docs/mobile/auth-session-device-evidence.catalog
 const EVIDENCE_KEYS = ['safe_reference', 'observed_result', 'network_trace_reference', 'artifact_identity_checksum', 'redaction_notes']
 const CASE_KEYS = ['case_id', 'preconditions', 'actions', 'expected_outcome', 'cleanup', 'status', 'evidence']
 const RAW_SECRET = /(?:authorization\s*[:=]\s*(?:bearer|basic)|x[-_]api[-_]key\s*[:=]|\bbearer\s+[a-z0-9._-]{20,}|\bbasic\s+[a-z0-9+/=]{12,}|\beyJ[a-z0-9_-]{10,}\.[a-z0-9_-]+\.|(?:access|refresh|guest|reset)[_-]?token\s*[:=]|verification[-_]code\s*[:=]|api[-_]?key\s*[:=]|(?:set-)?cookie\s*[:=]|password\s*[:=]\s*[^\s"']+|https?:\/\/[^\s"']+\/(?:reset|verify|verification)[^\s"']*|[?&](?:token|secret|api[-_]?key|password|code|reset[-_]?token|verification[-_]?code)=)/i
+const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
 const IMMUTABLE_DOCUMENT_HASHES = {
   'auth-session-device-spike.md': '7df8881bb4f581926fd99dc71a01ddeec80af5ff47300ad1057242c85a381a11',
   'auth-session-transport-adr-template.md': '9d8da67a404a53fa0e23b47915c1790d635493454b3d2150789c42955f8a8d81',
@@ -68,9 +69,8 @@ function inspectCase(entry, expectedId, label, contextId, options, violations) {
   const keys = expectedId === 'offline_loss_reconnect_each_session_boundary' ? [...CASE_KEYS, 'session_boundaries'] : CASE_KEYS
   if (!requireExactKeys(entry, keys, label, violations)) return
   if (entry.case_id !== expectedId) violations.push(`${label} case_id must be ${expectedId}`)
-  for (const key of ['preconditions', 'actions', 'expected_outcome', 'cleanup', 'status']) {
-    if (key === 'status' ? (options.template ? entry[key] !== 'UNEXECUTED' : entry[key] !== 'PASS') : (options.template ? entry[key] !== 'UNEXECUTED' : typeof entry[key] !== 'string' || !entry[key].trim() || entry[key] === 'UNEXECUTED')) violations.push(`${label} ${key} must be PASS for a selected ADR decision`)
-  }
+  if (options.template ? entry.status !== 'UNEXECUTED' : entry.status !== 'PASS') violations.push(`${label} status must be PASS for a selected ADR decision`)
+  for (const key of ['preconditions', 'actions', 'expected_outcome', 'cleanup']) if (options.template ? entry[key] !== 'UNEXECUTED' : typeof entry[key] !== 'string' || !entry[key].trim() || entry[key] === 'UNEXECUTED') violations.push(`${label} ${key} must be completed text`)
   inspectEvidence(entry.evidence, `${label} evidence`, { ...options, context: contextId }, violations)
   if (expectedId === 'offline_loss_reconnect_each_session_boundary') {
     if (!Array.isArray(entry.session_boundaries)) return violations.push(`${label} session_boundaries must be an array`)
@@ -115,7 +115,7 @@ function inspectResults(document, label, template, violations, catalog, resultIn
         for (const key of metadataKeys.slice(3)) if (typeof platform.metadata[key] !== 'string' || !platform.metadata[key].trim() || platform.metadata[key] === 'UNEXECUTED') violations.push(`${label} ${name} metadata ${key} is invalid`)
         runCommits.add(platform.metadata.commit_or_tag)
         runVersions.add(platform.metadata.app_version)
-        if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(platform.metadata.app_version ?? '')) violations.push(`${label} ${name} metadata app_version must be semantic versioning`)
+        if (!SEMVER.test(platform.metadata.app_version ?? '')) violations.push(`${label} ${name} metadata app_version must be semantic versioning`)
         if (/simulator|emulator/i.test(`${platform.metadata.device_model} ${platform.metadata.tooling}`)) violations.push(`${label} ${name} device metadata must not describe a simulator or emulator`)
         if (!/^sha256:[a-f0-9]{64}$/i.test(platform.metadata.artifact_identity_checksum ?? '')) violations.push(`${label} ${name} metadata artifact_identity_checksum must be sha256:<64 hex>`)
         if (platformChecksums.has(platform.metadata.artifact_identity_checksum)) violations.push(`${label} platform artifact checksums must differ`)

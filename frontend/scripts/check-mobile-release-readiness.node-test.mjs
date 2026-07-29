@@ -322,6 +322,15 @@ test('requires identical commit and semantic app version across platforms', () =
   const commitMismatch = completed(); commitMismatch.platforms[1].metadata.commit_or_tag = 'different'; assert.match(messages(tracked(commitMismatch)), /same commit_or_tag/); const versionMismatch = completed(); versionMismatch.platforms[1].metadata.app_version = '1.2.4'; assert.match(messages(tracked(versionMismatch)), /same app_version/); const invalidVersion = completed(); for (const platform of invalidVersion.platforms) platform.metadata.app_version = 'release'; assert.match(messages(tracked(invalidVersion)), /semantic versioning/)
 })
 
+test('enforces strict SemVer identifiers and accepts valid controls', () => {
+  for (const version of ['01.2.3', '1.2.3-a..b', '1.2.3-01']) { const result = completed(); for (const platform of result.platforms) platform.metadata.app_version = version; assert.match(messages(tracked(result)), /semantic versioning/) }
+  for (const version of ['1.2.3-alpha.1+build.5', '0.0.0']) { const result = completed(); for (const platform of result.platforms) platform.metadata.app_version = version; assert.deepEqual(inspectMobileReleaseReadiness(tracked(result)), []) }
+})
+
+test('reports incomplete procedural fields as completed-text violations', () => {
+  const result = completed(); result.platforms[0].contexts[0].cases[0].actions = ''; const output = messages(tracked(result)); assert.match(output, /actions must be completed text/); assert.doesNotMatch(output, /actions must be PASS/)
+})
+
 test('rejects simulator wording independently from emulator wording', () => {
   const simulator = completed(); simulator.platforms[0].metadata.device_model = 'iPhone Simulator'; assert.match(messages(tracked(simulator)), /must not describe a simulator/); const emulator = completed(); emulator.platforms[1].metadata.tooling = 'Android Emulator'; assert.match(messages(tracked(emulator)), /must not describe a simulator/)
 })
@@ -344,16 +353,23 @@ test('tracked result loader accepts regular in-repository files and rejects outs
   try {
     const regularPath = 'docs/mobile/evidence/issue-64/2026-07-29/regular-run/results.json'
     const symlinkPath = 'docs/mobile/evidence/issue-64/2026-07-29/symlink-run/results.json'
+    const directoryPath = 'docs/mobile/evidence/issue-64/2026-07-29/directory-run/results.json'
+    const escapePath = 'docs/mobile/evidence/issue-64/2026-07-29/escape-run/results.json'
     mkdirSync(dirname(join(temporaryRoot, regularPath)), { recursive: true })
     mkdirSync(dirname(join(temporaryRoot, symlinkPath)), { recursive: true })
     writeFileSync(join(temporaryRoot, regularPath), '{"safe":true}\n')
     const outsideFile = join(outsideRoot, 'results.json')
     writeFileSync(outsideFile, '{"outside":true}\n')
     symlinkSync(outsideFile, join(temporaryRoot, symlinkPath))
+    mkdirSync(join(temporaryRoot, directoryPath), { recursive: true })
+    symlinkSync(outsideRoot, dirname(join(temporaryRoot, escapePath)), 'dir')
 
-    const loaded = loadTrackedResultCopies(temporaryRoot, [regularPath, symlinkPath])
+    const loaded = loadTrackedResultCopies(temporaryRoot, [regularPath, symlinkPath, directoryPath, escapePath])
     assert.equal(loaded.copies[regularPath], '{"safe":true}\n')
     assert.equal(loaded.copies[symlinkPath], undefined)
+    assert.equal(loaded.copies[directoryPath], undefined)
+    assert.equal(loaded.copies[escapePath], undefined)
+    assert.equal(loaded.violations.length, 3)
     assert.match(loaded.violations.join('\n'), /regular non-symlink file inside the repository/)
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true })
