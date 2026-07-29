@@ -1,0 +1,89 @@
+name: Android unsigned artifact
+
+on:
+  push:
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/android-unsigned-artifact.yml'
+      - 'docs/mobile/build-profiles.md'
+  pull_request:
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/android-unsigned-artifact.yml'
+      - 'docs/mobile/build-profiles.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-unsigned-artifact-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unsigned-apk:
+    name: Build and inspect unsigned Android APK
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_BUILD_TOOLS_VERSION: '36.0.0'
+      ANDROID_NDK_VERSION: '28.2.13676358'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Verify deterministic Android tool paths
+        shell: bash
+        run: |
+          : "${ANDROID_HOME:?ANDROID_HOME is required on the hosted runner}"
+          for tool in aapt apksigner zipalign; do
+            test -x "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS_VERSION/$tool" || {
+              echo "::error title=Missing Android Build Tools::$tool is unavailable in build-tools/$ANDROID_BUILD_TOOLS_VERSION"
+              exit 1
+            }
+          done
+          test -x "$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump" || {
+            echo "::error title=Missing Android NDK::llvm-objdump is unavailable in NDK $ANDROID_NDK_VERSION"
+            exit 1
+          }
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Check Android data-exposure source policy
+        working-directory: frontend
+        run: npm run check:android-data-exposure
+
+      - name: Build and sync native production bundle for Android only
+        working-directory: frontend
+        env:
+          # Public, non-production CI endpoint. These are bundled values, never secrets.
+          VITE_BACKEND_API_URL: https://api.dupert.test
+          VITE_GOOGLE_MAPS_API_KEY: ''
+          VITE_APP_ACCESS_PASSWORD: ''
+        run: |
+          npm run build:native:production
+          npx --no-install cap sync android
+
+      - name: Build unsigned Android release APK
+        working-directory: frontend/android
+        run: ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Inspect ephemeral unsigned Android APK
+        working-directory: frontend
+        run: node scripts/check-android-unsigned-artifact.mjs android/app/build/outputs/apk/release/app-release-unsigned.apk
