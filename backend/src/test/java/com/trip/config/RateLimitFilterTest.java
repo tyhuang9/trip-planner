@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -67,26 +68,77 @@ class RateLimitFilterTest {
     }
 
     @Test
-    void shareAcceptRateLimitIgnoresTokenDiscriminator() throws Exception {
+    void newAndLegacyShareRoutesUseOnePerIpBucket() throws Exception {
         RateLimitRegistry registry = new RateLimitRegistry();
         RateLimitFilter filter = new RateLimitFilter(registry, new AppProperties());
         AtomicInteger passed = new AtomicInteger();
         FilterChain chain = (_request, _response) -> passed.incrementAndGet();
+        String token = "abcdefghijklmnopqrstuvwxyz123456";
+        String[] paths = {
+            "/api/share/accept",
+            "/api/share/guest",
+            "/api/share/" + token + "/accept",
+            "/api/share/" + token + "/guest",
+            "/api/share/short/accept",
+            "/api/share/invalid.token/guest",
+            "/api/share/" + "a".repeat(201) + "/accept"
+        };
 
         for (int i = 0; i < 10; i++) {
             MockHttpServletResponse response = new MockHttpServletResponse();
-            filter.doFilter(shareRequest("token-" + i), response, chain);
+            filter.doFilter(request("POST", paths[i % paths.length]), response, chain);
             assertThat(response.getStatus()).isEqualTo(200);
         }
 
         assertThat(registry.size()).isEqualTo(1);
 
         MockHttpServletResponse limited = new MockHttpServletResponse();
-        filter.doFilter(shareRequest("token-overflow"), limited, chain);
+        filter.doFilter(request("POST", "/api/share/accept"), limited, chain);
 
         assertThat(passed.get()).isEqualTo(10);
         assertThat(limited.getStatus()).isEqualTo(429);
         assertThat(limited.getContentAsString()).isEqualTo(RateLimitFilter.RATE_LIMITED_BODY);
+        assertThat(limited.getHeader("Retry-After")).isNotBlank();
+    }
+
+    @Test
+    void shareRateLimitIgnoresNearMissRoutes() throws Exception {
+        RateLimitRegistry registry = new RateLimitRegistry();
+        RateLimitFilter filter = new RateLimitFilter(registry, new AppProperties());
+        AtomicInteger passed = new AtomicInteger();
+        FilterChain chain = (_request, _response) -> passed.incrementAndGet();
+        String validToken = "abcdefghijklmnopqrstuvwxyz123456";
+        String[] paths = {
+            "/api/share/accept/extra",
+            "/api/share/guest/extra",
+            "/api/share/" + validToken + "/accept/extra",
+            "/api/share/" + validToken + "/other",
+            "/api/share//accept"
+        };
+
+        for (String path : paths) {
+            filter.doFilter(request("POST", path), new MockHttpServletResponse(), chain);
+        }
+
+        assertThat(passed.get()).isEqualTo(paths.length);
+        assertThat(registry.size()).isZero();
+    }
+
+    @Test
+    void shareRateLimitDoesNotConsumeRequestBody() throws Exception {
+        RateLimitFilter filter = new RateLimitFilter(new RateLimitRegistry(), new AppProperties());
+        MockHttpServletRequest request = request("POST", "/api/share/accept");
+        request.setContent("{\"token\":\"abcdefghijklmnopqrstuvwxyz123456\"}"
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        AtomicReference<String> downstreamBody = new AtomicReference<>();
+
+        filter.doFilter(request, new MockHttpServletResponse(), (filteredRequest, _response) ->
+            downstreamBody.set(new String(
+                filteredRequest.getInputStream().readAllBytes(),
+                java.nio.charset.StandardCharsets.UTF_8)));
+
+        assertThat(downstreamBody.get())
+            .isEqualTo("{\"token\":\"abcdefghijklmnopqrstuvwxyz123456\"}");
     }
 
     @Test
@@ -247,12 +299,6 @@ class RateLimitFilterTest {
         assertThat(limited.getStatus()).isEqualTo(429);
         assertThat(limited.getContentAsString()).isEqualTo(RateLimitFilter.RATE_LIMITED_BODY);
         assertThat(limited.getHeader("Retry-After")).isNotBlank();
-    }
-
-    private static MockHttpServletRequest shareRequest(String token) {
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/share/" + token + "/accept");
-        request.setRemoteAddr("203.0.113.40");
-        return request;
     }
 
     private static MockHttpServletRequest request(String method, String path) {

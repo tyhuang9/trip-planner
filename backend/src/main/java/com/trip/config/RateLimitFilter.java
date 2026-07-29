@@ -2,6 +2,7 @@ package com.trip.config;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.regex.Pattern;
 
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -60,7 +61,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private static final String DEV_LOGIN_AS_PATH = "/api/dev/auth/login-as";
     private static final String DEV_USERS_PATH = "/api/dev/users";
     private static final String DEV_USERS_RESEED_PATH = "/api/dev/users/reseed";
-    private static final String SHARE_PATH_PREFIX = "/api/share/";
+    private static final String SHARE_ACCEPT_PATH = "/api/share/accept";
+    private static final String SHARE_GUEST_PATH = "/api/share/guest";
+    private static final Pattern LEGACY_SHARE_ACCEPT_PATH = Pattern.compile(
+        "^/api/share/[^/]+/(?:accept|guest)$");
     private static final String PLACES_PATH_PREFIX = "/api/places/";
     private static final String MAPS_PATH_PREFIX = "/api/maps/";
     private static final String HEALTH_PATH = "/actuator/health";
@@ -166,16 +170,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     private static boolean isShareAcceptPath(String path) {
-        if (!path.startsWith(SHARE_PATH_PREFIX)) {
-            return false;
-        }
-        int tokenStart = SHARE_PATH_PREFIX.length();
-        int tokenEnd = path.indexOf('/', tokenStart);
-        if (tokenEnd <= tokenStart || tokenEnd == path.length() - 1) {
-            return false;
-        }
-        String action = path.substring(tokenEnd + 1);
-        return "accept".equals(action) || "guest".equals(action);
+        return SHARE_ACCEPT_PATH.equals(path)
+            || SHARE_GUEST_PATH.equals(path)
+            || LEGACY_SHARE_ACCEPT_PATH.matcher(path).matches();
     }
 
     private boolean tryConsume(HttpServletResponse response,
