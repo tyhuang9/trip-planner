@@ -17,6 +17,12 @@ function messages(candidate) {
   return inspectMobileReleaseReadiness(candidate).join('\n')
 }
 
+function mutateEvidenceTemplate(candidate, mutate) {
+  const document = JSON.parse(candidate.authSessionEvidenceTemplate)
+  mutate(document)
+  candidate.authSessionEvidenceTemplate = JSON.stringify(document)
+}
+
 test('accepts the repository-backed release-readiness contract', () => {
   assert.deepEqual(inspectMobileReleaseReadiness(sources()), [])
 })
@@ -73,4 +79,77 @@ test('rejects inconsistent CI pins and duplicate release gates', () => {
   const result = messages(candidate)
   assert.match(result, /CI Node version must be present and consistent across jobs/)
   assert.match(result, /release-gate table must not repeat gate names/)
+})
+
+test('rejects a missing physical platform entry', () => {
+  const candidate = sources()
+  mutateEvidenceTemplate(candidate, (document) => {
+    document.platforms = document.platforms.filter(({ platform }) => platform !== 'android')
+  })
+
+  assert.match(messages(candidate), /device evidence platform is missing: android/)
+})
+
+test('rejects missing device metadata and case identifiers', () => {
+  const candidate = sources()
+  mutateEvidenceTemplate(candidate, (document) => {
+    delete document.metadata.device_model
+    document.cases = document.cases.filter(({ case_id }) => case_id !== 'guest_claim')
+  })
+
+  const result = messages(candidate)
+  assert.match(result, /device evidence metadata is missing: device_model/)
+  assert.match(result, /device evidence case is missing: guest_claim/)
+})
+
+test('rejects missing credential lifecycle stage and evidence field', () => {
+  const candidate = sources()
+  mutateEvidenceTemplate(candidate, (document) => {
+    document.credential_lifecycle = document.credential_lifecycle.filter(({ stage_id }) => stage_id !== 'claimed')
+    delete document.cases.find(({ case_id }) => case_id === 'trip_write').evidence.safe_reference
+  })
+
+  const result = messages(candidate)
+  assert.match(result, /credential lifecycle stage is missing: claimed/)
+  assert.match(result, /trip_write is missing evidence field: safe_reference/)
+})
+
+test('rejects falsely completed status and evidence values', () => {
+  const candidate = sources()
+  mutateEvidenceTemplate(candidate, (document) => {
+    document.template_status = 'PASS'
+    document.cases[0].evidence.safe_reference = 'artifacts/run-1.json'
+  })
+
+  const result = messages(candidate)
+  assert.match(result, /device evidence template status must remain UNEXECUTED/)
+  assert.match(result, /member_login safe_reference must remain UNEXECUTED/)
+})
+
+test('rejects removal of the raw-secret redaction policy', () => {
+  const candidate = sources()
+  mutateEvidenceTemplate(candidate, (document) => {
+    delete document.redaction_policy.raw_secret_policy
+  })
+
+  assert.match(messages(candidate), /credential redaction policy must prohibit committing raw secrets/)
+})
+
+test('rejects ADR option drift', () => {
+  const candidate = sources()
+  mutateEvidenceTemplate(candidate, (document) => {
+    document.adr_contract.allowed_outcomes.push({ option_id: 'endpoint_only_fallback', scope: 'UNEXECUTED' })
+  })
+
+  assert.match(messages(candidate), /ADR must allow exactly the two approved outcomes/)
+})
+
+test('rejects an issue #64 gate becoming PASS', () => {
+  const candidate = sources()
+  candidate.releaseDocument = candidate.releaseDocument.replace(
+    '| Authentication and guest sessions | BLOCKED |',
+    '| Authentication and guest sessions | PASS |',
+  )
+
+  assert.match(messages(candidate), /Authentication and guest sessions must remain BLOCKED/)
 })

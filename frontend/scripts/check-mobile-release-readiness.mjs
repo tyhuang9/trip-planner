@@ -19,6 +19,65 @@ const REQUIRED_GATES = [
 
 const ALLOWED_GATE_STATUSES = new Set(['PASS', 'BLOCKED', 'UNVERIFIED', 'FAIL'])
 const FORBIDDEN_TRACKED_RELEASE_FILES = /(?:^|\/)(?:[^/]+\.(?:jks|keystore|p12|p8|pfx|pem|key|cer|crt|mobileprovision|provisionprofile)|keystore\.properties)$/i
+const REQUIRED_DEVICE_PLATFORMS = new Map([
+  ['ios', ['commit_or_tag', 'app_version_build', 'device_model', 'os_version', 'ios_xcode_macos_tooling', 'staging_environment', 'test_date_time', 'tester_owner', 'artifact_identity_checksum']],
+  ['android', ['commit_or_tag', 'app_version_build', 'device_model', 'os_version', 'android_adb_tooling', 'staging_environment', 'test_date_time', 'tester_owner', 'artifact_identity_checksum']],
+])
+const REQUIRED_DEVICE_METADATA_FIELDS = [
+  'commit_or_tag',
+  'app_version_build',
+  'device_model',
+  'os_version',
+  'ios_xcode_macos_tooling',
+  'android_adb_tooling',
+  'staging_environment',
+  'test_date_time',
+  'tester_owner',
+  'artifact_identity_checksum',
+]
+const REQUIRED_DEVICE_CASE_IDS = [
+  'member_login',
+  'access_token_expiry_refresh_rotation',
+  'background_resume',
+  'force_kill_relaunch',
+  'logout',
+  'account_deletion',
+  'email_verification_return',
+  'password_reset_return',
+  'guest_acceptance',
+  'trip_rest_read',
+  'trip_write',
+  'sse_streaming_genuine_without_global_native_http_patch',
+  'guest_relaunch',
+  'guest_claim',
+  'guest_expiry',
+  'guest_revocation',
+  'offline_loss_reconnect_each_session_boundary',
+  'ios_webview_domain_configuration',
+  'android_third_party_cookie_behavior',
+]
+const REQUIRED_OFFLINE_SESSION_BOUNDARIES = [
+  'member_login',
+  'access_token_expiry_refresh_rotation',
+  'background_resume',
+  'force_kill_relaunch',
+  'logout',
+  'account_deletion',
+  'email_verification_return',
+  'password_reset_return',
+  'guest_acceptance',
+  'trip_rest_read',
+  'trip_write',
+  'sse_streaming',
+  'guest_relaunch',
+  'guest_claim',
+  'guest_expiry',
+  'guest_revocation',
+]
+const REQUIRED_CREDENTIAL_LIFECYCLE_STAGES = ['issued', 'stored', 'attached', 'rotated', 'claimed', 'revoked']
+const REQUIRED_EVIDENCE_FIELDS = ['safe_reference', 'observed_result', 'network_trace_reference', 'artifact_identity_checksum', 'redaction_notes']
+const REQUIRED_ADR_OPTIONS = ['cookie_only_proven', 'native_credential_transport']
+const REQUIRED_ADR_FORBIDDEN_FALLBACKS = ['endpoint_only_fallback', 'web_storage_refresh_or_guest_token_workaround']
 
 function capture(text, pattern, label, violations) {
   const match = text.match(pattern)
@@ -31,6 +90,176 @@ function capture(text, pattern, label, violations) {
 
 function uniqueCaptures(text, pattern) {
   return [...new Set([...text.matchAll(pattern)].map((match) => match[1]))]
+}
+
+function parseJsonDocument(raw, label, violations) {
+  try {
+    return JSON.parse(raw)
+  } catch {
+    violations.push(`${label} must be valid JSON`)
+    return null
+  }
+}
+
+function requireUnexecuted(value, label, violations) {
+  if (value !== 'UNEXECUTED') violations.push(`${label} must remain UNEXECUTED`)
+}
+
+function requireObject(value, label, violations) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    violations.push(`${label} must be an object`)
+    return false
+  }
+  return true
+}
+
+function inspectDeviceEvidenceContract(sources, violations) {
+  const document = parseJsonDocument(
+    sources.authSessionEvidenceTemplate,
+    'auth-session-device-evidence.template.json',
+    violations,
+  )
+  if (!document) return
+
+  requireUnexecuted(document.template_status, 'device evidence template status', violations)
+  if (!/TEMPLATE\s*\/\s*NOT EVIDENCE/i.test(document.notice ?? '')) {
+    violations.push('device evidence template must be prominently labeled TEMPLATE / NOT EVIDENCE')
+  }
+
+  if (requireObject(document.metadata, 'device evidence metadata', violations)) {
+    for (const field of REQUIRED_DEVICE_METADATA_FIELDS) {
+      if (!(field in document.metadata)) violations.push(`device evidence metadata is missing: ${field}`)
+      else requireUnexecuted(document.metadata[field], `device evidence metadata ${field}`, violations)
+    }
+  }
+
+  if (!Array.isArray(document.platforms)) {
+    violations.push('device evidence platforms must be an array')
+  } else {
+    const platforms = new Map(document.platforms.map((entry) => [entry?.platform, entry]))
+    for (const [platform, requiredFields] of REQUIRED_DEVICE_PLATFORMS) {
+      const entry = platforms.get(platform)
+      if (!entry) {
+        violations.push(`device evidence platform is missing: ${platform}`)
+        continue
+      }
+      const devicePattern = platform === 'ios' ? /physical\s+iphone/i : /physical\s+android/i
+      if (!devicePattern.test(entry.device_requirement ?? '')) {
+        violations.push(`${platform} device evidence must require a physical device`)
+      }
+      requireUnexecuted(entry.status, `${platform} device evidence status`, violations)
+      requireUnexecuted(entry.evidence, `${platform} device evidence placeholder`, violations)
+      for (const field of requiredFields) {
+        if (!entry.required_metadata_fields?.includes(field)) {
+          violations.push(`${platform} device evidence metadata is missing: ${field}`)
+        }
+      }
+    }
+  }
+
+  if (!Array.isArray(document.cases)) {
+    violations.push('device evidence cases must be an array')
+  } else {
+    const cases = new Map(document.cases.map((entry) => [entry?.case_id, entry]))
+    if (cases.size !== document.cases.length) violations.push('device evidence cases must not repeat case IDs')
+    for (const caseId of REQUIRED_DEVICE_CASE_IDS) {
+      const entry = cases.get(caseId)
+      if (!entry) {
+        violations.push(`device evidence case is missing: ${caseId}`)
+        continue
+      }
+      requireUnexecuted(entry.status, `device evidence case ${caseId} status`, violations)
+      requireUnexecuted(entry.steps, `device evidence case ${caseId} steps`, violations)
+      if (!requireObject(entry.evidence, `device evidence case ${caseId} evidence`, violations)) continue
+      for (const field of REQUIRED_EVIDENCE_FIELDS) {
+        if (!(field in entry.evidence)) violations.push(`device evidence case ${caseId} is missing evidence field: ${field}`)
+        else requireUnexecuted(entry.evidence[field], `device evidence case ${caseId} ${field}`, violations)
+      }
+      if (caseId === 'offline_loss_reconnect_each_session_boundary') {
+        if (!Array.isArray(entry.session_boundaries)) {
+          violations.push('offline session-boundary evidence must be an array')
+        } else {
+          const boundaries = new Map(entry.session_boundaries.map((boundary) => [boundary?.boundary, boundary]))
+          for (const boundaryId of REQUIRED_OFFLINE_SESSION_BOUNDARIES) {
+            const boundary = boundaries.get(boundaryId)
+            if (!boundary) {
+              violations.push(`offline session-boundary evidence is missing: ${boundaryId}`)
+              continue
+            }
+            requireUnexecuted(boundary.status, `offline session boundary ${boundaryId} status`, violations)
+            requireUnexecuted(boundary.evidence, `offline session boundary ${boundaryId} evidence`, violations)
+          }
+        }
+      }
+    }
+  }
+
+  if (!Array.isArray(document.credential_lifecycle)) {
+    violations.push('credential lifecycle evidence must be an array')
+  } else {
+    const stages = new Map(document.credential_lifecycle.map((entry) => [entry?.stage_id, entry]))
+    for (const stageId of REQUIRED_CREDENTIAL_LIFECYCLE_STAGES) {
+      const stage = stages.get(stageId)
+      if (!stage) {
+        violations.push(`credential lifecycle stage is missing: ${stageId}`)
+        continue
+      }
+      requireUnexecuted(stage.status, `credential lifecycle ${stageId} status`, violations)
+      requireUnexecuted(stage.evidence, `credential lifecycle ${stageId} evidence`, violations)
+    }
+  }
+
+  if (requireObject(document.redaction_policy, 'credential redaction policy', violations)) {
+    const policy = document.redaction_policy
+    requireUnexecuted(policy.status, 'credential redaction policy status', violations)
+    requireUnexecuted(policy.evidence_placeholder, 'credential redaction policy placeholder', violations)
+    if (!/never\s+commit/i.test(policy.raw_secret_policy ?? '') || !/raw|secret|token|credential/i.test(policy.raw_secret_policy ?? '')) {
+      violations.push('credential redaction policy must prohibit committing raw secrets')
+    }
+    if (!/redact|redacted/i.test(policy.safe_reference_policy ?? '') || !/token|cookie|credential/i.test(policy.safe_reference_policy ?? '')) {
+      violations.push('credential redaction policy must define safe redacted references')
+    }
+    for (const forbidden of ['raw cookies', 'access tokens', 'refresh tokens', 'guest tokens', 'credentials', 'email reset links', 'email verification links', 'signing material', 'API keys', 'secrets']) {
+      if (!Array.isArray(policy.forbidden_values) || !policy.forbidden_values.includes(forbidden)) {
+        violations.push(`credential redaction policy is missing forbidden value: ${forbidden}`)
+      }
+    }
+  }
+
+  if (requireObject(document.adr_contract, 'auth-session transport ADR contract', violations)) {
+    const adr = document.adr_contract
+    requireUnexecuted(adr.status, 'auth-session transport ADR status', violations)
+    for (const field of ['decision', 'security_properties', 'frontend_backend_work', 'migration_backward_compatibility', 'rollback', 'revised_estimate', 'follow_up_issues']) {
+      requireUnexecuted(adr[field], `auth-session transport ADR ${field}`, violations)
+    }
+    const options = Array.isArray(adr.allowed_outcomes) ? adr.allowed_outcomes : []
+    const optionIds = options.map((option) => option?.option_id)
+    if (options.length !== REQUIRED_ADR_OPTIONS.length || optionIds.some((id, index) => id !== REQUIRED_ADR_OPTIONS[index])) {
+      violations.push('auth-session transport ADR must allow exactly the two approved outcomes')
+    }
+    for (const option of options) {
+      if (!/entire\s+member\s+and\s+guest\s+lifecycle/i.test(option?.scope ?? '')) {
+        violations.push(`auth-session transport ADR outcome ${option?.option_id ?? 'unknown'} must cover the entire member and guest lifecycle`)
+      }
+    }
+    const fallbacks = Array.isArray(adr.forbidden_fallbacks) ? adr.forbidden_fallbacks : []
+    if (fallbacks.length !== REQUIRED_ADR_FORBIDDEN_FALLBACKS.length || REQUIRED_ADR_FORBIDDEN_FALLBACKS.some((item) => !fallbacks.includes(item))) {
+      violations.push('auth-session transport ADR must forbid endpoint-only and web-storage token fallbacks')
+    }
+  }
+
+  const requiredTemplateDocs = [
+    ['auth-session-device-spike.md', sources.authSessionDeviceSpike],
+    ['auth-session-transport-adr-template.md', sources.authSessionAdrTemplate],
+  ]
+  for (const [name, contents] of requiredTemplateDocs) {
+    if (!/TEMPLATE\s*\/\s*NOT EVIDENCE/i.test(contents)) violations.push(`${name} must be labeled TEMPLATE / NOT EVIDENCE`)
+  }
+  if (!sources.releaseDocument.includes('auth-session-device-spike.md') ||
+      !sources.releaseDocument.includes('auth-session-device-evidence.template.json') ||
+      !sources.releaseDocument.includes('auth-session-transport-adr-template.md')) {
+    violations.push('release-readiness must reference all issue #64 evidence templates')
+  }
 }
 
 function parseContract(document, violations) {
@@ -65,13 +294,13 @@ function inspectGateTable(document, violations) {
   )
   if (!block) {
     violations.push('release-readiness document is missing the release-gate table markers')
-    return
+    return []
   }
 
   const lines = block[1].split('\n').map((line) => line.trim()).filter((line) => line.startsWith('|'))
   if (lines.length < 3) {
     violations.push('release-gate table is incomplete')
-    return
+    return []
   }
 
   const header = parseGateRow(lines[0])
@@ -105,6 +334,7 @@ function inspectGateTable(document, violations) {
   for (const requiredGate of REQUIRED_GATES) {
     if (!gateNames.has(requiredGate)) violations.push(`release gate is missing: ${requiredGate}`)
   }
+  return rows
 }
 
 function inspectProductionBackend(environmentFile, violations) {
@@ -149,6 +379,9 @@ export function loadMobileReleaseSources(repositoryRoot, trackedFiles = []) {
     nativeProductionEnvironment: read('frontend/.env.native-production'),
     workflow: read('.github/workflows/ci.yml'),
     releaseDocument: read('docs/mobile/release-readiness.md'),
+    authSessionEvidenceTemplate: read('docs/mobile/auth-session-device-evidence.template.json'),
+    authSessionDeviceSpike: read('docs/mobile/auth-session-device-spike.md'),
+    authSessionAdrTemplate: read('docs/mobile/auth-session-transport-adr-template.md'),
     trackedFiles,
   }
 }
@@ -245,7 +478,12 @@ export function inspectMobileReleaseReadiness(sources) {
   }
 
   inspectProductionBackend(sources.nativeProductionEnvironment, violations)
-  inspectGateTable(sources.releaseDocument, violations)
+  const gateRows = inspectGateTable(sources.releaseDocument, violations)
+  for (const requiredBlockedGate of ['Authentication and guest sessions', 'Device install smoke']) {
+    const row = gateRows.find(([gate]) => gate === requiredBlockedGate)
+    if (row && row[1] !== 'BLOCKED') violations.push(`${requiredBlockedGate} must remain BLOCKED until physical-device evidence is reviewed`)
+  }
+  inspectDeviceEvidenceContract(sources, violations)
 
   for (const path of sources.trackedFiles ?? []) {
     if (FORBIDDEN_TRACKED_RELEASE_FILES.test(path)) {
