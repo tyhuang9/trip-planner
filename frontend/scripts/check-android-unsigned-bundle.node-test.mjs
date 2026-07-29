@@ -287,14 +287,14 @@ test('rejects alternate path metadata and unsupported ZIP creator/type combinati
       zipFixture(requiredEntries, {}, {
         centralExtraFields: { [entry]: unicodePathExtra('../alternate-name') },
       }),
-      /unsupported ZIP extra fields/,
+      /unsupported central ZIP extra field 0x7075 \(22 bytes\)/,
     ],
     [
       zipFixture(requiredEntries, {}, {
         centralExtraFields: {},
         localExtraFields: { [entry]: unicodePathExtra('../local-alternate-name') },
       }),
-      /unsupported or truncated ZIP local metadata/,
+      /unsupported local ZIP extra field 0x7075 \(28 bytes\)/,
     ],
     [zipFixture(requiredEntries, {}, { hostSystem: 10 }), /unsupported ZIP creator/],
     [
@@ -318,6 +318,42 @@ test('rejects alternate path metadata and unsupported ZIP creator/type combinati
     dos.bundle,
     options(dos.bundletoolJar, fixtureRunner()),
   ))
+})
+
+test('reports bounded extra-field metadata without echoing archive names or payloads', async (t) => {
+  const entry = requiredEntries[0]
+  const payload = '../do-not-echo-this-path'
+  const { bundle, bundletoolJar } = await fixturePaths(t, zipFixture(requiredEntries, {}, {
+    centralExtraFields: { [entry]: unicodePathExtra(payload) },
+  }))
+  let error
+  assert.throws(
+    () => checkAndroidUnsignedBundle(bundle, options(bundletoolJar, fixtureRunner())),
+    (caught) => {
+      error = caught
+      return /unsupported central ZIP extra field 0x7075 \(29 bytes\)/.test(caught.message)
+    },
+  )
+  assert.doesNotMatch(error.message, new RegExp(entry))
+  assert.doesNotMatch(error.message, /do-not-echo/)
+})
+
+test('rejects truncated central and local extra-field records without reading past their bounds', async (t) => {
+  const entry = requiredEntries[0]
+  const shortHeader = Buffer.from([0x75, 0x70, 0x01])
+  const shortPayload = Buffer.from([0x75, 0x70, 0x02, 0x00, 0x01])
+  for (const extra of [shortHeader, shortPayload]) {
+    for (const location of ['central', 'local']) {
+      const extraFields = location === 'central'
+        ? { centralExtraFields: { [entry]: extra }, localExtraFields: {} }
+        : { centralExtraFields: {}, localExtraFields: { [entry]: extra } }
+      const { bundle, bundletoolJar } = await fixturePaths(t, zipFixture(requiredEntries, {}, extraFields))
+      assert.throws(
+        () => checkAndroidUnsignedBundle(bundle, options(bundletoolJar, fixtureRunner())),
+        new RegExp(`malformed ${location} ZIP extra metadata`),
+      )
+    }
+  }
 })
 
 test('reuses packaged-native policy and rejects an omitted extracted entrypoint', async (t) => {

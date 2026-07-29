@@ -184,6 +184,21 @@ function assertSupportedEntryType(name, versionMadeBy, externalAttributes) {
   }
 }
 
+function assertNoUnsupportedExtraFields(bytes, start, length, location) {
+  if (length === 0) return
+  const end = start + length
+  if (start + 4 > end) {
+    throw new Error(`AAB contains malformed ${location} ZIP extra metadata`)
+  }
+  const fieldId = bytes.readUInt16LE(start)
+  const fieldSize = bytes.readUInt16LE(start + 2)
+  if (start + 4 + fieldSize > end) {
+    throw new Error(`AAB contains malformed ${location} ZIP extra metadata`)
+  }
+  const formattedId = fieldId.toString(16).padStart(4, '0')
+  throw new Error(`AAB contains unsupported ${location} ZIP extra field 0x${formattedId} (${fieldSize} bytes)`)
+}
+
 function assertMatchingLocalHeader(bytes, centralDirectoryOffset, centralOffset, flags, nameBytes) {
   const localOffset = bytes.readUInt32LE(centralOffset + 42)
   if (localOffset === ZIP64_UINT32_SENTINEL || localOffset + 30 > centralDirectoryOffset
@@ -194,13 +209,19 @@ function assertMatchingLocalHeader(bytes, centralDirectoryOffset, centralOffset,
   const localNameLength = bytes.readUInt16LE(localOffset + 26)
   const localExtraLength = bytes.readUInt16LE(localOffset + 28)
   const localEnd = localOffset + 30 + localNameLength + localExtraLength
-  if (localEnd > centralDirectoryOffset || localExtraLength !== 0) {
-    throw new Error('AAB contains unsupported or truncated ZIP local metadata')
+  if (localEnd > centralDirectoryOffset) {
+    throw new Error('AAB contains truncated ZIP local metadata')
   }
   const localName = bytes.subarray(localOffset + 30, localOffset + 30 + localNameLength)
   if (localFlags !== flags || !localName.equals(nameBytes)) {
     throw new Error('AAB local and central ZIP metadata do not match')
   }
+  assertNoUnsupportedExtraFields(
+    bytes,
+    localOffset + 30 + localNameLength,
+    localExtraLength,
+    'local',
+  )
 }
 
 export function readCentralDirectoryEntries(bytes, eocdOffset) {
@@ -232,8 +253,8 @@ export function readCentralDirectoryEntries(bytes, eocdOffset) {
     const externalAttributes = bytes.readUInt32LE(offset + 38)
     const nextOffset = offset + 46 + nameLength + extraLength + commentLength
     if ((flags & 0x1) !== 0) throw new Error('AAB contains an encrypted ZIP entry')
-    if (extraLength !== 0) throw new Error('AAB contains unsupported ZIP extra fields')
     if (nextOffset > eocdOffset) throw new Error('AAB contains a truncated ZIP entry')
+    assertNoUnsupportedExtraFields(bytes, offset + 46 + nameLength, extraLength, 'central')
     const nameBytes = bytes.subarray(offset + 46, offset + 46 + nameLength)
     if ((flags & 0x800) === 0 && nameBytes.some((byte) => byte >= 0x80)) {
       throw new Error('AAB contains a non-UTF-8 archive path')
