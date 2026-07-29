@@ -319,6 +319,30 @@ test('rejects alternate path metadata and unsupported ZIP creator/type combinati
     dos.bundle,
     options(dos.bundletoolJar, fixtureRunner()),
   ))
+
+  const directoryEntry = 'base/assets/public/'
+  const dosDirectory = await fixturePaths(t, zipFixture(
+    [...requiredEntries, directoryEntry],
+    {},
+    { externalAttributes: { [directoryEntry]: 0x10 }, hostSystem: 0 },
+  ))
+  assert.doesNotThrow(() => checkAndroidUnsignedBundle(
+    dosDirectory.bundle,
+    options(dosDirectory.bundletoolJar, fixtureRunner()),
+  ))
+
+  const dosDirectoryMismatch = await fixturePaths(t, zipFixture(
+    [...requiredEntries, directoryEntry],
+    {},
+    { hostSystem: 0 },
+  ))
+  assert.throws(
+    () => checkAndroidUnsignedBundle(
+      dosDirectoryMismatch.bundle,
+      options(dosDirectoryMismatch.bundletoolJar, fixtureRunner()),
+    ),
+    /archive entry type conflicts with its path/,
+  )
 })
 
 test('accepts canonical extended timestamps with matching local and central modification time', async (t) => {

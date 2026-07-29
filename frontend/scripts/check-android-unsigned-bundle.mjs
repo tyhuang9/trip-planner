@@ -21,6 +21,7 @@ const UNSIGNED_JARSIGNER_OUTPUTS = new Set([
   '\njar is unsigned.\n',
   '\nno manifest.\n\njar is unsigned.\n',
 ])
+const EXTERNAL_TOOL_TIMEOUT_MS = 5 * 60 * 1000
 const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50
 const ZIP_EOCD_SIGNATURE = 0x06054b50
 const ZIP_LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50
@@ -36,7 +37,10 @@ const ZIP_UNIX_FILE_TYPE_MASK = 0xf000
 const ZIP_UNIX_REGULAR_FILE = 0x8000
 
 function defaultRunner(executable, args) {
-  const result = spawnSync(executable, args, { encoding: 'utf8' })
+  const result = spawnSync(executable, args, {
+    encoding: 'utf8',
+    timeout: EXTERNAL_TOOL_TIMEOUT_MS,
+  })
   if (result.error) throw new Error(`Could not run ${executable}: ${result.error.message}`)
   return { status: result.status, signal: result.signal, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
 }
@@ -182,7 +186,7 @@ function assertSupportedEntryType(name, versionMadeBy, externalAttributes) {
     throw new Error('AAB contains a ZIP volume-label entry')
   }
   const dosDirectory = (dosAttributes & 0x10) !== 0
-  if (dosDirectory && !namedDirectory) {
+  if (dosDirectory !== namedDirectory) {
     throw new Error('AAB archive entry type conflicts with its path')
   }
 }
