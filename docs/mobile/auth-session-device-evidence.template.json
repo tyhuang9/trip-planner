@@ -27,6 +27,13 @@
         "tester_owner": "UNEXECUTED",
         "artifact_identity_checksum": "UNEXECUTED"
       },
+      "attestation": {
+        "platform": "UNEXECUTED",
+        "device_type": "UNEXECUTED",
+        "safe_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "captured_at": "UNEXECUTED"
+      },
       "contexts": [
         {
           "context_id": "member",
@@ -767,6 +774,13 @@
         "tester_owner": "UNEXECUTED",
         "artifact_identity_checksum": "UNEXECUTED"
       },
+      "attestation": {
+        "platform": "UNEXECUTED",
+        "device_type": "UNEXECUTED",
+        "safe_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "captured_at": "UNEXECUTED"
+      },
       "contexts": [
         {
           "context_id": "member",
@@ -1497,6 +1511,8 @@
     "safe_reference_policy": "Evidence uses redaction-safe external references and sha256 checksums only."
   },
   "adr_contract": {
+    "selected_outcome": "UNEXECUTED",
+    "decision_artifact_reference": "UNEXECUTED",
     "allowed_outcomes": [
       "cookie_only_proven",
       "native_credential_transport"
@@ -1507,6 +1523,7 @@
     ]
   },
   "references": {
+    "catalog": "docs/mobile/auth-session-device-evidence.catalog.json",
     "spike": "docs/mobile/auth-session-device-spike.md",
     "adr": "docs/mobile/auth-session-transport-adr-template.md"
   }

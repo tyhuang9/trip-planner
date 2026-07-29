@@ -2,12 +2,12 @@ import assert from 'node:assert/strict'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
-import { inspectMobileReleaseReadiness, loadMobileReleaseSources } from './check-mobile-release-readiness.mjs'
+import { assertMobileReleaseReadiness, inspectMobileReleaseReadiness, loadMobileReleaseSources } from './check-mobile-release-readiness.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const sources = () => loadMobileReleaseSources(root)
 const messages = (candidate) => inspectMobileReleaseReadiness(candidate).join('\n')
-const sourceFiles = ['docs/mobile/auth-session-device-evidence.template.json', 'docs/mobile/auth-session-device-spike.md', 'docs/mobile/auth-session-transport-adr-template.md']
+const sourceFiles = ['docs/mobile/auth-session-device-evidence.catalog.json', 'docs/mobile/auth-session-device-evidence.template.json', 'docs/mobile/auth-session-device-spike.md', 'docs/mobile/auth-session-transport-adr-template.md']
 const resultPath = 'docs/mobile/evidence/issue-64/2026-07-29/safe-run-1/results.json'
 
 function completed() {
@@ -16,13 +16,36 @@ function completed() {
   value.notice = 'COMPLETED RESULTS / CLAIM-BEARING ARTIFACT'
   const fill = (item, key = '') => item === 'UNEXECUTED' ? (key === 'status' ? 'PASS' : key === 'artifact_identity_checksum' ? 'sha256:' + 'a'.repeat(64) : key === 'test_date_time' ? '2026-07-29T12:00:00Z' : 'restricted://issue-64/run-1') : Array.isArray(item) ? (key === 'result_status_vocabulary' ? item : item.map((x) => fill(x))) : item && typeof item === 'object' ? Object.fromEntries(Object.entries(item).map(([k, x]) => [k, fill(x, k)])) : item
   const result = fill(value)
-  for (const platform of result.platforms) { platform.metadata.device_type = platform.platform === 'ios' ? 'physical_iphone' : 'physical_android'; platform.metadata.is_simulator = false; platform.metadata.is_emulator = false }
+  result.adr_contract.selected_outcome = 'cookie_only_proven'
+  result.adr_contract.decision_artifact_reference = 'restricted://issue-64/safe-run-1/decision'
+  let referenceId = 0
+  for (const [platformIndex, platform] of result.platforms.entries()) {
+    const checksum = 'sha256:' + (platformIndex === 0 ? 'a' : 'b').repeat(64)
+    platform.metadata.device_type = platform.platform === 'ios' ? 'physical_iphone' : 'physical_android'
+    platform.metadata.is_simulator = false
+    platform.metadata.is_emulator = false
+    platform.metadata.artifact_identity_checksum = checksum
+    platform.attestation = { platform: platform.platform, device_type: platform.metadata.device_type, safe_reference: `restricted://issue-64/safe-run-1/${platform.platform}/attestation`, artifact_identity_checksum: checksum, captured_at: platform.metadata.test_date_time }
+    const setEvidence = (evidence, context) => { evidence.safe_reference = `restricted://issue-64/safe-run-1/${platform.platform}/${context}/artifact-${referenceId++}`; evidence.network_trace_reference = `restricted://issue-64/safe-run-1/${platform.platform}/${context}/trace-${referenceId++}`; evidence.artifact_identity_checksum = checksum }
+    for (const context of platform.contexts) {
+      for (const caseEntry of context.cases) { setEvidence(caseEntry.evidence, context.context_id); for (const boundary of caseEntry.session_boundaries ?? []) setEvidence(boundary.evidence, context.context_id) }
+      for (const stage of context.credential_lifecycle) setEvidence(stage.evidence, context.context_id)
+    }
+    for (const caseEntry of platform.platform_cases) setEvidence(caseEntry.evidence, 'platform')
+  }
   return result
 }
 function tracked(result = completed()) {
   const candidate = sources()
   candidate.trackedFiles = [...sourceFiles, resultPath]
   candidate.resultCopies = { [resultPath]: JSON.stringify(result) }
+  return candidate
+}
+function trackedAt(runId, result = completed(), date = '2026-07-29') {
+  const path = `docs/mobile/evidence/issue-64/${date}/${runId}/results.json`
+  const candidate = sources()
+  candidate.trackedFiles = [...sourceFiles, path]
+  candidate.resultCopies = { [path]: JSON.stringify(result).replaceAll('safe-run-1', runId) }
   return candidate
 }
 
@@ -96,7 +119,7 @@ test('rejects missing boundary, lifecycle stage, and evidence field', () => {
 })
 
 test('rejects source template claims and redaction or ADR drift', () => {
-  const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.platforms[0].contexts[0].cases[0].status = 'PASS'; delete document.redaction_policy.raw_capture_policy; document.adr_contract.allowed_outcomes.push('endpoint_only_fallback'); candidate.authSessionEvidenceTemplate = JSON.stringify(document); const output = messages(candidate); assert.match(output, /status is invalid/); assert.match(output, /redaction policy must contain exactly/); assert.match(output, /ADR contract is invalid/)
+  const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.platforms[0].contexts[0].cases[0].status = 'PASS'; delete document.redaction_policy.raw_capture_policy; document.adr_contract.allowed_outcomes.push('endpoint_only_fallback'); candidate.authSessionEvidenceTemplate = JSON.stringify(document); const output = messages(candidate); assert.match(output, /status is invalid/); assert.match(output, /redaction policy must contain exactly/); assert.match(output, /ADR catalogs are invalid/)
 })
 
 test('rejects falsely completed source template status and evidence', () => {
@@ -108,7 +131,7 @@ test('rejects removal of raw-secret redaction policy', () => {
 })
 
 test('rejects ADR option drift', () => {
-  const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.adr_contract.allowed_outcomes.push('endpoint_only_fallback'); candidate.authSessionEvidenceTemplate = JSON.stringify(document); assert.match(messages(candidate), /ADR contract is invalid/)
+  const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.adr_contract.allowed_outcomes.push('endpoint_only_fallback'); candidate.authSessionEvidenceTemplate = JSON.stringify(document); assert.match(messages(candidate), /ADR catalogs are invalid/)
 })
 
 test('rejects session collapse, raw evidence, invalid device and unknown keys', () => {
@@ -128,8 +151,8 @@ test('rejects session collapse, raw evidence, invalid device and unknown keys', 
 test('rejects completed-result status, metadata, references, and procedural secrets independently', () => {
   const cases = [
     ['MAYBE', /status is invalid/, (r) => { r.platforms[0].contexts[0].cases[0].status = 'MAYBE' }],
-    ['bad reference', /safe_reference must be a restricted/, (r) => { r.platforms[0].contexts[0].cases[0].evidence.safe_reference = 'https://x/?token=no' }],
-    ['bad metadata', /test_date_time must be an ISO timestamp/, (r) => { r.platforms[0].metadata.test_date_time = 'tomorrow' }],
+    ['bad reference', /safe_reference must be scoped/, (r) => { r.platforms[0].contexts[0].cases[0].evidence.safe_reference = 'https://x/?token=no' }],
+    ['bad metadata', /test_date_time must be RFC3339/, (r) => { r.platforms[0].metadata.test_date_time = 'tomorrow' }],
     ['bad checksum', /metadata artifact_identity_checksum must be sha256/, (r) => { r.platforms[0].metadata.artifact_identity_checksum = 'bad' }],
     ['procedural Bearer', /contains a raw credential/, (r) => { r.platforms[0].contexts[0].cases[0].actions = 'Bearer abcdefghijklmnopqrstuvwxyz' }],
   ]
@@ -143,7 +166,7 @@ test('rejects missing result copy and completed template notice drift', () => {
   assert.match(messages(candidate), /could not be safely read/)
   const result = completed()
   result.notice = 'TEMPLATE / NOT EVIDENCE'
-  assert.match(messages(tracked(result)), /notice must be the completed-results marker/)
+  assert.match(messages(tracked(result)), /notice must exactly match/)
 })
 
 test('rejects untracked templates, invalid paths, marker drift, extra gates, and malformed headers', () => {
@@ -159,4 +182,75 @@ test('rejects untracked templates, invalid paths, marker drift, extra gates, and
   assert.match(output, /issue64-spike-policy marker/)
   assert.match(output, /issue64-adr-policy marker/)
   assert.match(output, /release-gate table must use/)
+})
+
+test('rejects schema v3 in the source template', () => {
+  const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.schema_version = 3; candidate.authSessionEvidenceTemplate = JSON.stringify(document); assert.match(messages(candidate), /schema_version must be 2/)
+})
+
+test('rejects schema v3 in a completed result', () => {
+  const result = completed(); result.schema_version = 3; assert.match(messages(tracked(result)), /schema_version must be 2/)
+})
+
+test('uses explicit context for offline boundaries regardless of member and guest path text', () => {
+  assert.deepEqual(inspectMobileReleaseReadiness(trackedAt('member-guest-run')), [])
+  const result = completed(); const ios = result.platforms[0]; const memberBoundaries = ios.contexts[0].cases.find((x) => x.case_id === 'offline_loss_reconnect_each_session_boundary').session_boundaries; ios.contexts[1].cases.find((x) => x.case_id === 'offline_loss_reconnect_each_session_boundary').session_boundaries = memberBoundaries; assert.match(messages(trackedAt('member-run', result)), /guest offline_loss.*session boundaries must contain exactly/)
+})
+
+test('rejects missing, multiple, invalid, or forbidden ADR selections', () => {
+  for (const mutate of [(r) => { delete r.adr_contract.selected_outcome }, (r) => { r.adr_contract.selected_outcome = ['cookie_only_proven', 'native_credential_transport'] }, (r) => { r.adr_contract.selected_outcome = 'anything' }, (r) => { r.adr_contract.selected_outcome = 'endpoint_only_fallback' }]) { const result = completed(); mutate(result); assert.match(messages(tracked(result)), /ADR/) }
+})
+
+test('rejects missing, mismatched, or unsafe ADR decision references', () => {
+  for (const mutate of [(r) => { delete r.adr_contract.decision_artifact_reference }, (r) => { r.adr_contract.decision_artifact_reference = 'restricted://issue-64/other-run/decision' }, (r) => { r.adr_contract.decision_artifact_reference = 'https://example.test/decision?code=raw' }]) { const result = completed(); mutate(result); assert.match(messages(tracked(result)), /ADR|raw credential/) }
+})
+
+test('rejects Authorization Basic in completed procedural fields', () => {
+  const result = completed(); result.platforms[0].contexts[0].cases[0].actions = 'Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=='; assert.match(messages(tracked(result)), /raw credential/)
+})
+
+test('rejects raw password values in completed procedural fields', () => {
+  const result = completed(); result.platforms[0].contexts[0].cases[0].preconditions = 'password=hunter2'; assert.match(messages(tracked(result)), /raw credential/)
+})
+
+test('rejects reset and verification URLs in completed procedural fields', () => {
+  for (const url of ['https://example.test/reset/abc', 'https://example.test/verification/abc']) { const result = completed(); result.platforms[0].contexts[0].cases[0].actions = url; assert.match(messages(tracked(result)), /raw credential/) }
+})
+
+test('rejects query code secrets in completed procedural fields', () => {
+  const result = completed(); result.platforms[0].contexts[0].cases[0].actions = 'https://example.test/callback?code=raw-code'; assert.match(messages(tracked(result)), /raw credential/)
+})
+
+test('rejects appended Markdown claims and raw credentials', () => {
+  for (const appended of ['\nPASS\n', '\nAPPROVED\n', '\nDecision: endpoint_only_fallback\n', '\npassword=raw-secret\n']) { const candidate = sources(); candidate.authSessionAdrTemplate += appended; assert.match(messages(candidate), /canonical instruction-only document|raw credential/) }
+})
+
+test('rejects duplicate or conflicting policy markers', () => {
+  const candidate = sources(); candidate.authSessionDeviceSpike += '\n<!-- issue64-spike-policy\ncontract_version=3\n-->\n'; candidate.releaseDocument += '\n<!-- issue64-release-policy\ncontract_version=3\n-->\n'; const output = messages(candidate); assert.match(output, /issue64-spike-policy marker must appear exactly once/); assert.match(output, /issue64-release-policy marker must appear exactly once/)
+})
+
+test('rejects nonexistent, timezone-free, and path-mismatched result timestamps', () => {
+  for (const [timestamp, date, expected] of [['2026-02-30T12:00:00Z', '2026-02-28', /RFC3339|result path date/], ['2026-07-29T12:00:00', '2026-07-29', /RFC3339/], ['2026-07-28T12:00:00Z', '2026-07-29', /result path date/]]) { const result = completed(); for (const platform of result.platforms) { platform.metadata.test_date_time = timestamp; platform.attestation.captured_at = timestamp }; assert.match(messages(trackedAt('timestamp-run', result, date)), expected) }
+})
+
+test('rejects empty tracked input and untracked or unauthorized result copies', () => {
+  assert.throws(() => assertMobileReleaseReadiness(root, []), /tracked-file input must not be empty/)
+  const candidate = sources(); candidate.resultCopies = { [resultPath]: JSON.stringify(completed()), 'docs/mobile/evidence/issue-64/raw.json': '{}' }; const output = messages(candidate); assert.match(output, /result copy must be tracked/)
+})
+
+test('rejects missing and contradictory physical-device attestations', () => {
+  for (const mutate of [(r) => { delete r.platforms[0].attestation }, (r) => { r.platforms[0].attestation.platform = 'android' }, (r) => { r.platforms[0].attestation.device_type = 'physical_android' }]) { const result = completed(); mutate(result); assert.match(messages(tracked(result)), /attestation/) }
+})
+
+test('rejects simulator or emulator wording in completed device metadata', () => {
+  const result = completed(); result.platforms[0].metadata.device_model = 'iPhone Simulator'; result.platforms[1].metadata.tooling = 'Android Emulator'; assert.match(messages(tracked(result)), /must not describe a simulator or emulator/)
+})
+
+test('rejects reused references and cloned cross-platform evidence', () => {
+  const reused = completed(); reused.platforms[0].contexts[1].cases[0].evidence.safe_reference = reused.platforms[0].contexts[0].cases[0].evidence.safe_reference; assert.match(messages(tracked(reused)), /must not reuse|must be scoped/)
+  const cloned = completed(); cloned.platforms[1].contexts[0].cases[0].evidence = structuredClone(cloned.platforms[0].contexts[0].cases[0].evidence); assert.match(messages(tracked(cloned)), /must be scoped|checksum must match/)
+})
+
+test('unrelated release violations do not suppress device-contract violations', () => {
+  const candidate = sources(); candidate.workflow = candidate.workflow.replace("node-version: '22'", "node-version: '24'"); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.schema_version = 3; candidate.authSessionEvidenceTemplate = JSON.stringify(document); const output = messages(candidate); assert.match(output, /CI Node version/); assert.match(output, /schema_version must be 2/)
 })

@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -7,18 +8,15 @@ const ALLOWED_GATE_STATUSES = new Set(['PASS', 'BLOCKED', 'UNVERIFIED', 'FAIL'])
 const FORBIDDEN_TRACKED_RELEASE_FILES = /(?:^|\/)(?:[^/]+\.(?:jks|keystore|p12|p8|pfx|pem|key|cer|crt|mobileprovision|provisionprofile)|keystore\.properties)$/i
 const RESULT_PATH = /^docs\/mobile\/evidence\/issue-64\/(\d{4}-\d{2}-\d{2})\/([a-z0-9]+(?:-[a-z0-9]+)*)\/results\.json$/
 const RESULT_SHAPE = /^docs\/mobile\/evidence\/issue-64\/([^/]+)\/([^/]+)\/results\.json$/
-const REQUIRED_SOURCE_FILES = ['docs/mobile/auth-session-device-evidence.template.json', 'docs/mobile/auth-session-device-spike.md', 'docs/mobile/auth-session-transport-adr-template.md']
+const REQUIRED_SOURCE_FILES = ['docs/mobile/auth-session-device-evidence.catalog.json', 'docs/mobile/auth-session-device-evidence.template.json', 'docs/mobile/auth-session-device-spike.md', 'docs/mobile/auth-session-transport-adr-template.md']
 const EVIDENCE_KEYS = ['safe_reference', 'observed_result', 'network_trace_reference', 'artifact_identity_checksum', 'redaction_notes']
 const CASE_KEYS = ['case_id', 'preconditions', 'actions', 'expected_outcome', 'cleanup', 'status', 'evidence']
-// Version-2 source of truth: each physical platform must independently execute these member and guest sets.
-const CONTEXT_CASES = {
-  member: ['member_login', 'access_token_expiry_refresh_rotation', 'background_resume', 'force_kill_relaunch', 'logout', 'account_deletion', 'email_verification_return', 'password_reset_return', 'trip_rest_read', 'trip_write', 'sse_streaming_genuine_without_global_native_http_patch', 'offline_loss_reconnect_each_session_boundary'],
-  guest: ['guest_acceptance', 'background_resume', 'force_kill_relaunch', 'guest_relaunch', 'trip_rest_read', 'trip_write', 'sse_streaming_genuine_without_global_native_http_patch', 'guest_claim', 'guest_expiry', 'guest_revocation', 'offline_loss_reconnect_each_session_boundary'],
+const RAW_SECRET = /(?:authorization\s*[:=]\s*(?:bearer|basic)|\bbearer\s+[a-z0-9._-]{20,}|\bbasic\s+[a-z0-9+/=]{12,}|\beyJ[a-z0-9_-]{10,}\.[a-z0-9_-]+\.|(?:access|refresh|guest)[_-]?token\s*[:=]|(?:set-)?cookie\s*[:=]|password\s*[:=]\s*[^\s"']+|https?:\/\/[^\s"']+\/(?:reset|verify|verification)[^\s"']*|[?&](?:token|secret|api[_-]?key|password|code)=)/i
+const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/
+const IMMUTABLE_DOCUMENT_HASHES = {
+  'auth-session-device-spike.md': 'e9fdb385474096f3c78200f12d461797ac309d497e329d1cc511fbe35158640b',
+  'auth-session-transport-adr-template.md': '9d8da67a404a53fa0e23b47915c1790d635493454b3d2150789c42955f8a8d81',
 }
-const CONTEXT_STAGES = { member: ['issued', 'stored', 'attached', 'rotated', 'revoked'], guest: ['issued', 'stored', 'attached', 'claimed', 'revoked'] }
-const PLATFORM_CASE = { ios: 'ios_webview_domain_configuration', android: 'android_third_party_cookie_behavior' }
-const RAW_SECRET = /(?:authorization\s*[:=]\s*bearer|\bbearer\s+[a-z0-9._-]{20,}|\beyJ[a-z0-9_-]{10,}\.[a-z0-9_-]+\.|(?:access|refresh|guest)[_-]?token\s*[:=]|(?:set-)?cookie\s*[:=]|[?&](?:token|secret|api[_-]?key|password)=)/i
-const SAFE_ARTIFACT_REFERENCE = /^restricted:\/\/issue-64\/[a-z0-9][a-z0-9._-]*$/
 
 function capture(text, pattern, label, violations) { const match = text.match(pattern); if (!match) { violations.push(`${label} is missing`); return null }; return match[1] }
 function uniqueCaptures(text, pattern) { return [...new Set([...text.matchAll(pattern)].map((match) => match[1]))] }
@@ -26,77 +24,167 @@ function parseJsonDocument(raw, label, violations) { try { return JSON.parse(raw
 function requireObject(value, label, violations) { if (!value || typeof value !== 'object' || Array.isArray(value)) { violations.push(`${label} must be an object`); return false }; return true }
 function requireExactKeys(value, keys, label, violations) { if (!requireObject(value, label, violations)) return false; const actual = Object.keys(value).sort(); const expected = [...keys].sort(); if (actual.length !== expected.length || actual.some((key, i) => key !== expected[i])) { violations.push(`${label} must contain exactly: ${expected.join(', ')}`); return false }; return true }
 function exactIds(entries, key, expected, label, violations) { const ids = entries.map((x) => x?.[key]); if (new Set(ids).size !== ids.length) violations.push(`${label} must not repeat ${key}s`); if (ids.length !== expected.length || ids.some((id) => !expected.includes(id))) violations.push(`${label} must contain exactly: ${expected.join(', ')}`) }
-function marker(document, name, expected, violations) { const block = document.match(new RegExp(`<!-- ${name}\\n([\\s\\S]*?)\\n-->`)); if (!block) return violations.push(`${name} marker is missing`); const pairs = new Map(); for (const line of block[1].split('\n').filter(Boolean)) { const [key, ...values] = line.split('='); if (!key || !values.length || pairs.has(key)) violations.push(`${name} marker is malformed`); else pairs.set(key, values.join('=')) }; for (const [key, value] of Object.entries(expected)) if (pairs.get(key) !== value) violations.push(`${name} marker ${key} must equal ${value}`); if (pairs.size !== Object.keys(expected).length) violations.push(`${name} marker must not contain unknown fields`) }
-function isCalendarDate(value) { const d = new Date(`${value}T00:00:00Z`); return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(d) && d.toISOString().slice(0, 10) === value }
+function marker(document, name, expected, violations) { const blocks = [...document.matchAll(new RegExp(`<!-- ${name}\\n([\\s\\S]*?)\\n-->`, 'g'))]; if (blocks.length !== 1) { violations.push(`${name} marker must appear exactly once`); return }; const pairs = new Map(); for (const line of blocks[0][1].split('\n').filter(Boolean)) { const [key, ...values] = line.split('='); if (!key || !values.length || pairs.has(key)) violations.push(`${name} marker is malformed`); else pairs.set(key, values.join('=')) }; for (const [key, value] of Object.entries(expected)) if (pairs.get(key) !== value) violations.push(`${name} marker ${key} must equal ${value}`); if (pairs.size !== Object.keys(expected).length) violations.push(`${name} marker must not contain unknown fields`) }
+function isCalendarDate(value) { const date = new Date(`${value}T00:00:00Z`); return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value }
 
-function inspectEvidence(value, label, template, violations) {
+function inspectCatalog(catalog, violations) {
+  const violationCount = violations.length
+  if (!requireExactKeys(catalog, ['schema_version', 'platforms', 'contexts', 'adr'], 'device evidence catalog', violations)) return false
+  if (catalog.schema_version !== 2) violations.push('device evidence catalog schema_version must be 2')
+  if (!requireExactKeys(catalog.platforms, ['ios', 'android'], 'device evidence catalog platforms', violations)) return false
+  if (!requireExactKeys(catalog.contexts, ['member', 'guest'], 'device evidence catalog contexts', violations)) return false
+  for (const [platform, deviceType, platformCase] of [['ios', 'physical_iphone', 'ios_webview_domain_configuration'], ['android', 'physical_android', 'android_third_party_cookie_behavior']]) {
+    if (requireExactKeys(catalog.platforms[platform], ['device_type', 'platform_case'], `catalog ${platform}`, violations) && (catalog.platforms[platform].device_type !== deviceType || catalog.platforms[platform].platform_case !== platformCase)) violations.push(`catalog ${platform} semantics are invalid`)
+  }
+  for (const context of ['member', 'guest']) if (requireExactKeys(catalog.contexts[context], ['cases', 'credential_lifecycle'], `catalog ${context}`, violations)) {
+    for (const key of ['cases', 'credential_lifecycle']) if (!Array.isArray(catalog.contexts[context][key]) || !catalog.contexts[context][key].length || new Set(catalog.contexts[context][key]).size !== catalog.contexts[context][key].length) violations.push(`catalog ${context} ${key} must be a nonempty unique array`)
+  }
+  if (!requireExactKeys(catalog.adr, ['allowed_outcomes', 'forbidden_fallbacks'], 'catalog ADR', violations)) return false
+  if (JSON.stringify(catalog.adr.allowed_outcomes) !== JSON.stringify(['cookie_only_proven', 'native_credential_transport']) || JSON.stringify(catalog.adr.forbidden_fallbacks) !== JSON.stringify(['endpoint_only_fallback', 'web_storage_refresh_or_guest_token_workaround'])) violations.push('catalog ADR semantics are invalid')
+  return violations.length === violationCount
+}
+
+function inspectEvidence(value, label, options, violations) {
+  const { template, platform, context, runId, platformChecksum, usedReferences } = options
   if (!template && RAW_SECRET.test(JSON.stringify(value))) violations.push(`${label} contains a raw credential or capture`)
   if (!requireExactKeys(value, EVIDENCE_KEYS, label, violations)) return
   if (template) {
     for (const key of EVIDENCE_KEYS) if (value[key] !== 'UNEXECUTED') violations.push(`${label} ${key} must remain UNEXECUTED`)
-  } else {
-    for (const key of EVIDENCE_KEYS) if (typeof value[key] !== 'string' || !value[key].trim() || value[key] === 'UNEXECUTED') violations.push(`${label} ${key} must be a completed redaction-safe string`)
-    for (const key of ['safe_reference', 'network_trace_reference']) if (!SAFE_ARTIFACT_REFERENCE.test(value[key] ?? '')) violations.push(`${label} ${key} must be a restricted issue-64 artifact identifier`)
-    if (!/^sha256:[a-f0-9]{64}$/i.test(value.artifact_identity_checksum)) violations.push(`${label} artifact_identity_checksum must be sha256:<64 hex>`)
+    return
   }
+  for (const key of EVIDENCE_KEYS) if (typeof value[key] !== 'string' || !value[key].trim() || value[key] === 'UNEXECUTED') violations.push(`${label} ${key} must be a completed redaction-safe string`)
+  const referencePattern = new RegExp(`^restricted://issue-64/${runId}/${platform}/${context}/[a-z0-9][a-z0-9._-]*$`)
+  for (const key of ['safe_reference', 'network_trace_reference']) {
+    const reference = value[key]
+    if (!referencePattern.test(reference ?? '')) violations.push(`${label} ${key} must be scoped to its run, platform, and context`)
+    if (usedReferences.has(reference)) violations.push(`${label} ${key} must not reuse an evidence reference`)
+    else usedReferences.add(reference)
+  }
+  if (!/^sha256:[a-f0-9]{64}$/i.test(value.artifact_identity_checksum)) violations.push(`${label} artifact_identity_checksum must be sha256:<64 hex>`)
+  if (value.artifact_identity_checksum !== platformChecksum) violations.push(`${label} checksum must match its platform artifact checksum`)
 }
-function inspectCase(entry, expectedId, label, template, violations) {
+
+function inspectCase(entry, expectedId, label, contextId, options, violations) {
   const keys = expectedId === 'offline_loss_reconnect_each_session_boundary' ? [...CASE_KEYS, 'session_boundaries'] : CASE_KEYS
   if (!requireExactKeys(entry, keys, label, violations)) return
   if (entry.case_id !== expectedId) violations.push(`${label} case_id must be ${expectedId}`)
   for (const key of ['preconditions', 'actions', 'expected_outcome', 'cleanup', 'status']) {
-    if (key === 'status' ? (template ? entry[key] !== 'UNEXECUTED' : !ALLOWED_GATE_STATUSES.has(entry[key])) : (template ? entry[key] !== 'UNEXECUTED' : typeof entry[key] !== 'string' || !entry[key].trim() || entry[key] === 'UNEXECUTED')) violations.push(`${label} ${key} is invalid`)
+    if (key === 'status' ? (options.template ? entry[key] !== 'UNEXECUTED' : !ALLOWED_GATE_STATUSES.has(entry[key])) : (options.template ? entry[key] !== 'UNEXECUTED' : typeof entry[key] !== 'string' || !entry[key].trim() || entry[key] === 'UNEXECUTED')) violations.push(`${label} ${key} is invalid`)
   }
-  inspectEvidence(entry.evidence, `${label} evidence`, template, violations)
+  inspectEvidence(entry.evidence, `${label} evidence`, { ...options, context: contextId }, violations)
   if (expectedId === 'offline_loss_reconnect_each_session_boundary') {
     if (!Array.isArray(entry.session_boundaries)) return violations.push(`${label} session_boundaries must be an array`)
-    const expected = label.includes('member') ? CONTEXT_CASES.member.filter((id) => id !== expectedId) : CONTEXT_CASES.guest.filter((id) => id !== expectedId)
+    const expected = options.catalog.contexts[contextId].cases.filter((id) => id !== expectedId)
     exactIds(entry.session_boundaries, 'boundary', expected, `${label} session boundaries`, violations)
-    for (const boundary of entry.session_boundaries) { if (!requireExactKeys(boundary, ['boundary', 'status', 'evidence'], `${label} boundary`, violations)) continue; if (template ? boundary.status !== 'UNEXECUTED' : !ALLOWED_GATE_STATUSES.has(boundary.status)) violations.push(`${label} boundary status is invalid`); inspectEvidence(boundary.evidence, `${label} boundary evidence`, template, violations) }
+    for (const boundary of entry.session_boundaries) {
+      if (!requireExactKeys(boundary, ['boundary', 'status', 'evidence'], `${label} boundary`, violations)) continue
+      if (options.template ? boundary.status !== 'UNEXECUTED' : !ALLOWED_GATE_STATUSES.has(boundary.status)) violations.push(`${label} boundary status is invalid`)
+      inspectEvidence(boundary.evidence, `${label} boundary evidence`, { ...options, context: contextId }, violations)
+    }
   }
 }
-function inspectResults(document, label, template, violations) {
+
+function inspectResults(document, label, template, violations, catalog, resultInfo = {}) {
   if (!template && RAW_SECRET.test(JSON.stringify(document))) violations.push(`${label} contains a raw credential or capture`)
   const topKeys = ['schema_version', 'template_status', 'notice', 'copy_results_to', 'result_status_vocabulary', 'platforms', 'redaction_policy', 'adr_contract', 'references']
-  if (!requireExactKeys(document, topKeys, label, violations) || document.schema_version !== 2) return
+  if (!requireExactKeys(document, topKeys, label, violations)) return
+  if (document.schema_version !== 2) { violations.push(`${label} schema_version must be 2`); return }
   if (template && document.template_status !== 'UNEXECUTED') violations.push('device evidence template status must remain UNEXECUTED')
   if (!template && document.template_status !== 'COMPLETED') violations.push(`${label} template_status must be COMPLETED`)
-  if (!template && document.notice !== 'COMPLETED RESULTS / CLAIM-BEARING ARTIFACT') violations.push(`${label} notice must be the completed-results marker`)
-  if (!template && /TEMPLATE\s*\/\s*NOT EVIDENCE/i.test(document.notice ?? '')) violations.push(`${label} notice must not claim TEMPLATE / NOT EVIDENCE`)
-  if (!/TEMPLATE \/ NOT EVIDENCE/.test(document.notice ?? '') && template) violations.push('device evidence template must be prominently labeled TEMPLATE / NOT EVIDENCE')
+  const expectedNotice = template ? 'TEMPLATE / NOT EVIDENCE — immutable source; JSON results are the sole claim-bearing artifact.' : 'COMPLETED RESULTS / CLAIM-BEARING ARTIFACT'
+  if (document.notice !== expectedNotice) violations.push(`${label} notice must exactly match its contract marker`)
   if (document.copy_results_to !== 'docs/mobile/evidence/issue-64/YYYY-MM-DD/<lowercase-run-id>/results.json') violations.push(`${label} copy_results_to is invalid`)
   if (JSON.stringify(document.result_status_vocabulary) !== JSON.stringify(['UNEXECUTED', 'PASS', 'FAIL', 'BLOCKED', 'UNVERIFIED'])) violations.push(`${label} result status vocabulary is invalid`)
   if (!Array.isArray(document.platforms)) return violations.push(`${label} platforms must be an array`)
-  exactIds(document.platforms, 'platform', ['ios', 'android'], `${label} platforms`, violations)
+  const platformNames = Object.keys(catalog.platforms)
+  exactIds(document.platforms, 'platform', platformNames, `${label} platforms`, violations)
+  const usedReferences = new Set()
+  const platformChecksums = new Set()
   for (const platform of document.platforms) {
-    const name = platform?.platform; if (!['ios', 'android'].includes(name)) continue
-    if (!requireExactKeys(platform, ['platform', 'metadata', 'contexts', 'platform_cases'], `${label} ${name}`, violations)) continue
+    const name = platform?.platform
+    if (!catalog.platforms[name]) continue
+    if (!requireExactKeys(platform, ['platform', 'metadata', 'attestation', 'contexts', 'platform_cases'], `${label} ${name}`, violations)) continue
     const metadataKeys = ['device_type', 'is_simulator', 'is_emulator', 'commit_or_tag', 'app_version_build', 'device_model', 'os_version', 'tooling', 'staging_environment', 'test_date_time', 'tester_owner', 'artifact_identity_checksum']
     if (requireExactKeys(platform.metadata, metadataKeys, `${label} ${name} metadata`, violations)) {
       if (template) {
         for (const key of metadataKeys) if (platform.metadata[key] !== 'UNEXECUTED') violations.push(`${label} ${name} metadata ${key} must remain UNEXECUTED`)
-      } else { if (platform.metadata.device_type !== (name === 'ios' ? 'physical_iphone' : 'physical_android') || platform.metadata.is_simulator !== false || platform.metadata.is_emulator !== false) violations.push(`${label} ${name} must record a physical device, not simulator/emulator`); for (const key of metadataKeys.slice(3)) if (typeof platform.metadata[key] !== 'string' || !platform.metadata[key].trim() || platform.metadata[key] === 'UNEXECUTED') violations.push(`${label} ${name} metadata ${key} is invalid`); if (!/^sha256:[a-f0-9]{64}$/i.test(platform.metadata.artifact_identity_checksum ?? '')) violations.push(`${label} ${name} metadata artifact_identity_checksum must be sha256:<64 hex>`); if (Number.isNaN(Date.parse(platform.metadata.test_date_time ?? '')) || !/^\d{4}-\d{2}-\d{2}T/.test(platform.metadata.test_date_time ?? '')) violations.push(`${label} ${name} metadata test_date_time must be an ISO timestamp`) }
+      } else {
+        if (platform.metadata.device_type !== catalog.platforms[name].device_type || platform.metadata.is_simulator !== false || platform.metadata.is_emulator !== false) violations.push(`${label} ${name} must record a physical device, not simulator/emulator`)
+        for (const key of metadataKeys.slice(3)) if (typeof platform.metadata[key] !== 'string' || !platform.metadata[key].trim() || platform.metadata[key] === 'UNEXECUTED') violations.push(`${label} ${name} metadata ${key} is invalid`)
+        if (/simulator|emulator/i.test(`${platform.metadata.device_model} ${platform.metadata.tooling}`)) violations.push(`${label} ${name} device metadata must not describe a simulator or emulator`)
+        if (!/^sha256:[a-f0-9]{64}$/i.test(platform.metadata.artifact_identity_checksum ?? '')) violations.push(`${label} ${name} metadata artifact_identity_checksum must be sha256:<64 hex>`)
+        if (platformChecksums.has(platform.metadata.artifact_identity_checksum)) violations.push(`${label} platform artifact checksums must differ`)
+        platformChecksums.add(platform.metadata.artifact_identity_checksum)
+        const timestamp = platform.metadata.test_date_time
+        if (!RFC3339.test(timestamp ?? '') || Number.isNaN(Date.parse(timestamp)) || !isCalendarDate(timestamp.slice(0, 10))) violations.push(`${label} ${name} metadata test_date_time must be RFC3339 with timezone`)
+        else if (timestamp.slice(0, 10) !== resultInfo.date) violations.push(`${label} ${name} metadata test_date_time must match result path date`)
+      }
+    }
+    const attestationKeys = ['platform', 'device_type', 'safe_reference', 'artifact_identity_checksum', 'captured_at']
+    if (requireExactKeys(platform.attestation, attestationKeys, `${label} ${name} attestation`, violations)) {
+      if (template) for (const key of attestationKeys) { if (platform.attestation[key] !== 'UNEXECUTED') violations.push(`${label} ${name} attestation ${key} must remain UNEXECUTED`) }
+      else {
+        if (platform.attestation.platform !== name || platform.attestation.device_type !== catalog.platforms[name].device_type) violations.push(`${label} ${name} attestation contradicts its platform`)
+        if (platform.attestation.artifact_identity_checksum !== platform.metadata.artifact_identity_checksum) violations.push(`${label} ${name} attestation checksum must match platform artifact`)
+        if (platform.attestation.captured_at !== platform.metadata.test_date_time) violations.push(`${label} ${name} attestation timestamp must match platform metadata`)
+        const expectedRef = `restricted://issue-64/${resultInfo.runId}/${name}/attestation`
+        if (platform.attestation.safe_reference !== expectedRef) violations.push(`${label} ${name} attestation reference is invalid`)
+        if (usedReferences.has(platform.attestation.safe_reference)) violations.push(`${label} ${name} attestation reference must be unique`)
+        usedReferences.add(platform.attestation.safe_reference)
+      }
     }
     if (!Array.isArray(platform.contexts)) { violations.push(`${label} ${name} contexts must be an array`); continue }
-    exactIds(platform.contexts, 'context_id', ['member', 'guest'], `${label} ${name} contexts`, violations)
-    for (const context of platform.contexts) { const id = context?.context_id; if (!CONTEXT_CASES[id] || !requireExactKeys(context, ['context_id', 'cases', 'credential_lifecycle'], `${label} ${name} ${id}`, violations)) continue; if (!Array.isArray(context.cases)) { violations.push(`${label} ${name} ${id} cases must be an array`); continue }; exactIds(context.cases, 'case_id', CONTEXT_CASES[id], `${label} ${name} ${id} cases`, violations); for (const caseId of CONTEXT_CASES[id]) { const entry = context.cases.find((x) => x?.case_id === caseId); if (entry) inspectCase(entry, caseId, `${label} ${name} ${id} ${caseId}`, template, violations) }; if (!Array.isArray(context.credential_lifecycle)) { violations.push(`${label} ${name} ${id} lifecycle must be an array`); continue }; exactIds(context.credential_lifecycle, 'stage_id', CONTEXT_STAGES[id], `${label} ${name} ${id} lifecycle`, violations); for (const stage of context.credential_lifecycle) { if (!requireExactKeys(stage, ['stage_id', 'status', 'evidence'], `${label} ${name} ${id} lifecycle stage`, violations)) continue; if (template ? stage.status !== 'UNEXECUTED' : !ALLOWED_GATE_STATUSES.has(stage.status)) violations.push(`${label} ${name} ${id} lifecycle stage status is invalid`); inspectEvidence(stage.evidence, `${label} ${name} ${id} lifecycle evidence`, template, violations) } }
-    if (!Array.isArray(platform.platform_cases)) { violations.push(`${label} ${name} platform_cases must be an array`); continue }; exactIds(platform.platform_cases, 'case_id', [PLATFORM_CASE[name]], `${label} ${name} platform cases`, violations); if (platform.platform_cases[0]) inspectCase(platform.platform_cases[0], PLATFORM_CASE[name], `${label} ${name} platform case`, template, violations)
+    const contextIds = Object.keys(catalog.contexts)
+    exactIds(platform.contexts, 'context_id', contextIds, `${label} ${name} contexts`, violations)
+    for (const context of platform.contexts) {
+      const id = context?.context_id
+      if (!catalog.contexts[id] || !requireExactKeys(context, ['context_id', 'cases', 'credential_lifecycle'], `${label} ${name} ${id}`, violations)) continue
+      const options = { template, platform: name, runId: resultInfo.runId, platformChecksum: platform.metadata?.artifact_identity_checksum, usedReferences, catalog }
+      if (!Array.isArray(context.cases)) { violations.push(`${label} ${name} ${id} cases must be an array`); continue }
+      exactIds(context.cases, 'case_id', catalog.contexts[id].cases, `${label} ${name} ${id} cases`, violations)
+      for (const caseId of catalog.contexts[id].cases) { const entry = context.cases.find((x) => x?.case_id === caseId); if (entry) inspectCase(entry, caseId, `${label} ${name} ${id} ${caseId}`, id, options, violations) }
+      if (!Array.isArray(context.credential_lifecycle)) { violations.push(`${label} ${name} ${id} lifecycle must be an array`); continue }
+      exactIds(context.credential_lifecycle, 'stage_id', catalog.contexts[id].credential_lifecycle, `${label} ${name} ${id} lifecycle`, violations)
+      for (const stage of context.credential_lifecycle) { if (!requireExactKeys(stage, ['stage_id', 'status', 'evidence'], `${label} ${name} ${id} lifecycle stage`, violations)) continue; if (template ? stage.status !== 'UNEXECUTED' : !ALLOWED_GATE_STATUSES.has(stage.status)) violations.push(`${label} ${name} ${id} lifecycle stage status is invalid`); inspectEvidence(stage.evidence, `${label} ${name} ${id} lifecycle evidence`, { ...options, context: id }, violations) }
+    }
+    if (!Array.isArray(platform.platform_cases)) { violations.push(`${label} ${name} platform_cases must be an array`); continue }
+    const platformCase = catalog.platforms[name].platform_case
+    exactIds(platform.platform_cases, 'case_id', [platformCase], `${label} ${name} platform cases`, violations)
+    if (platform.platform_cases[0]) inspectCase(platform.platform_cases[0], platformCase, `${label} ${name} platform case`, 'platform', { template, platform: name, runId: resultInfo.runId, platformChecksum: platform.metadata?.artifact_identity_checksum, usedReferences, catalog }, violations)
   }
   if (!requireExactKeys(document.redaction_policy, ['raw_capture_policy', 'safe_reference_policy'], `${label} redaction policy`, violations) || !/never commit raw captures/i.test(document.redaction_policy.raw_capture_policy ?? '')) violations.push(`${label} must prohibit raw captures`)
-  if (!requireExactKeys(document.adr_contract, ['allowed_outcomes', 'forbidden_fallbacks'], `${label} ADR contract`, violations) || JSON.stringify(document.adr_contract.allowed_outcomes) !== JSON.stringify(['cookie_only_proven', 'native_credential_transport']) || JSON.stringify(document.adr_contract.forbidden_fallbacks) !== JSON.stringify(['endpoint_only_fallback', 'web_storage_refresh_or_guest_token_workaround'])) violations.push(`${label} ADR contract is invalid`)
-  if (!requireExactKeys(document.references, ['spike', 'adr'], `${label} references`, violations) || document.references.spike !== 'docs/mobile/auth-session-device-spike.md' || document.references.adr !== 'docs/mobile/auth-session-transport-adr-template.md') violations.push(`${label} references are invalid`)
+  const adrKeys = ['selected_outcome', 'decision_artifact_reference', 'allowed_outcomes', 'forbidden_fallbacks']
+  if (requireExactKeys(document.adr_contract, adrKeys, `${label} ADR contract`, violations)) {
+    if (JSON.stringify(document.adr_contract.allowed_outcomes) !== JSON.stringify(catalog.adr.allowed_outcomes) || JSON.stringify(document.adr_contract.forbidden_fallbacks) !== JSON.stringify(catalog.adr.forbidden_fallbacks)) violations.push(`${label} ADR catalogs are invalid`)
+    if (template) {
+      for (const key of ['selected_outcome', 'decision_artifact_reference']) if (document.adr_contract[key] !== 'UNEXECUTED') violations.push(`${label} ADR ${key} must remain UNEXECUTED`)
+    } else {
+      if (typeof document.adr_contract.selected_outcome !== 'string' || !catalog.adr.allowed_outcomes.includes(document.adr_contract.selected_outcome)) violations.push(`${label} ADR selected_outcome must be exactly one approved scalar`)
+      if (document.adr_contract.decision_artifact_reference !== `restricted://issue-64/${resultInfo.runId}/decision`) violations.push(`${label} ADR decision_artifact_reference must match the result run`)
+    }
+  }
+  if (!requireExactKeys(document.references, ['catalog', 'spike', 'adr'], `${label} references`, violations) || document.references.catalog !== 'docs/mobile/auth-session-device-evidence.catalog.json' || document.references.spike !== 'docs/mobile/auth-session-device-spike.md' || document.references.adr !== 'docs/mobile/auth-session-transport-adr-template.md') violations.push(`${label} references are invalid`)
 }
 function inspectDeviceEvidenceContract(sources, violations) {
+  const catalog = parseJsonDocument(sources.authSessionEvidenceCatalog, 'auth-session-device-evidence.catalog.json', violations)
+  if (!catalog || !inspectCatalog(catalog, violations)) return
   const document = parseJsonDocument(sources.authSessionEvidenceTemplate, 'auth-session-device-evidence.template.json', violations)
-  if (document) inspectResults(document, 'device evidence template', true, violations)
+  if (document) inspectResults(document, 'device evidence template', true, violations, catalog)
   marker(sources.authSessionDeviceSpike, 'issue64-spike-policy', { contract_version: '2', claim_bearing_artifact: 'results_json_only', immutable_template: 'true', raw_captures: 'external_restricted_only' }, violations)
   marker(sources.authSessionAdrTemplate, 'issue64-adr-policy', { contract_version: '2', allowed_outcomes: 'cookie_only_proven,native_credential_transport', forbidden_fallbacks: 'endpoint_only_fallback,web_storage_refresh_or_guest_token_workaround', decision_artifact: 'results_json_only' }, violations)
+  for (const [name, contents, notice] of [['auth-session-device-spike.md', sources.authSessionDeviceSpike, '> **TEMPLATE / NOT EVIDENCE** — This runbook carries no status, result, or decision.'], ['auth-session-transport-adr-template.md', sources.authSessionAdrTemplate, '> **TEMPLATE / NOT EVIDENCE** — This document is instruction-only and records no decision.']]) {
+    if (contents.split(notice).length !== 2) violations.push(`${name} must contain its exact immutable notice once`)
+    if (RAW_SECRET.test(contents)) violations.push(`${name} contains a raw credential`)
+    if (createHash('sha256').update(contents).digest('hex') !== IMMUTABLE_DOCUMENT_HASHES[name]) violations.push(`${name} must remain the canonical instruction-only document`)
+  }
   if (!sources.releaseDocument.includes('auth-session-device-evidence.template.json')) violations.push('release-readiness must reference issue #64 template')
   if ((sources.trackedFiles ?? []).length) {
     for (const source of REQUIRED_SOURCE_FILES) if (!sources.trackedFiles.includes(source)) violations.push(`immutable issue #64 source must be tracked: ${source}`)
     for (const path of sources.trackedFiles) { const match = path.match(RESULT_PATH); const shape = path.match(RESULT_SHAPE); if (shape && (!isCalendarDate(shape[1]) || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(shape[2]))) violations.push(`tracked issue #64 evidence path has invalid date or run ID: ${path}`); else if (path.startsWith('docs/mobile/evidence/issue-64/') && !match) violations.push(`tracked issue #64 evidence path is unauthorized: ${path}`) }
     for (const path of sources.trackedFiles.filter((path) => RESULT_PATH.test(path))) if (!(path in (sources.resultCopies ?? {}))) violations.push(`tracked issue #64 result copy could not be safely read: ${path}`)
-    for (const [path, raw] of Object.entries(sources.resultCopies ?? {})) { const result = parseJsonDocument(raw, path, violations); if (result) inspectResults(result, path, false, violations) }
+    for (const [path, raw] of Object.entries(sources.resultCopies ?? {})) { const match = path.match(RESULT_PATH); if (!match || !sources.trackedFiles.includes(path)) { violations.push(`result copy must be tracked at an authorized path: ${path}`); continue }; const result = parseJsonDocument(raw, path, violations); if (result) inspectResults(result, path, false, violations, catalog, { date: match[1], runId: match[2] }) }
+  } else if (Object.keys(sources.resultCopies ?? {}).length) {
+    for (const path of Object.keys(sources.resultCopies)) violations.push(`result copy must be tracked at an authorized path: ${path}`)
   }
 }
 function parseContract(document, violations) {
@@ -217,6 +305,7 @@ export function loadMobileReleaseSources(repositoryRoot, trackedFiles = []) {
     nativeProductionEnvironment: read('frontend/.env.native-production'),
     workflow: read('.github/workflows/ci.yml'),
     releaseDocument: read('docs/mobile/release-readiness.md'),
+    authSessionEvidenceCatalog: read('docs/mobile/auth-session-device-evidence.catalog.json'),
     authSessionEvidenceTemplate: read('docs/mobile/auth-session-device-evidence.template.json'),
     authSessionDeviceSpike: read('docs/mobile/auth-session-device-spike.md'),
     authSessionAdrTemplate: read('docs/mobile/auth-session-transport-adr-template.md'),
@@ -335,6 +424,7 @@ export function inspectMobileReleaseReadiness(sources) {
 }
 
 export function assertMobileReleaseReadiness(repositoryRoot, trackedFiles) {
+  if (!Array.isArray(trackedFiles) || trackedFiles.length === 0) throw new Error('Mobile release-readiness preflight failed:\n- tracked-file input must not be empty')
   const violations = inspectMobileReleaseReadiness(
     loadMobileReleaseSources(repositoryRoot, trackedFiles),
   )

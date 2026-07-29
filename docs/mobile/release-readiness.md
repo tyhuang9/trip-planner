@@ -13,6 +13,8 @@ claim_bearing_artifact=results_json_only
 
 Issue #64's physical-device contract is maintained in the
 [`auth-session-device-spike.md`](auth-session-device-spike.md) runbook,
+[`auth-session-device-evidence.catalog.json`](auth-session-device-evidence.catalog.json)
+canonical contract catalog,
 [`auth-session-device-evidence.template.json`](auth-session-device-evidence.template.json)
 fixture, and [`auth-session-transport-adr-template.md`](auth-session-transport-adr-template.md).
 These are **TEMPLATE / NOT EVIDENCE** and deliberately contain no device execution
