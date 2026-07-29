@@ -99,6 +99,18 @@ test('rejects source template claims and redaction or ADR drift', () => {
   const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.platforms[0].contexts[0].cases[0].status = 'PASS'; delete document.redaction_policy.raw_capture_policy; document.adr_contract.allowed_outcomes.push('endpoint_only_fallback'); candidate.authSessionEvidenceTemplate = JSON.stringify(document); const output = messages(candidate); assert.match(output, /status is invalid/); assert.match(output, /redaction policy must contain exactly/); assert.match(output, /ADR contract is invalid/)
 })
 
+test('rejects falsely completed source template status and evidence', () => {
+  const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.template_status = 'PASS'; document.platforms[0].contexts[0].cases[0].evidence.safe_reference = 'restricted://issue-64/run-1'; candidate.authSessionEvidenceTemplate = JSON.stringify(document); const output = messages(candidate); assert.match(output, /template status must remain UNEXECUTED/); assert.match(output, /safe_reference must remain UNEXECUTED/)
+})
+
+test('rejects removal of raw-secret redaction policy', () => {
+  const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); delete document.redaction_policy.raw_capture_policy; candidate.authSessionEvidenceTemplate = JSON.stringify(document); assert.match(messages(candidate), /redaction policy must contain exactly/)
+})
+
+test('rejects ADR option drift', () => {
+  const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.adr_contract.allowed_outcomes.push('endpoint_only_fallback'); candidate.authSessionEvidenceTemplate = JSON.stringify(document); assert.match(messages(candidate), /ADR contract is invalid/)
+})
+
 test('rejects session collapse, raw evidence, invalid device and unknown keys', () => {
   const result = completed()
   const ios = result.platforms[0]
