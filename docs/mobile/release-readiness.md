@@ -68,7 +68,7 @@ a real macOS builder produces reproducible evidence.
 | Production configuration | BLOCKED | Unassigned | Source origin policy passes; packaged artifact inspection is not recorded |
 | Authentication and guest sessions | BLOCKED | Unassigned | Depends on issue #64 physical-device ADR and smoke evidence |
 | Maps | BLOCKED | Unassigned | Depends on issue #66 renderer ADR and restricted-key evidence |
-| Universal/App Links | BLOCKED | Unassigned | Depends on issue #67 owned-host association files and signed fingerprints |
+| Universal/App Links | BLOCKED | Unassigned | Issue #67 code policy is implemented, but acceptance remains blocked on issue #64 ADR, deployed `/.well-known` association files, Apple Team ID, Android SHA-256 fingerprints, and signed physical-device cold/warm evidence |
 | Privacy and store metadata | BLOCKED | Unassigned | Privacy audit, declarations, policy/support URLs, disclosures, review data, and screenshots are not recorded |
 | Device install smoke | BLOCKED | Unassigned | No signed iOS and Android installs or member/guest staging smoke evidence recorded |
 | Backward compatibility and rollback | BLOCKED | Unassigned | Previous-version compatibility and rollback drill are not recorded |
@@ -97,3 +97,12 @@ Before any row above moves to `PASS`, record:
 
 Issue #68 stays open until signed artifacts install and all acceptance evidence is
 recorded. This preflight deliberately performs no signing and reads no release secret.
+
+## Universal/App Links evidence status
+
+The application contains only the #67 client-side deep-link parser, memory-only
+handoff policy, and native capture bridge. This is not association or signing
+evidence. Do not add placeholder Apple App Site Association/Asset Links files or
+invent an Apple Team ID or Android certificate fingerprint. Full #67 acceptance is
+**BLOCKED** until issue #64 supplies its ADR and the production host, signing owners,
+and physical devices provide the evidence named in the gate ledger.
