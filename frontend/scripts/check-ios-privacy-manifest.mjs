@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 
@@ -8,11 +8,15 @@ const INVENTORY_PATH = 'docs/mobile/ios-privacy-manifest-inventory.md'
 const PROJECT_PATH = 'frontend/ios/App/App.xcodeproj/project.pbxproj'
 const FILE_REF = '7B31F0F7A1B2C3D4E5F60708'
 const BUILD_FILE = '7B31F0F8A1B2C3D4E5F60708'
+const PRIVACY_GATE_ROW = '| Privacy and store metadata | BLOCKED | Unassigned | App-owned manifest source contract passes, but Xcode archive privacy report + App Store Connect reconciliation, vendor manifests, disclosures, review data, and screenshots are not recorded |'
+const XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8"?>'
+const PLIST_DOCTYPE = '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
 const DATA_TYPES = [
   'NSPrivacyCollectedDataTypeName',
   'NSPrivacyCollectedDataTypeEmailAddress',
   'NSPrivacyCollectedDataTypeUserID',
   'NSPrivacyCollectedDataTypeOtherUserContent',
+  'NSPrivacyCollectedDataTypeSearchHistory',
 ]
 
 const collectedDataTypes = DATA_TYPES.map((type) => ({
@@ -28,14 +32,18 @@ const CANONICAL_MANIFEST = {
 }
 
 function parsePlist(source) {
+  const prefix = `${XML_DECLARATION}\n${PLIST_DOCTYPE}\n`
+  if (!source.startsWith(prefix)
+    || source.split(XML_DECLARATION).length !== 2
+    || source.split(PLIST_DOCTYPE).length !== 2) {
+    throw new Error('must begin with exactly one canonical XML declaration and DOCTYPE')
+  }
   const tokens = []
-  for (const rawToken of source.match(/<[^>]+>|[^<]+/g) ?? []) {
+  for (const rawToken of source.slice(prefix.length).match(/<[^>]+>|[^<]+/g) ?? []) {
     if (!rawToken.startsWith('<')) {
       if (rawToken.trim()) tokens.push({ kind: 'text', value: rawToken })
       continue
     }
-    if (/^<\?xml\s+version="1\.0"\s+encoding="UTF-8"\?>$/.test(rawToken)
-      || /^<!DOCTYPE plist PUBLIC "-\/\/Apple\/\/DTD PLIST 1\.0\/\/EN" "http:\/\/www\.apple\.com\/DTDs\/PropertyList-1\.0\.dtd">$/.test(rawToken)) continue
     const closing = rawToken.match(/^<\/([A-Za-z]+)>$/)
     if (closing) {
       tokens.push({ kind: 'close', name: closing[1] })
@@ -113,32 +121,69 @@ function count(source, pattern) {
   return [...source.matchAll(pattern)].length
 }
 
-function inspectXcodeProject(project, violations) {
-  const fileReference = new RegExp(`${FILE_REF} /\\* PrivacyInfo\\.xcprivacy \\*/ = \\{isa = PBXFileReference; lastKnownFileType = text\\.plist\\.xml; path = PrivacyInfo\\.xcprivacy; sourceTree = "<group>"; \\};`, 'g')
-  const buildFile = new RegExp(`${BUILD_FILE} /\\* PrivacyInfo\\.xcprivacy in Resources \\*/ = \\{isa = PBXBuildFile; fileRef = ${FILE_REF} /\\* PrivacyInfo\\.xcprivacy \\*/; \\};`, 'g')
-  if (count(project, /\/\* PrivacyInfo\.xcprivacy \*\/ =/g) !== 1) {
-    violations.push('Xcode project must contain one privacy manifest file reference and one build file')
+function projectSection(project, name, violations) {
+  const begin = new RegExp(`/\\* Begin ${name} section \\*/`, 'g')
+  const end = new RegExp(`/\\* End ${name} section \\*/`, 'g')
+  if (count(project, begin) !== 1 || count(project, end) !== 1) {
+    violations.push(`Xcode project must contain exactly one ${name} section`)
+    return null
   }
-  if (count(project, fileReference) !== 1) violations.push('Xcode privacy manifest file reference is missing, duplicated, or wrong')
-  if (count(project, buildFile) !== 1) violations.push('Xcode privacy manifest build file is missing, duplicated, or wrong')
+  return project.match(new RegExp(`/\\* Begin ${name} section \\*/([\\s\\S]*?)/\\* End ${name} section \\*/`))?.[1] ?? null
+}
 
-  const resources = project.match(/504EC3021FED79650016851F \/\* Resources \*\/ = \{[\s\S]*?files = \(([\s\S]*?)\);/)
-  if (!resources || count(resources[1], new RegExp(`${BUILD_FILE} /\\* PrivacyInfo\\.xcprivacy in Resources \\*/`, 'g')) !== 1) {
+function inspectXcodeProject(project, violations) {
+  const fileReferenceLine = `${FILE_REF} /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };`
+  const buildFileLine = `${BUILD_FILE} /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = ${FILE_REF} /* PrivacyInfo.xcprivacy */; };`
+  const groupLine = `${FILE_REF} /* PrivacyInfo.xcprivacy */,`
+  const resourceLine = `${BUILD_FILE} /* PrivacyInfo.xcprivacy in Resources */,`
+  const allowedPrivacyLines = new Set([fileReferenceLine, buildFileLine, groupLine, resourceLine])
+  const privacyLines = project.split('\n').map((line) => line.trim()).filter((line) => line.includes('.xcprivacy'))
+  if (privacyLines.some((line) => !allowedPrivacyLines.has(line))
+    || privacyLines.filter((line) => line === fileReferenceLine).length !== 1
+    || privacyLines.filter((line) => line === buildFileLine).length !== 1
+    || privacyLines.filter((line) => line === resourceLine).length !== 1
+    || privacyLines.filter((line) => line === groupLine).length > 1) {
+    violations.push('Xcode project contains an unexpected or duplicate privacy manifest reference')
+  }
+
+  const buildSection = projectSection(project, 'PBXBuildFile', violations)
+  const fileSection = projectSection(project, 'PBXFileReference', violations)
+  const resourcesSection = projectSection(project, 'PBXResourcesBuildPhase', violations)
+  const targetSection = projectSection(project, 'PBXNativeTarget', violations)
+  if (!fileSection || fileSection.split('\n').filter((line) => line.trim() === fileReferenceLine).length !== 1) {
+    violations.push('Xcode privacy manifest file reference is missing, duplicated, or wrong')
+  }
+  if (!buildSection
+    || buildSection.split('\n').filter((line) => line.trim() === buildFileLine).length !== 1
+    || count(buildSection, new RegExp(`isa = PBXBuildFile; fileRef = ${FILE_REF}\\b`, 'g')) !== 1) {
+    violations.push('Xcode privacy manifest build file is missing, duplicated, or wrong')
+  }
+
+  const resources = resourcesSection?.match(/504EC3021FED79650016851F \/\* Resources \*\/ = \{[\s\S]*?files = \(([\s\S]*?)\);/)
+  if (!resourcesSection
+    || count(resourcesSection, /^\s*504EC3021FED79650016851F \/\* Resources \*\/ = \{$/gm) !== 1
+    || !resources || resources[1].split('\n').filter((line) => line.trim() === resourceLine).length !== 1) {
     violations.push('Xcode privacy manifest must be a single member of the App Resources phase')
   }
-  const appTarget = project.match(/504EC3031FED79650016851F \/\* App \*\/ = \{[\s\S]*?buildPhases = \(([\s\S]*?)\);/)
-  if (!appTarget || count(appTarget[1], /504EC3021FED79650016851F \/\* Resources \*\//g) !== 1) {
+  const appTarget = targetSection?.match(/504EC3031FED79650016851F \/\* App \*\/ = \{[\s\S]*?buildPhases = \(([\s\S]*?)\);/)
+  if (!targetSection
+    || count(targetSection, /^\s*504EC3031FED79650016851F \/\* App \*\/ = \{$/gm) !== 1
+    || !appTarget || count(appTarget[1], /504EC3021FED79650016851F \/\* Resources \*\//g) !== 1) {
     violations.push('Xcode App target must contain the Resources phase exactly once')
   }
 }
 
 function inspectDocumentation(inventory, releaseDocument, violations) {
+  const visibleInventory = inventory.replace(/<!--[\s\S]*?-->/g, '')
   const requiredInventoryClaims = [
     '`frontend/ios/App/App/PrivacyInfo.xcprivacy`',
     '`frontend/ios/App/App/AppDelegate.swift`',
     '`frontend/src/api/auth.ts`',
     '`frontend/src/api/trips.ts`',
     '`frontend/src/api/activities.ts`',
+    '`frontend/src/components/googlePlaces.ts`',
+    '`backend/src/main/java/com/trip/service/google/GoogleMapsService.java`',
+    '`backend/src/main/java/com/trip/service/google/GoogleCacheService.java`',
     'vendor SDK manifests remain separate',
     '`NSPrivacyTracking` is `false`',
     '`NSPrivacyTrackingDomains` and\n`NSPrivacyAccessedAPITypes` are absent',
@@ -146,37 +191,70 @@ function inspectDocumentation(inventory, releaseDocument, violations) {
     'App\nStore Connect',
   ]
   for (const claim of requiredInventoryClaims) {
-    if (!inventory.includes(claim)) violations.push(`privacy inventory is missing required claim: ${claim.replaceAll('\n', ' ')}`)
+    if (!visibleInventory.includes(claim)) violations.push(`privacy inventory is missing required claim: ${claim.replaceAll('\n', ' ')}`)
   }
   for (const dataType of DATA_TYPES) {
-    if (!inventory.includes(`\`${dataType}\``)) violations.push(`privacy inventory is missing ${dataType}`)
+    if (!visibleInventory.includes(`\`${dataType}\``)) violations.push(`privacy inventory is missing ${dataType}`)
   }
-  if (/\bPASS\b/i.test(inventory) || /App Store (?:approved|ready)/i.test(inventory)) {
-    violations.push('privacy inventory must not claim PASS or App Store readiness')
+  if (/<!--|-->/.test(inventory)) {
+    violations.push('privacy inventory must keep contract claims visible rather than in HTML comments')
   }
-  const privacyGate = releaseDocument.match(/^\| Privacy and store metadata \| ([A-Z]+) \| .*$/m)
-  if (privacyGate?.[1] !== 'BLOCKED') violations.push('Privacy and store metadata must remain BLOCKED')
-  if (!releaseDocument.includes('Xcode archive privacy report + App Store Connect reconciliation')) {
-    violations.push('release readiness must require the archive privacy report and App Store Connect reconciliation')
+  if (/\b(?:PASS|CLEARED|GO|READY|APPROVED)\b/i.test(visibleInventory)) {
+    violations.push('privacy inventory must not claim release or approval status')
   }
-  if (/^\| Privacy and store metadata \| PASS \|/m.test(releaseDocument)
-    || /Privacy and store metadata[^\n]*(?:ready|approved)/i.test(releaseDocument)) {
-    violations.push('release readiness must not claim privacy or store readiness')
+  const gateBlocks = [...releaseDocument.matchAll(/<!-- mobile-release-gates:start -->([\s\S]*?)<!-- mobile-release-gates:end -->/g)]
+  const privacyRows = releaseDocument.split('\n').map((line) => line.trim()).filter((line) => line.startsWith('| Privacy and store metadata |'))
+  if (count(releaseDocument, /<!-- mobile-release-gates:start -->/g) !== 1
+    || count(releaseDocument, /<!-- mobile-release-gates:end -->/g) !== 1
+    || gateBlocks.length !== 1 || privacyRows.length !== 1
+    || privacyRows[0] !== PRIVACY_GATE_ROW || !gateBlocks[0][1].includes(PRIVACY_GATE_ROW)) {
+    violations.push('release readiness must contain exactly one canonical BLOCKED privacy and store gate')
   }
+}
+
+function checkedPath(repositoryRoot, relativePath, expectedType) {
+  const root = realpathSync(repositoryRoot)
+  const candidate = resolve(repositoryRoot, relativePath)
+  const stats = lstatSync(candidate)
+  if ((expectedType === 'file' && !stats.isFile()) || (expectedType === 'directory' && !stats.isDirectory())) {
+    throw new Error(`${relativePath} must be a regular ${expectedType}`)
+  }
+  const actual = realpathSync(candidate)
+  const fromRoot = relative(root, actual)
+  if (fromRoot === '..' || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot)) {
+    throw new Error(`${relativePath} must resolve inside the repository`)
+  }
+  return actual
+}
+
+function readRepositoryFile(repositoryRoot, relativePath) {
+  return readFileSync(checkedPath(repositoryRoot, relativePath, 'file'), 'utf8')
+}
+
+function privacyManifestPaths(repositoryRoot, directory, relativeDirectory) {
+  const paths = []
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const relativePath = `${relativeDirectory}/${entry.name}`
+    if (entry.isSymbolicLink()) throw new Error(`${relativePath} must not be a symlink`)
+    if (entry.name.endsWith('.xcprivacy')) paths.push(relativePath)
+    if (entry.isDirectory()) {
+      const child = checkedPath(repositoryRoot, relativePath, 'directory')
+      paths.push(...privacyManifestPaths(repositoryRoot, child, relativePath))
+    }
+  }
+  return paths.sort()
 }
 
 export function loadIosPrivacyManifestSources(repositoryRoot) {
   const root = resolve(repositoryRoot)
-  const appDirectory = resolve(root, 'frontend/ios/App/App')
-  const manifestPaths = existsSync(appDirectory)
-    ? readdirSync(appDirectory).filter((entry) => entry.endsWith('.xcprivacy')).map((entry) => `frontend/ios/App/App/${entry}`)
-    : []
+  const appDirectory = checkedPath(root, 'frontend/ios/App/App', 'directory')
+  const manifestPaths = privacyManifestPaths(root, appDirectory, 'frontend/ios/App/App')
   return {
     manifestPaths,
-    manifest: manifestPaths.length === 1 ? readFileSync(resolve(root, manifestPaths[0]), 'utf8') : null,
-    project: readFileSync(resolve(root, PROJECT_PATH), 'utf8'),
-    inventory: readFileSync(resolve(root, INVENTORY_PATH), 'utf8'),
-    releaseDocument: readFileSync(resolve(root, 'docs/mobile/release-readiness.md'), 'utf8'),
+    manifest: manifestPaths.length === 1 ? readRepositoryFile(root, manifestPaths[0]) : null,
+    project: readRepositoryFile(root, PROJECT_PATH),
+    inventory: readRepositoryFile(root, INVENTORY_PATH),
+    releaseDocument: readRepositoryFile(root, 'docs/mobile/release-readiness.md'),
   }
 }
 
