@@ -8,6 +8,13 @@ import { assertNativeBundlePolicy } from './check-native-bundle-policy.mjs'
 const APK_NAME = 'app-release-unsigned.apk'
 const APK_SIGNING_BLOCK_MAGIC = Buffer.from('APK Sig Block 42')
 const MIN_LOAD_ALIGNMENT = 2n ** 14n
+const APKSIGNER_MAX_PREVIEW_BYTES = 256
+const APKSIGNER_MAX_DIAGNOSTIC_BYTES = 4096
+const APKSIGNER_TRUNCATION_MARKER = '…[truncated]'
+const UNSIGNED_APKSIGNER_REPORTS = new Set([
+  'DOES NOT VERIFY\nERROR: No JAR signatures',
+  'DOES NOT VERIFY\nERROR: Missing META-INF/MANIFEST.MF',
+])
 
 function command(runner, executable, args) {
   const result = runner(executable, args)
@@ -18,7 +25,7 @@ function command(runner, executable, args) {
 function defaultRunner(executable, args) {
   const result = spawnSync(executable, args, { encoding: 'utf8' })
   if (result.error) throw new Error(`Could not run ${executable}: ${result.error.message}`)
-  return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
+  return { status: result.status, signal: result.signal, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
 }
 
 function requiredTool(path, label) {
@@ -97,18 +104,59 @@ function readZipFile(apkPath) {
   return { bytes, eocdOffset }
 }
 
+function normalizeApksignerStream(stream) {
+  return stream.replaceAll('\r\n', '\n').replace(/\n$/, '')
+}
+
+function stringDiagnostic(value, apkPath) {
+  const byteLength = Buffer.byteLength(value)
+  const redacted = value.replaceAll(apkPath, '<APK_PATH>')
+  if (Buffer.byteLength(JSON.stringify(redacted)) <= APKSIGNER_MAX_PREVIEW_BYTES) {
+    return { type: 'string', byteLength, truncated: false, preview: redacted }
+  }
+
+  let preview = ''
+  for (const character of redacted) {
+    const candidate = `${preview}${character}${APKSIGNER_TRUNCATION_MARKER}`
+    if (Buffer.byteLength(JSON.stringify(candidate)) > APKSIGNER_MAX_PREVIEW_BYTES) break
+    preview += character
+  }
+  return { type: 'string', byteLength, truncated: true, preview: `${preview}${APKSIGNER_TRUNCATION_MARKER}` }
+}
+
+function diagnosticValue(value, apkPath) {
+  if (typeof value === 'string') return stringDiagnostic(value, apkPath)
+  if (Buffer.isBuffer(value)) return { type: 'Buffer', byteLength: value.byteLength }
+  if (Array.isArray(value)) return { type: 'Array', length: value.length }
+  if (value === null || typeof value === 'number' || typeof value === 'boolean') return value
+  return { type: typeof value }
+}
+
+function apksignerDiagnostics(result, apkPath) {
+  const diagnostics = JSON.stringify({
+    status: diagnosticValue(result?.status, apkPath),
+    signal: diagnosticValue(result?.signal, apkPath),
+    stdout: diagnosticValue(result?.stdout, apkPath),
+    stderr: diagnosticValue(result?.stderr, apkPath),
+  })
+  return Buffer.byteLength(diagnostics) <= APKSIGNER_MAX_DIAGNOSTIC_BYTES
+    ? diagnostics
+    : JSON.stringify({ truncated: true })
+}
+
 function assertUnsigned(runner, tools, apkPath) {
   let result
   try {
     result = runner(tools.apksigner, ['verify', '--verbose', apkPath])
-  } catch {
-    throw new Error('apksigner failed to run while confirming the APK has no signatures')
+  } catch (error) {
+    throw new Error('apksigner failed to run while confirming the APK has no signatures', { cause: error })
   }
-  if (!result || typeof result.status !== 'number') throw new Error('apksigner returned an invalid result')
-  if (result.status === 0) throw new Error('APK must be unsigned; apksigner verified a signature')
-  const report = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
-  if (report.length !== 2 || !report.includes('DOES NOT VERIFY') || !report.includes('ERROR: No JAR signatures')) {
-    throw new Error('apksigner did not explicitly report the no-signature condition')
+  if (!result || typeof result !== 'object' || Array.isArray(result)
+    || result.status !== 1 || result.signal !== null
+    || typeof result.stdout !== 'string' || typeof result.stderr !== 'string'
+    || normalizeApksignerStream(result.stdout) !== ''
+    || !UNSIGNED_APKSIGNER_REPORTS.has(normalizeApksignerStream(result.stderr))) {
+    throw new Error(`apksigner did not report an accepted unsigned result (${apksignerDiagnostics(result, apkPath)})`)
   }
 }
 
