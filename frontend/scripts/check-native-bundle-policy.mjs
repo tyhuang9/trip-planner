@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { basename, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -17,7 +17,8 @@ function collectFiles(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name)
     if (entry.isDirectory()) return collectFiles(path)
-    return entry.isFile() ? [path] : []
+    if (entry.isFile()) return [path]
+    throw new Error('Native bundle contains a symbolic link or unsupported filesystem entry.')
   })
 }
 
@@ -68,7 +69,7 @@ function assertNoViolations(violations) {
 export function inspectNativeBundle(directory, environment = process.env) {
   const outputDirectory = resolve(directory)
   const manifestPath = join(outputDirectory, '.vite', 'manifest.json')
-  if (!existsSync(manifestPath)) {
+  if (!existsSync(manifestPath) || !lstatSync(manifestPath).isFile()) {
     throw new Error(`Could not find a Vite manifest at ${manifestPath}. Build a native profile first.`)
   }
 
@@ -82,7 +83,7 @@ export function assertNativeBundlePolicy(directory, environment = process.env) {
 export function assertPackagedNativeBundlePolicy(directory, environment = process.env) {
   const outputDirectory = resolve(directory)
   const entrypointPath = join(outputDirectory, 'index.html')
-  if (!existsSync(entrypointPath) || !statSync(entrypointPath).isFile()) {
+  if (!existsSync(entrypointPath) || !lstatSync(entrypointPath).isFile()) {
     throw new Error(`Could not find the packaged native entrypoint at ${entrypointPath}.`)
   }
 
