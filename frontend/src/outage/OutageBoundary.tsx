@@ -46,11 +46,12 @@ const COPY: Record<OutageKind, {
 
 export function OutageBoundary({ children }: OutageBoundaryProps) {
   const [outage, setOutage] = useState<OutageKind | null>(null)
+  const [hasPassedStartupHealth, setHasPassedStartupHealth] = useState(false)
   const [isRetrying, setIsRetrying] = useState(false)
   const [retryFeedback, setRetryFeedback] = useState<{ kind: OutageKind; message: string } | null>(null)
   const headingRef = useRef<HTMLHeadingElement>(null)
   const previousOutageRef = useRef<OutageKind | null>(null)
-  const startupProbeStartedRef = useRef(false)
+  const isMountedRef = useRef(false)
 
   useEffect(() => subscribeToOutage((next) => {
     setRetryFeedback(null)
@@ -58,9 +59,16 @@ export function OutageBoundary({ children }: OutageBoundaryProps) {
   }), [])
 
   useEffect(() => {
-    if (startupProbeStartedRef.current) return
-    startupProbeStartedRef.current = true
-    void checkStartupHealth()
+    isMountedRef.current = true
+    void checkStartupHealth().then((result) => {
+      if (isMountedRef.current && result === null) {
+        setHasPassedStartupHealth(true)
+      }
+    })
+
+    return () => {
+      isMountedRef.current = false
+    }
   }, [])
 
   useEffect(() => {
@@ -79,6 +87,10 @@ export function OutageBoundary({ children }: OutageBoundaryProps) {
     previousOutageRef.current = outage
   }, [outage])
 
+  if (outage === null && !hasPassedStartupHealth) {
+    return <StartupHealthShell />
+  }
+
   if (outage === null) return <>{children}</>
 
   const { title, body, service, tone, Icon } = COPY[outage]
@@ -90,6 +102,7 @@ export function OutageBoundary({ children }: OutageBoundaryProps) {
     setIsRetrying(false)
     if (result === null) {
       setRetryFeedback(null)
+      setHasPassedStartupHealth(true)
     } else {
       setRetryFeedback({
         kind: result,
@@ -114,6 +127,17 @@ export function OutageBoundary({ children }: OutageBoundaryProps) {
         </button>
         <p className={styles.feedback} role="status" aria-atomic="true">{retryMessage}</p>
       </div>
+    </main>
+  )
+}
+
+function StartupHealthShell() {
+  return (
+    <main className={styles.page} id="main">
+      <section className={styles.card} role="status" aria-live="polite" aria-busy="true">
+        <h1>Checking Dupert’s route</h1>
+        <p className={styles.body}>Making sure the trip planner is ready for the road…</p>
+      </section>
     </main>
   )
 }
