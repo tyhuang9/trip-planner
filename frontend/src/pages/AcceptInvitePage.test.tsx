@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { AuthContext, type AuthContextValue } from '../auth/authContextValue'
 import AcceptInvitePage from './AcceptInvitePage'
+import { putDeepLinkHandoff, __resetDeepLinkVaultForTests } from '../deep-links/vault'
 
 const shareMocks = vi.hoisted(() => ({
   mutateAsync: vi.fn(),
@@ -55,6 +56,7 @@ function renderInvite(ctx: AuthContextValue) {
 
 beforeEach(() => {
   shareMocks.mutateAsync.mockReset()
+  __resetDeepLinkVaultForTests()
 })
 
 describe('<AcceptInvitePage>', () => {
@@ -83,5 +85,21 @@ describe('<AcceptInvitePage>', () => {
       'href',
       '/register?return=%2Fshare%2Fraw-token',
     )
+  })
+
+  it('uses an opaque return path for a scrubbed share handoff', () => {
+    const handoffId = putDeepLinkHandoff({ kind: 'share', token: 'raw-token' })
+    render(
+      <AuthContext.Provider value={makeAuth()}>
+        <MemoryRouter initialEntries={[`/link/${handoffId}`]}>
+          <Routes>
+            <Route path="/link/:handoffId" element={<AcceptInvitePage />} />
+          </Routes>
+        </MemoryRouter>
+      </AuthContext.Provider>,
+    )
+
+    expect(screen.getByRole('link', { name: /sign in/i })).toHaveAttribute('href', `/login?return=%2Flink%2F${handoffId}`)
+    expect(screen.getByRole('link', { name: /continue as guest/i })).toHaveAttribute('href', `/link/${handoffId}/guest`)
   })
 })

@@ -1,12 +1,13 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { AxiosError, AxiosHeaders } from 'axios'
 import { EmailVerificationPage } from './EmailVerificationPage'
 import { verifyEmail } from '../api/auth'
 import { useAuthStore } from '../auth/authStore'
 import type { AuthResponse } from '../types/auth'
+import { putDeepLinkHandoff, __resetDeepLinkVaultForTests } from '../deep-links/vault'
 
 vi.mock('../api/auth', () => ({
   verifyEmail: vi.fn(),
@@ -65,6 +66,7 @@ function makeAxiosError(status: number, data: unknown): AxiosError {
 beforeEach(() => {
   verifyEmailMock.mockReset()
   useAuthStore.getState().clearSession()
+  __resetDeepLinkVaultForTests()
 })
 
 describe('<EmailVerificationPage>', () => {
@@ -88,6 +90,34 @@ describe('<EmailVerificationPage>', () => {
     renderEmailVerification('/verify-email?token=token&return=%2Fshare%2Fraw-token')
 
     expect(await screen.findByTestId('share-page')).toBeInTheDocument()
+  })
+
+  it('continues a verified invite through opaque handoffs only', async () => {
+    verifyEmailMock.mockResolvedValue(AUTH_RESPONSE)
+    const handoffId = putDeepLinkHandoff({
+      kind: 'verify-email',
+      token: 'verify-secret',
+      returnTo: { kind: 'share', token: 'invite-secret' },
+    })
+    function LocationProbe() {
+      const location = useLocation()
+      return <div data-testid="location">{location.pathname}{location.search}</div>
+    }
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={[`/link/${handoffId}`]}>
+          <LocationProbe />
+          <Routes>
+            <Route path="/link/:handoffId" element={<EmailVerificationPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    const location = await screen.findByTestId('location')
+    expect(location).toHaveTextContent(/^\/link\/dl_[a-f0-9]{32}$/)
+    expect(location).not.toHaveTextContent(/verify-secret|invite-secret/)
   })
 
   it('does not call the verify API when the token is missing', () => {

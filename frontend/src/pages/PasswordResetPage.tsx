@@ -1,15 +1,22 @@
 import { useEffect, useId, useState, type FormEvent } from 'react'
-import { Link, useSearchParams } from 'react-router'
+import { Link, useParams, useSearchParams } from 'react-router'
 import { confirmPasswordReset } from '../api/auth'
 import { parseApiError } from '../api/errors'
 import { usePageTitle } from '../utils/usePageTitle'
+import { clearDeepLinkHandoff, getDeepLinkHandoff } from '../deep-links/vault'
 import styles from './AuthForm.module.css'
 
 export default function PasswordResetPage() {
   usePageTitle('Reset password - Dupert')
 
   const [searchParams, setSearchParams] = useSearchParams()
-  const [token] = useState(() => searchParams.get('token') ?? searchParams.get('code') ?? '')
+  const { handoffId } = useParams()
+  const [token] = useState(() => {
+    const handoff = getDeepLinkHandoff(handoffId)
+    return handoff?.kind === 'reset-password'
+      ? handoff.token
+      : searchParams.get('token') ?? searchParams.get('code') ?? ''
+  })
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -43,6 +50,7 @@ export default function PasswordResetPage() {
     setIsSubmitting(true)
     try {
       await confirmPasswordReset({ token, password })
+      clearDeepLinkHandoff(handoffId)
       setSuccessMessage('Password reset complete. You can sign in now.')
       setPassword('')
       setConfirmPassword('')

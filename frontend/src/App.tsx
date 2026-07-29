@@ -7,6 +7,8 @@ import { RouteAnnouncer } from './components/RouteAnnouncer'
 import { RouteLoadingFallback } from './components/RouteLoadingFallback'
 import { TripRealtimeBoundary } from './realtime/TripRealtimeBoundary'
 import { LaunchRoute } from './launch/LaunchRoute'
+import { DeepLinkBridge } from './deep-links/DeepLinkBridge'
+import { DeepLinkHandoffRoute, DeepLinkScrubber } from './deep-links/DeepLinkRoutes'
 
 const AcceptInvitePage = lazy(() => import('./pages/AcceptInvitePage'))
 const EmailVerificationPage = lazy(() => import('./pages/EmailVerificationPage').then(({ EmailVerificationPage: Page }) => ({ default: Page })))
@@ -59,14 +61,35 @@ export default function App() {
     <BrowserRouter>
       <SkipLink />
       <RouteAnnouncer />
+      <DeepLinkBridge />
       <Routes>
         {/* Public routes — auth pages and share-accept landing flows */}
         <Route path="/login" element={<LazyRoute kind="auth"><LoginPage /></LazyRoute>} />
         <Route path="/register" element={<LazyRoute kind="auth"><RegisterPage /></LazyRoute>} />
-        <Route path="/verify-email" element={<LazyRoute kind="auth"><EmailVerificationPage /></LazyRoute>} />
-        <Route path="/reset-password" element={<LazyRoute kind="auth"><PasswordResetPage /></LazyRoute>} />
-        <Route path="/share/:token" element={<LazyRoute kind="auth"><AcceptInvitePage /></LazyRoute>} />
-        <Route path="/share/:token/guest" element={<LazyRoute kind="auth"><GuestOnboardingPage /></LazyRoute>} />
+        <Route path="/verify-email" element={<DeepLinkScrubber />} />
+        <Route path="/reset-password" element={<DeepLinkScrubber />} />
+        <Route path="/share/:token" element={<DeepLinkScrubber />} />
+        <Route path="/share/:token/guest" element={<DeepLinkScrubber />} />
+        <Route path="/link-invalid/verify-email" element={<LazyRoute kind="auth"><EmailVerificationPage /></LazyRoute>} />
+        <Route path="/link-invalid/reset-password" element={<LazyRoute kind="auth"><PasswordResetPage /></LazyRoute>} />
+        <Route
+          path="/link/:handoffId"
+          element={<DeepLinkHandoffRoute
+            acceptInvite={<LazyRoute kind="auth"><AcceptInvitePage /></LazyRoute>}
+            guestOnboarding={<LazyRoute kind="auth"><GuestOnboardingPage /></LazyRoute>}
+            emailVerification={<LazyRoute kind="auth"><EmailVerificationPage /></LazyRoute>}
+            passwordReset={<LazyRoute kind="auth"><PasswordResetPage /></LazyRoute>}
+          />}
+        />
+        <Route
+          path="/link/:handoffId/guest"
+          element={<DeepLinkHandoffRoute
+            acceptInvite={<LazyRoute kind="auth"><AcceptInvitePage /></LazyRoute>}
+            guestOnboarding={<LazyRoute kind="auth"><GuestOnboardingPage /></LazyRoute>}
+            emailVerification={<LazyRoute kind="auth"><EmailVerificationPage /></LazyRoute>}
+            passwordReset={<LazyRoute kind="auth"><PasswordResetPage /></LazyRoute>}
+          />}
+        />
         <Route path="/404" element={<NotFoundPage />} />
         <Route path="/403" element={<ForbiddenPage />} />
         <Route path="/" element={<LaunchRoute />} />
