@@ -1,0 +1,354 @@
+name: Android Gradle verification bootstrap
+
+on:
+  pull_request:
+    branches:
+      - agent/android-real-toolchain-compatibility
+    paths:
+      - '.github/workflows/android-gradle-verification-bootstrap.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-gradle-verification-bootstrap-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  EXPECTED_BASE: 398fa34f73f617c171192f2f04b1ff0c864dd05f
+  BOOTSTRAP_WORKFLOW: .github/workflows/android-gradle-verification-bootstrap.yml
+
+jobs:
+  generate:
+    name: Generate metadata (${{ matrix.generator }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        generator:
+          - one
+          - two
+    steps:
+      - name: Checkout exact bootstrap head
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Enforce isolated bootstrap scope
+        shell: bash
+        run: |
+          git merge-base --is-ancestor "$EXPECTED_BASE" HEAD
+          test "$(git rev-list --count "$EXPECTED_BASE"..HEAD)" -eq 1
+          changed="$(git diff --name-only "$EXPECTED_BASE" HEAD)"
+          test "$changed" = "$BOOTSTRAP_WORKFLOW" || {
+            echo "::error title=Bootstrap scope changed::Expected only $BOOTSTRAP_WORKFLOW"
+            exit 1
+          }
+
+      - name: Set up Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+
+      - name: Set up Java
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build and sync native production bundle for Android only
+        working-directory: frontend
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home-${{ matrix.generator }}
+          VITE_BACKEND_API_URL: https://api.dupert.test
+          VITE_GOOGLE_MAPS_API_KEY: ''
+          VITE_APP_ACCESS_PASSWORD: ''
+        run: |
+          npm run build:native:production
+          npx --no-install cap sync android
+
+      - name: Generate SHA-256 dependency verification metadata
+        working-directory: frontend/android
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home-${{ matrix.generator }}
+        run: >-
+          ./gradlew
+          --write-verification-metadata sha256
+          :app:assembleRelease
+          --no-daemon
+          --no-build-cache
+
+      - name: Reject weak hashes and verification bypasses
+        working-directory: frontend/android
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import re
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          metadata = Path("gradle/verification-metadata.xml")
+          if not metadata.is_file():
+              raise SystemExit("verification-metadata.xml was not generated")
+
+          root = ET.parse(metadata).getroot()
+          local = lambda element: element.tag.rsplit("}", 1)[-1]
+
+          if local(root) != "verification-metadata":
+              raise SystemExit("unexpected verification metadata root element")
+
+          elements = list(root.iter())
+          names = [local(element) for element in elements]
+          allowed = {
+              "artifact",
+              "component",
+              "components",
+              "configuration",
+              "sha256",
+              "verification-metadata",
+              "verify-metadata",
+              "verify-signatures",
+          }
+          unexpected = sorted(set(names).difference(allowed))
+          if unexpected:
+              raise SystemExit(f"unexpected verification metadata element: {unexpected}")
+          forbidden = {
+              "also-trust",
+              "ignored-key",
+              "ignored-keys",
+              "key-server",
+              "key-servers",
+              "pgp",
+              "trust",
+              "trusted-artifacts",
+              "trusted-key",
+              "trusted-keys",
+          }
+          found = sorted(forbidden.intersection(names))
+          if found:
+              raise SystemExit(f"forbidden verification bypass or signature element: {found}")
+          if any("regex" in element.attrib for element in elements):
+              raise SystemExit("regex trust configuration is forbidden")
+
+          configuration = [element for element in elements if local(element) == "configuration"]
+          if len(configuration) != 1:
+              raise SystemExit("expected exactly one configuration element")
+          if len(configuration[0]) != 2:
+              raise SystemExit("expected exactly two verification configuration flags")
+          config_values = {
+              local(child): (child.text or "").strip().lower()
+              for child in configuration[0]
+          }
+          if config_values != {
+              "verify-metadata": "true",
+              "verify-signatures": "false",
+          }:
+              raise SystemExit(f"unexpected verification configuration: {config_values}")
+
+          checksum_tags = {
+              name for name in names
+              if re.fullmatch(r"(?:md5|sha1|sha256|sha512)", name, re.IGNORECASE)
+          }
+          if checksum_tags != {"sha256"}:
+              raise SystemExit(f"only SHA-256 checksums are permitted: {sorted(checksum_tags)}")
+
+          components = [element for element in elements if local(element) == "component"]
+          artifacts = [element for element in elements if local(element) == "artifact"]
+          checksums = [element for element in elements if local(element) == "sha256"]
+          if not components or not artifacts or len(checksums) < len(artifacts):
+              raise SystemExit("generated metadata did not cover every artifact with SHA-256")
+          for artifact in artifacts:
+              children = list(artifact)
+              if not children or any(local(child) != "sha256" for child in children):
+                  raise SystemExit(f"artifact lacks exclusive SHA-256 coverage: {artifact.attrib}")
+          for checksum in checksums:
+              value = checksum.attrib.get("value", "")
+              if not re.fullmatch(r"[0-9a-f]{64}", value):
+                  raise SystemExit("invalid SHA-256 checksum value")
+              if list(checksum):
+                  raise SystemExit("nested alternate checksum trust is forbidden")
+
+          print(
+              f"Validated {len(components)} components, "
+              f"{len(artifacts)} artifacts, and {len(checksums)} SHA-256 checksums."
+          )
+          PY
+
+      - name: Upload verification metadata only
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: gradle-verification-${{ matrix.generator }}
+          path: frontend/android/gradle/verification-metadata.xml
+          if-no-files-found: error
+          retention-days: 1
+
+  compare-and-prove:
+    name: Compare and prove strict verification
+    needs: generate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Checkout exact bootstrap head
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Enforce isolated bootstrap scope
+        shell: bash
+        run: |
+          git merge-base --is-ancestor "$EXPECTED_BASE" HEAD
+          test "$(git rev-list --count "$EXPECTED_BASE"..HEAD)" -eq 1
+          changed="$(git diff --name-only "$EXPECTED_BASE" HEAD)"
+          test "$changed" = "$BOOTSTRAP_WORKFLOW" || {
+            echo "::error title=Bootstrap scope changed::Expected only $BOOTSTRAP_WORKFLOW"
+            exit 1
+          }
+
+      - name: Set up Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+
+      - name: Set up Java
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build and sync native production bundle for Android only
+        working-directory: frontend
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home-sync
+          VITE_BACKEND_API_URL: https://api.dupert.test
+          VITE_GOOGLE_MAPS_API_KEY: ''
+          VITE_APP_ACCESS_PASSWORD: ''
+        run: |
+          npm run build:native:production
+          npx --no-install cap sync android
+
+      - name: Download both generated metadata files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: gradle-verification-*
+          path: bootstrap-metadata
+
+      - name: Require byte-identical generator output
+        shell: bash
+        run: |
+          mapfile -t files < <(find bootstrap-metadata -type f -name verification-metadata.xml -print | sort)
+          total="$(find bootstrap-metadata -type f -print | wc -l)"
+          test "$total" -eq 2
+          test "${#files[@]}" -eq 2
+          cmp --silent "${files[0]}" "${files[1]}" || {
+            echo "::error title=Non-deterministic verification metadata::The two clean generators produced different bytes"
+            exit 1
+          }
+          sha256sum "${files[0]}"
+          python3 - "${files[0]}" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(sys.argv[1]).getroot()
+          local = lambda element: element.tag.rsplit("}", 1)[-1]
+          elements = list(root.iter())
+          components = sum(local(element) == "component" for element in elements)
+          artifacts = sum(local(element) == "artifact" for element in elements)
+          checksums = sum(local(element) == "sha256" for element in elements)
+          print(f"Reproduced {components} components, {artifacts} artifacts, {checksums} SHA-256 checksums.")
+          PY
+          install -m 0644 "${files[0]}" frontend/android/gradle/verification-metadata.xml
+
+      - name: Prove strict verification from a fresh Gradle home
+        working-directory: frontend/android
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home-strict
+        run: >-
+          ./gradlew
+          --dependency-verification strict
+          :app:assembleRelease
+          --refresh-dependencies
+          --no-daemon
+          --no-build-cache
+
+      - name: Tamper the resolved Android Gradle Plugin checksums
+        working-directory: frontend/android
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          metadata = Path("gradle/verification-metadata.xml")
+          text = metadata.read_text(encoding="utf-8")
+          component_pattern = re.compile(
+              r'(<component group="com[.]android[.]tools[.]build" name="gradle" version="8[.]13[.]0">)(.*?)(</component>)',
+              re.DOTALL,
+          )
+          component = component_pattern.search(text)
+          if component is None:
+              raise SystemExit("resolved Android Gradle Plugin component was not found")
+          artifact_pattern = re.compile(
+              r'(<artifact name="gradle-8[.]13[.]0[.]jar">)(.*?)(</artifact>)',
+              re.DOTALL,
+          )
+          artifact = artifact_pattern.search(component.group(2))
+          if artifact is None:
+              raise SystemExit("resolved Android Gradle Plugin JAR artifact was not found")
+          checksum_pattern = re.compile(r'(<sha256 value=")([0-9a-f]{64})(")')
+
+          def tamper(match):
+              checksum = match.group(2)
+              replacement = ("0" if checksum[0] != "0" else "1") + checksum[1:]
+              return match.group(1) + replacement + match.group(3)
+
+          tampered_artifact, count = checksum_pattern.subn(tamper, artifact.group(2))
+          if count == 0:
+              raise SystemExit("resolved Android Gradle Plugin JAR checksums were not found")
+          tampered_component = (
+              component.group(2)[:artifact.start(2)]
+              + tampered_artifact
+              + component.group(2)[artifact.end(2):]
+          )
+          metadata.write_text(
+              text[:component.start(2)] + tampered_component + text[component.end(2):],
+              encoding="utf-8",
+          )
+          print(f"Tampered {count} resolved Android Gradle Plugin JAR checksums for negative verification.")
+          PY
+
+      - name: Require tampered-checksum verification failure
+        working-directory: frontend/android
+        shell: bash
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home-tampered
+        run: |
+          log="$RUNNER_TEMP/tampered-verification.log"
+          if ./gradlew \
+            --dependency-verification strict \
+            :app:assembleRelease \
+            --refresh-dependencies \
+            --no-daemon \
+            --no-build-cache >"$log" 2>&1; then
+            echo "::error title=Tampered checksum accepted::Strict verification unexpectedly succeeded"
+            exit 1
+          fi
+          if ! grep -Eiq 'dependency verification failed|checksum.*failed|verification failed' "$log"; then
+            echo "::error title=Unexpected negative-test failure::The build failed without dependency-verification evidence"
+            exit 1
+          fi
+          grep -Eim 3 'dependency verification failed|checksum.*failed|verification failed' "$log"
+          echo "Strict dependency verification rejected the tampered checksum as expected."
