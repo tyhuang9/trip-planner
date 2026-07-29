@@ -6,6 +6,14 @@ versions, toolchain pins, public production configuration, and this evidence sch
 are internally consistent. It does **not** mean an artifact was signed, installed,
 tested on a device, approved for a store, or ready for release.
 
+Issue #64's physical-device contract is maintained in the
+[`auth-session-device-spike.md`](auth-session-device-spike.md) runbook,
+[`auth-session-device-evidence.template.json`](auth-session-device-evidence.template.json)
+fixture, and [`auth-session-transport-adr-template.md`](auth-session-transport-adr-template.md).
+These are **TEMPLATE / NOT EVIDENCE** and deliberately contain no device execution
+or credential values. The Authentication and guest sessions and Device install
+smoke gates below remain `BLOCKED` until a reviewed, redaction-safe run proves them.
+
 Run the secret-free preflight from `frontend/`:
 
 ```bash
@@ -66,11 +74,11 @@ a real macOS builder produces reproducible evidence.
 | Signing and secrets | BLOCKED | Unassigned | No approved signing workflow, secret store, or certificate fingerprints recorded |
 | Identity and versioning | BLOCKED | Unassigned | Source values agree, but signed artifact metadata has not been inspected |
 | Production configuration | BLOCKED | Unassigned | Source origin policy passes; packaged artifact inspection is not recorded |
-| Authentication and guest sessions | BLOCKED | Unassigned | Depends on issue #64 physical-device ADR and smoke evidence |
+| Authentication and guest sessions | BLOCKED | Unassigned | Issue #64 templates are TEMPLATE / NOT EVIDENCE; physical iPhone and Android ADR and smoke evidence is unexecuted |
 | Maps | BLOCKED | Unassigned | Depends on issue #66 renderer ADR and restricted-key evidence |
 | Universal/App Links | BLOCKED | Unassigned | Depends on issue #67 owned-host association files and signed fingerprints |
 | Privacy and store metadata | BLOCKED | Unassigned | Privacy audit, declarations, policy/support URLs, disclosures, review data, and screenshots are not recorded |
-| Device install smoke | BLOCKED | Unassigned | No signed iOS and Android installs or member/guest staging smoke evidence recorded |
+| Device install smoke | BLOCKED | Unassigned | Issue #64 device-spike template is TEMPLATE / NOT EVIDENCE; no signed iOS and Android installs or member/guest staging smoke evidence recorded |
 | Backward compatibility and rollback | BLOCKED | Unassigned | Previous-version compatibility and rollback drill are not recorded |
 | Monitoring and ownership | BLOCKED | Unassigned | Release owners, monitoring links, escalation path, and go/no-go approver are not assigned |
 <!-- mobile-release-gates:end -->

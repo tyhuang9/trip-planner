@@ -1,0 +1,406 @@
+{
+  "template_status": "UNEXECUTED",
+  "notice": "TEMPLATE / NOT EVIDENCE — this file records no physical-device execution.",
+  "metadata": {
+    "commit_or_tag": "UNEXECUTED",
+    "app_version_build": "UNEXECUTED",
+    "device_model": "UNEXECUTED",
+    "os_version": "UNEXECUTED",
+    "ios_xcode_macos_tooling": "UNEXECUTED",
+    "android_adb_tooling": "UNEXECUTED",
+    "staging_environment": "UNEXECUTED",
+    "test_date_time": "UNEXECUTED",
+    "tester_owner": "UNEXECUTED",
+    "artifact_identity_checksum": "UNEXECUTED"
+  },
+  "platforms": [
+    {
+      "platform": "ios",
+      "device_requirement": "Physical iPhone required; simulator-only runs do not satisfy this contract.",
+      "required_metadata_fields": [
+        "commit_or_tag",
+        "app_version_build",
+        "device_model",
+        "os_version",
+        "ios_xcode_macos_tooling",
+        "staging_environment",
+        "test_date_time",
+        "tester_owner",
+        "artifact_identity_checksum"
+      ],
+      "status": "UNEXECUTED",
+      "evidence": "UNEXECUTED"
+    },
+    {
+      "platform": "android",
+      "device_requirement": "Physical Android device required; emulator-only runs do not satisfy this contract.",
+      "required_metadata_fields": [
+        "commit_or_tag",
+        "app_version_build",
+        "device_model",
+        "os_version",
+        "android_adb_tooling",
+        "staging_environment",
+        "test_date_time",
+        "tester_owner",
+        "artifact_identity_checksum"
+      ],
+      "status": "UNEXECUTED",
+      "evidence": "UNEXECUTED"
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "member_login",
+      "title": "Member login",
+      "status": "UNEXECUTED",
+      "steps": "UNEXECUTED",
+      "evidence": {
+        "safe_reference": "UNEXECUTED",
+        "observed_result": "UNEXECUTED",
+        "network_trace_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "redaction_notes": "UNEXECUTED"
+      }
+    },
+    {
+      "case_id": "access_token_expiry_refresh_rotation",
+      "title": "Access-token expiry and refresh rotation",
+      "status": "UNEXECUTED",
+      "steps": "UNEXECUTED",
+      "evidence": {
+        "safe_reference": "UNEXECUTED",
+        "observed_result": "UNEXECUTED",
+        "network_trace_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "redaction_notes": "UNEXECUTED"
+      }
+    },
+    {
+      "case_id": "background_resume",
+      "title": "Background and resume",
+      "status": "UNEXECUTED",
+      "steps": "UNEXECUTED",
+      "evidence": {
+        "safe_reference": "UNEXECUTED",
+        "observed_result": "UNEXECUTED",
+        "network_trace_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "redaction_notes": "UNEXECUTED"
+      }
+    },
+    {
+      "case_id": "force_kill_relaunch",
+      "title": "Force-kill and relaunch",
+      "status": "UNEXECUTED",
+      "steps": "UNEXECUTED",
+      "evidence": {
+        "safe_reference": "UNEXECUTED",
+        "observed_result": "UNEXECUTED",
+        "network_trace_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "redaction_notes": "UNEXECUTED"
+      }
+    },
+    {
+      "case_id": "logout",
+      "title": "Logout",
+      "status": "UNEXECUTED",
+      "steps": "UNEXECUTED",
+      "evidence": {
+        "safe_reference": "UNEXECUTED",
+        "observed_result": "UNEXECUTED",
+        "network_trace_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "redaction_notes": "UNEXECUTED"
+      }
+    },
+    {
+      "case_id": "account_deletion",
+      "title": "Account deletion",
+      "status": "UNEXECUTED",
+      "steps": "UNEXECUTED",
+      "evidence": {
+        "safe_reference": "UNEXECUTED",
+        "observed_result": "UNEXECUTED",
+        "network_trace_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "redaction_notes": "UNEXECUTED"
+      }
+    },
+    {
+      "case_id": "email_verification_return",
+      "title": "Email-verification return",
+      "status": "UNEXECUTED",
+      "steps": "UNEXECUTED",
+      "evidence": {
+        "safe_reference": "UNEXECUTED",
+        "observed_result": "UNEXECUTED",
+        "network_trace_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "redaction_notes": "UNEXECUTED"
+      }
+    },
+    {
+      "case_id": "password_reset_return",
+      "title": "Password-reset return",
+      "status": "UNEXECUTED",
+      "steps": "UNEXECUTED",
+      "evidence": {
+        "safe_reference": "UNEXECUTED",
+        "observed_result": "UNEXECUTED",
+        "network_trace_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "redaction_notes": "UNEXECUTED"
+      }
+    },
+    {
+      "case_id": "guest_acceptance",
+      "title": "Guest acceptance",
+      "status": "UNEXECUTED",
+      "steps": "UNEXECUTED",
+      "evidence": {
+        "safe_reference": "UNEXECUTED",
+        "observed_result": "UNEXECUTED",
+        "network_trace_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "redaction_notes": "UNEXECUTED"
+      }
+    },
+    {
+      "case_id": "trip_rest_read",
+      "title": "Trip REST read",
+      "status": "UNEXECUTED",
+      "steps": "UNEXECUTED",
+      "evidence": {
+        "safe_reference": "UNEXECUTED",
+        "observed_result": "UNEXECUTED",
+        "network_trace_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "redaction_notes": "UNEXECUTED"
+      }
+    },
+    {
+      "case_id": "trip_write",
+      "title": "Trip write",
+      "status": "UNEXECUTED",
+      "steps": "UNEXECUTED",
+      "evidence": {
+        "safe_reference": "UNEXECUTED",
+        "observed_result": "UNEXECUTED",
+        "network_trace_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "redaction_notes": "UNEXECUTED"
+      }
+    },
+    {
+      "case_id": "sse_streaming_genuine_without_global_native_http_patch",
+      "title": "Genuine SSE streaming without a global native HTTP patch",
+      "status": "UNEXECUTED",
+      "steps": "UNEXECUTED",
+      "evidence": {
+        "safe_reference": "UNEXECUTED",
+        "observed_result": "UNEXECUTED",
+        "network_trace_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "redaction_notes": "UNEXECUTED"
+      }
+    },
+    {
+      "case_id": "guest_relaunch",
+      "title": "Guest relaunch",
+      "status": "UNEXECUTED",
+      "steps": "UNEXECUTED",
+      "evidence": {
+        "safe_reference": "UNEXECUTED",
+        "observed_result": "UNEXECUTED",
+        "network_trace_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "redaction_notes": "UNEXECUTED"
+      }
+    },
+    {
+      "case_id": "guest_claim",
+      "title": "Guest claim",
+      "status": "UNEXECUTED",
+      "steps": "UNEXECUTED",
+      "evidence": {
+        "safe_reference": "UNEXECUTED",
+        "observed_result": "UNEXECUTED",
+        "network_trace_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "redaction_notes": "UNEXECUTED"
+      }
+    },
+    {
+      "case_id": "guest_expiry",
+      "title": "Guest expiry",
+      "status": "UNEXECUTED",
+      "steps": "UNEXECUTED",
+      "evidence": {
+        "safe_reference": "UNEXECUTED",
+        "observed_result": "UNEXECUTED",
+        "network_trace_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "redaction_notes": "UNEXECUTED"
+      }
+    },
+    {
+      "case_id": "guest_revocation",
+      "title": "Guest revocation",
+      "status": "UNEXECUTED",
+      "steps": "UNEXECUTED",
+      "evidence": {
+        "safe_reference": "UNEXECUTED",
+        "observed_result": "UNEXECUTED",
+        "network_trace_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "redaction_notes": "UNEXECUTED"
+      }
+    },
+    {
+      "case_id": "offline_loss_reconnect_each_session_boundary",
+      "title": "Offline loss and reconnect at each session boundary",
+      "status": "UNEXECUTED",
+      "steps": "UNEXECUTED",
+      "session_boundaries": [
+        { "boundary": "member_login", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+        { "boundary": "access_token_expiry_refresh_rotation", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+        { "boundary": "background_resume", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+        { "boundary": "force_kill_relaunch", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+        { "boundary": "logout", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+        { "boundary": "account_deletion", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+        { "boundary": "email_verification_return", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+        { "boundary": "password_reset_return", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+        { "boundary": "guest_acceptance", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+        { "boundary": "trip_rest_read", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+        { "boundary": "trip_write", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+        { "boundary": "sse_streaming", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+        { "boundary": "guest_relaunch", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+        { "boundary": "guest_claim", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+        { "boundary": "guest_expiry", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+        { "boundary": "guest_revocation", "status": "UNEXECUTED", "evidence": "UNEXECUTED" }
+      ],
+      "evidence": {
+        "safe_reference": "UNEXECUTED",
+        "observed_result": "UNEXECUTED",
+        "network_trace_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "redaction_notes": "UNEXECUTED"
+      }
+    },
+    {
+      "case_id": "ios_webview_domain_configuration",
+      "title": "iOS WebView domain configuration",
+      "status": "UNEXECUTED",
+      "steps": "UNEXECUTED",
+      "evidence": {
+        "safe_reference": "UNEXECUTED",
+        "observed_result": "UNEXECUTED",
+        "network_trace_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "redaction_notes": "UNEXECUTED"
+      }
+    },
+    {
+      "case_id": "android_third_party_cookie_behavior",
+      "title": "Android third-party-cookie behavior",
+      "status": "UNEXECUTED",
+      "steps": "UNEXECUTED",
+      "evidence": {
+        "safe_reference": "UNEXECUTED",
+        "observed_result": "UNEXECUTED",
+        "network_trace_reference": "UNEXECUTED",
+        "artifact_identity_checksum": "UNEXECUTED",
+        "redaction_notes": "UNEXECUTED"
+      }
+    }
+  ],
+  "credential_lifecycle": [
+    {
+      "stage_id": "issued",
+      "scope": "Member and guest credentials issued by staging auth/session endpoints",
+      "status": "UNEXECUTED",
+      "evidence": "UNEXECUTED"
+    },
+    {
+      "stage_id": "stored",
+      "scope": "Credential storage and WebView/native boundary",
+      "status": "UNEXECUTED",
+      "evidence": "UNEXECUTED"
+    },
+    {
+      "stage_id": "attached",
+      "scope": "Credentials attached to REST and SSE requests",
+      "status": "UNEXECUTED",
+      "evidence": "UNEXECUTED"
+    },
+    {
+      "stage_id": "rotated",
+      "scope": "Access expiry and refresh-cookie/token rotation",
+      "status": "UNEXECUTED",
+      "evidence": "UNEXECUTED"
+    },
+    {
+      "stage_id": "claimed",
+      "scope": "Guest credential claimed into a member account",
+      "status": "UNEXECUTED",
+      "evidence": "UNEXECUTED"
+    },
+    {
+      "stage_id": "revoked",
+      "scope": "Logout, deletion, guest expiry, and guest revocation",
+      "status": "UNEXECUTED",
+      "evidence": "UNEXECUTED"
+    }
+  ],
+  "redaction_policy": {
+    "status": "UNEXECUTED",
+    "raw_secret_policy": "NEVER COMMIT raw cookies, access tokens, refresh tokens, guest tokens, credentials, reset or verification links, signing material, API keys, or secrets.",
+    "safe_reference_policy": "Use endpoint/method, status code, cookie or token name only, timestamps, redacted headers, and artifact identity/checksum references. Replace every credential or link value with <REDACTED>.",
+    "forbidden_values": [
+      "raw cookies",
+      "access tokens",
+      "refresh tokens",
+      "guest tokens",
+      "credentials",
+      "email reset links",
+      "email verification links",
+      "signing material",
+      "API keys",
+      "secrets"
+    ],
+    "evidence_placeholder": "UNEXECUTED"
+  },
+  "adr_contract": {
+    "status": "UNEXECUTED",
+    "allowed_outcomes": [
+      {
+        "option_id": "cookie_only_proven",
+        "title": "Proven cookie-only configuration",
+        "scope": "Must prove the entire member and guest lifecycle on physical iPhone and Android devices."
+      },
+      {
+        "option_id": "native_credential_transport",
+        "title": "Explicit native credential transport",
+        "scope": "Must cover the entire member and guest lifecycle with documented security properties and frontend/backend support."
+      }
+    ],
+    "forbidden_fallbacks": [
+      "endpoint_only_fallback",
+      "web_storage_refresh_or_guest_token_workaround"
+    ],
+    "decision": "UNEXECUTED",
+    "security_properties": "UNEXECUTED",
+    "frontend_backend_work": "UNEXECUTED",
+    "migration_backward_compatibility": "UNEXECUTED",
+    "rollback": "UNEXECUTED",
+    "revised_estimate": "UNEXECUTED",
+    "follow_up_issues": "UNEXECUTED"
+  },
+  "references": {
+    "spike_runbook": "docs/mobile/auth-session-device-spike.md",
+    "adr_template": "docs/mobile/auth-session-transport-adr-template.md",
+    "release_readiness": "docs/mobile/release-readiness.md"
+  }
+}
