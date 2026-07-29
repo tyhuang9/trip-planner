@@ -38,7 +38,7 @@ export default function AcceptInvitePage() {
         navigate(`/trips/${encodeURIComponent(accepted.publicId)}`, { replace: true })
       })
       .catch(() => {
-        // React Query owns the visible error state; this prevents an unhandled rejection.
+        // The share mutation hook owns the visible error state; this prevents an unhandled rejection.
       })
   }, [acceptMutation, isAuthenticated, isInitializing, navigate, token])
 
