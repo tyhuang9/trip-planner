@@ -1,46 +1,35 @@
-import { useEffect, useRef } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { parseApiError } from '../api/errors'
 import { useAuth } from '../auth/useAuth'
 import { useAcceptShareLink } from '../hooks/useShareLinks'
 import { usePageTitle } from '../utils/usePageTitle'
+import { consumeDeepLinkHandoff, getDeepLinkHandoff } from '../deep-links/vault'
+import { requestDeepLinkRouteFocus } from '../deep-links/routeFocusRequest'
 import styles from './SharePages.module.css'
 
 export default function AcceptInvitePage() {
   usePageTitle('Accept invite – Dupert')
 
-  const { token } = useParams()
+  const { token: routeToken, handoffId } = useParams()
+  const handoff = getDeepLinkHandoff(handoffId)
+  const token = handoff?.kind === 'share' ? handoff.token : routeToken
   const location = useLocation()
   const navigate = useNavigate()
   const { isAuthenticated, isInitializing } = useAuth()
   const acceptMutation = useAcceptShareLink()
-  const returnPath = `${location.pathname}${location.search}`
-  const autoAcceptStartedRef = useRef(false)
-
+  const returnPath = handoffId ? `/link/${handoffId}` : `${location.pathname}${location.search}`
   const handleAccept = async () => {
     if (!token || acceptMutation.isPending) return
     try {
       const accepted = await acceptMutation.mutateAsync(token)
-      navigate(`/trips/${encodeURIComponent(accepted.publicId)}`, { replace: true })
+      consumeDeepLinkHandoff(handoffId)
+      const destination = `/trips/${encodeURIComponent(accepted.publicId)}`
+      requestDeepLinkRouteFocus(destination)
+      navigate(destination, { replace: true })
     } catch {
       // React Query owns the visible error state.
     }
   }
-
-  useEffect(() => {
-    if (isInitializing || !isAuthenticated || !token || autoAcceptStartedRef.current) {
-      return
-    }
-    autoAcceptStartedRef.current = true
-    void acceptMutation
-      .mutateAsync(token)
-      .then((accepted) => {
-        navigate(`/trips/${encodeURIComponent(accepted.publicId)}`, { replace: true })
-      })
-      .catch(() => {
-        // React Query owns the visible error state; this prevents an unhandled rejection.
-      })
-  }, [acceptMutation, isAuthenticated, isInitializing, navigate, token])
 
   return (
     <main id="main" className={styles.narrowShell}>
@@ -63,7 +52,7 @@ export default function AcceptInvitePage() {
         ) : isAuthenticated ? (
           <div className={styles.actions}>
             {acceptMutation.isPending ? (
-              <p className={styles.subheading}>Accepting invite...</p>
+              <p className={styles.subheading} role="status" aria-live="polite">Accepting invite...</p>
             ) : null}
             <button
               type="button"
@@ -89,7 +78,7 @@ export default function AcceptInvitePage() {
               Create account
             </Link>
             <Link
-              to={`/share/${encodeURIComponent(token ?? '')}/guest`}
+              to={handoffId ? `/link/${handoffId}/guest` : `/share/${encodeURIComponent(token ?? '')}/guest`}
               className={styles.secondaryLink}
             >
               Continue as guest
