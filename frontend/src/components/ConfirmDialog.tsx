@@ -47,17 +47,8 @@ export function ConfirmDialog({
       cancelButtonRef.current?.focus()
     }, 0)
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      onCancelRef.current()
-    }
-
-    document.addEventListener('keydown', handleKeyDown)
-
     return () => {
       window.clearTimeout(focusTimer)
-      document.removeEventListener('keydown', handleKeyDown)
       if (previousFocusRef.current?.isConnected) {
         previousFocusRef.current.focus()
       } else {
@@ -66,12 +57,24 @@ export function ConfirmDialog({
     }
   }, [restoreFocusFallbackRef])
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      if (confirming) return
+      onCancelRef.current()
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [confirming])
+
   return (
     <div
       className={styles.backdrop}
       data-modal-focus-branch={modalFocusBranch ? 'true' : undefined}
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
+        if (!confirming && event.target === event.currentTarget) {
           onCancel()
         }
       }}
@@ -98,6 +101,7 @@ export function ConfirmDialog({
             type="button"
             className={styles.cancelButton}
             onClick={onCancel}
+            disabled={confirming}
           >
             {cancelLabel}
           </button>
