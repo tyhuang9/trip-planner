@@ -218,7 +218,7 @@ public class TripEventBroker {
                         continue;
                     }
                     subscription.emitter().send(SseEmitter.event().comment("keepalive"));
-                    subscription.finishWriteSucceeded(now);
+                    subscription.finishWriteSucceeded(clock.instant());
                     heartbeatCounter.increment();
                 } catch (IOException | IllegalStateException ex) {
                     removeFailedSubscription(tripId, subscription, ex);

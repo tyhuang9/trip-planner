@@ -77,6 +77,20 @@ class TripEventBrokerTest {
     }
 
     @Test
+    void heartbeatRecordsCompletionTimeRatherThanMaintenanceScanTime() {
+        BrokerFixture fixture = fixture();
+        fixture.broker().subscribe(42L, "user:1", "203.0.113.10", "mobile-client-0001");
+        fixture.clock().advance(Duration.ofSeconds(20));
+
+        fixture.broker().maintainSubscriptions(START.plusSeconds(15));
+
+        assertThat(fixture.broker().lastSuccessfulWriteForTest(42L))
+            .isEqualTo(START.plusSeconds(20));
+        assertThat(fixture.registry().get("dupert.sse.heartbeats.sent").counter().count())
+            .isEqualTo(1.0);
+    }
+
+    @Test
     void maintenanceRemovesConnectionThatMissedDocumentedStaleInterval() {
         BrokerFixture fixture = fixture();
         fixture.broker().subscribe(42L, "user:1", "203.0.113.10", "mobile-client-0001");
