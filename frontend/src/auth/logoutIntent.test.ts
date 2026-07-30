@@ -6,6 +6,7 @@ import {
   hasPendingLogoutIntent,
   PENDING_LOGOUT_STORAGE_KEY,
   persistPendingLogoutIntent,
+  subscribePendingLogoutIntent,
 } from './logoutIntent'
 
 beforeEach(() => {
@@ -63,5 +64,52 @@ describe('pending logout intent', () => {
     expect(hasPendingLogoutIntent()).toBe(true)
     expect(getPendingLogoutPersistence()).toBe('memory-only')
     expect(localStorage.getItem(PENDING_LOGOUT_STORAGE_KEY)).toBeNull()
+  })
+
+  it('keeps a durable snapshot when storage refuses to remove its marker', () => {
+    persistPendingLogoutIntent()
+    const listener = vi.fn()
+    const unsubscribe = subscribePendingLogoutIntent(listener)
+    vi.spyOn(Object.getPrototypeOf(localStorage), 'removeItem').mockImplementation(() => {
+      throw new DOMException('Storage blocked', 'SecurityError')
+    })
+
+    expect(clearPendingLogoutIntent()).toBe(false)
+    expect(hasPendingLogoutIntent()).toBe(true)
+    expect(getPendingLogoutPersistence()).toBe('durable')
+    expect(localStorage.getItem(PENDING_LOGOUT_STORAGE_KEY)).not.toBeNull()
+    expect(listener).toHaveBeenCalledOnce()
+
+    unsubscribe()
+  })
+
+  it('notifies same-context subscribers when pending logout changes', () => {
+    const listener = vi.fn()
+    const unsubscribe = subscribePendingLogoutIntent(listener)
+
+    persistPendingLogoutIntent()
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    clearPendingLogoutIntent()
+    expect(listener).toHaveBeenCalledTimes(2)
+
+    unsubscribe()
+    persistPendingLogoutIntent()
+    expect(listener).toHaveBeenCalledTimes(2)
+  })
+
+  it('subscribes to only the pending-logout key from another context', () => {
+    const listener = vi.fn()
+    const unsubscribe = subscribePendingLogoutIntent(listener)
+
+    window.dispatchEvent(new StorageEvent('storage', { key: 'unrelated' }))
+    expect(listener).not.toHaveBeenCalled()
+
+    window.dispatchEvent(new StorageEvent('storage', {
+      key: PENDING_LOGOUT_STORAGE_KEY,
+    }))
+    expect(listener).toHaveBeenCalledOnce()
+
+    unsubscribe()
   })
 })
