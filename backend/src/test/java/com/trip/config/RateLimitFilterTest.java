@@ -200,6 +200,11 @@ class RateLimitFilterTest {
     }
 
     @Test
+    void authAccountDeletePathIsRateLimitedByClientIp() throws Exception {
+        assertPathLimited("DELETE", "/api/auth/me", 10);
+    }
+
+    @Test
     void localDevLoginAsPathIsRateLimitedByClientIp() throws Exception {
         assertPostPathLimited("/api/dev/auth/login-as", 60);
     }
@@ -279,6 +284,10 @@ class RateLimitFilterTest {
     }
 
     private static void assertPostPathLimited(String path, int capacity) throws Exception {
+        assertPathLimited("POST", path, capacity);
+    }
+
+    private static void assertPathLimited(String method, String path, int capacity) throws Exception {
         RateLimitRegistry registry = new RateLimitRegistry();
         RateLimitFilter filter = new RateLimitFilter(registry, new AppProperties());
         AtomicInteger passed = new AtomicInteger();
@@ -286,14 +295,14 @@ class RateLimitFilterTest {
 
         for (int i = 0; i < capacity; i++) {
             MockHttpServletResponse response = new MockHttpServletResponse();
-            filter.doFilter(request("POST", path), response, chain);
+            filter.doFilter(request(method, path), response, chain);
             assertThat(response.getStatus()).isEqualTo(200);
         }
 
         assertThat(registry.size()).isEqualTo(1);
 
         MockHttpServletResponse limited = new MockHttpServletResponse();
-        filter.doFilter(request("POST", path), limited, chain);
+        filter.doFilter(request(method, path), limited, chain);
 
         assertThat(passed.get()).isEqualTo(capacity);
         assertThat(limited.getStatus()).isEqualTo(429);

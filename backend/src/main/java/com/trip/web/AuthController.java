@@ -29,6 +29,7 @@ import com.trip.config.RateLimitRegistry;
 import com.trip.domain.User;
 import com.trip.repo.UserRepository;
 import com.trip.service.auth.AccountService;
+import com.trip.service.auth.AccountService.DeleteAccountResult;
 import com.trip.service.auth.AuthTokenService;
 import com.trip.service.auth.EmailNormalizer;
 import com.trip.service.auth.EmailVerificationOperations;
@@ -42,6 +43,7 @@ import com.trip.web.auth.DisplayNameSanitizer;
 import com.trip.web.auth.RefreshCookie;
 import com.trip.web.dto.AuthResponse;
 import com.trip.web.dto.ChangePasswordRequest;
+import com.trip.web.dto.DeleteAccountRequest;
 import com.trip.web.dto.EmailVerificationRequest;
 import com.trip.web.dto.EmailVerificationResendRequest;
 import com.trip.web.dto.LoginRequest;
@@ -392,18 +394,35 @@ public class AuthController {
      *
      * <p>The service preserves owned trips that still have another registered member by
      * transferring ownership, and deletes owned trips that would otherwise become
-     * orphaned. Refresh tokens are revoked before the user row is deleted so a
-     * concurrent {@code POST /refresh} cannot mint a fresh access token during deletion.
+     * orphaned. The current password is verified before any destructive side effect.
+     * Refresh tokens are then revoked before the user row is deleted. That blocks later
+     * refresh attempts, but cannot retract a response that was already in flight; clients
+     * must serialize deletion with refresh and discard stale refresh results.
      */
     @DeleteMapping("/me")
-    public ResponseEntity<?> deleteMe(Authentication authentication, HttpServletResponse response) {
+    public ResponseEntity<?> deleteMe(@Valid @RequestBody DeleteAccountRequest body,
+                                      Authentication authentication,
+                                      HttpServletResponse response) {
         Long userId = principalUserId(authentication);
         if (userId == null) {
             return unauthenticated();
         }
-        accountService.deleteAccount(userId);
-        refreshCookie.clearOnResponse(response);
-        return ResponseEntity.noContent().build();
+
+        ResponseEntity<?> limited = enforceAccountDeleteLimit(userId);
+        if (limited != null) {
+            return limited;
+        }
+
+        DeleteAccountResult result = accountService.deleteAccount(userId, body.currentPassword());
+        return switch (result) {
+            case DELETED -> {
+                refreshCookie.clearOnResponse(response);
+                yield ResponseEntity.noContent().build();
+            }
+            case USER_NOT_FOUND -> unauthenticated();
+            case REAUTHENTICATION_FAILED -> ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(Map.of("error", "reauthentication_failed"));
+        };
     }
 
     // ------------------------------------------------------------------
@@ -418,6 +437,20 @@ public class AuthController {
     private static ResponseEntity<?> authCookieHeaderRequired() {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
             .body(Map.of("error", "auth_cookie_header_required"));
+    }
+
+    private ResponseEntity<?> enforceAccountDeleteLimit(Long userId) {
+        Bucket bucket = rateLimitRegistry.resolve(
+            RateLimitRegistry.Named.AUTH_ACCOUNT_DELETE_PER_USER, userId.toString());
+        ConsumptionProbe probe = bucket.tryConsumeAndReturnRemaining(1);
+        if (probe.isConsumed()) {
+            return null;
+        }
+        long retryAfterSeconds = Math.max(1L, probe.getNanosToWaitForRefill() / 1_000_000_000L);
+        return ResponseEntity.status(429)
+            .header(HttpHeaders.RETRY_AFTER, Long.toString(retryAfterSeconds))
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(Map.of("error", "rate_limited"));
     }
 
     private ResponseEntity<?> enforcePasswordResetRequestLimit(HttpServletRequest request,

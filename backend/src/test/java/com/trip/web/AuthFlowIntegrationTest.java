@@ -30,6 +30,7 @@ import com.trip.repo.UserRepository;
 import com.trip.service.auth.EmailVerificationOperations;
 import com.trip.service.auth.JwtService;
 import com.trip.web.auth.AuthCookieAction;
+import com.trip.web.dto.DeleteAccountRequest;
 import com.trip.web.dto.LoginRequest;
 import com.trip.web.dto.RegisterRequest;
 
@@ -198,7 +199,59 @@ class AuthFlowIntegrationTest {
 
         // 8. DELETE /me cleans up everything; the @AfterEach cleanup becomes a no-op.
         mvc.perform(delete("/api/auth/me")
-                .header("Authorization", "Bearer " + secondAccessToken))
+                .header("Authorization", "Bearer " + secondAccessToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(
+                    new DeleteAccountRequest("password1234"))))
+            .andExpect(status().isNoContent());
+        assertThat(userRepository.findByEmailIgnoreCase(testEmail)).isEmpty();
+    }
+
+    @Test
+    void wrongDeletionPasswordPreservesRefreshSessionBeforeSuccessfulDeletion() throws Exception {
+        testEmail = "auth-it-" + UUID.randomUUID() + "@example.com";
+
+        mvc.perform(post("/api/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(
+                    new RegisterRequest(testEmail, "password1234", "Deletion Test"))))
+            .andExpect(status().isAccepted());
+        markRegisteredUserVerified("Deletion Test");
+
+        MvcResult loggedIn = mvc.perform(post("/api/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(
+                    new LoginRequest(testEmail, "password1234"))))
+            .andExpect(status().isOk())
+            .andReturn();
+        Cookie refreshCookie = loggedIn.getResponse().getCookie("refresh_token");
+        assertThat(refreshCookie).isNotNull();
+        String firstAccessToken = objectMapper.readTree(
+            loggedIn.getResponse().getContentAsString()).get("accessToken").asText();
+
+        mvc.perform(delete("/api/auth/me")
+                .header("Authorization", "Bearer " + firstAccessToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(
+                    new DeleteAccountRequest("not-the-password"))))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.error").value("reauthentication_failed"));
+
+        MvcResult refreshed = mvc.perform(post("/api/auth/refresh")
+                .with(authCookieAction())
+                .cookie(refreshCookie))
+            .andExpect(status().isOk())
+            .andReturn();
+        Cookie rotatedCookie = refreshed.getResponse().getCookie("refresh_token");
+        assertThat(rotatedCookie).isNotNull();
+        String refreshedAccessToken = objectMapper.readTree(
+            refreshed.getResponse().getContentAsString()).get("accessToken").asText();
+
+        mvc.perform(delete("/api/auth/me")
+                .header("Authorization", "Bearer " + refreshedAccessToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(
+                    new DeleteAccountRequest("password1234"))))
             .andExpect(status().isNoContent());
         assertThat(userRepository.findByEmailIgnoreCase(testEmail)).isEmpty();
     }
