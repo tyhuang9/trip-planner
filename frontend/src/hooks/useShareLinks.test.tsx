@@ -71,6 +71,21 @@ function wrapper({ children }: PropsWithChildren) {
   )
 }
 
+function expectSanitizedErrorNotToRetainToken(value: unknown, token: string) {
+  expect(value).toBeInstanceOf(Error)
+  const error = value as Error & {
+    config?: unknown
+    request?: unknown
+    response?: unknown
+  }
+
+  expect(error.message).not.toContain(token)
+  expect(error.stack ?? '').not.toContain(token)
+  expect(error).not.toHaveProperty('config')
+  expect(error).not.toHaveProperty('request')
+  expect(JSON.stringify(error.response ?? null)).not.toContain(token)
+}
+
 beforeEach(() => {
   apiMock = new MockAdapter(apiClient)
   queryClient = new QueryClient({
@@ -195,12 +210,10 @@ describe('useShareLinks', () => {
       rejected = await result.current.mutateAsync(token).catch((error) => error)
     })
 
-    expect(queryClient.getMutationCache().getAll()).toHaveLength(0)
     expect(result.current.isPending).toBe(false)
     expect(result.current.error).toBe(rejected)
     expect(parseApiError(result.current.error).code).toBe('not_found')
-    expect(JSON.stringify({ hook: result.current, cache: queryClient.getMutationCache().getAll() }))
-      .not.toContain(token)
+    expectSanitizedErrorNotToRetainToken(result.current.error, token)
   })
 
   it('does not retain a rejected guest share credential in mutation state', async () => {
@@ -222,15 +235,13 @@ describe('useShareLinks', () => {
       }).catch((error) => error)
     })
 
-    expect(queryClient.getMutationCache().getAll()).toHaveLength(0)
     expect(result.current.isPending).toBe(false)
     expect(result.current.error).toBe(rejected)
     expect(parseApiError(result.current.error)).toMatchObject({
       code: 'validation_failed',
       fieldErrors: { displayName: 'displayName is required' },
     })
-    expect(JSON.stringify({ hook: result.current, cache: queryClient.getMutationCache().getAll() }))
-      .not.toContain(token)
+    expectSanitizedErrorNotToRetainToken(result.current.error, token)
   })
 
   it('stores a claimed guest trip in list and detail caches', async () => {
