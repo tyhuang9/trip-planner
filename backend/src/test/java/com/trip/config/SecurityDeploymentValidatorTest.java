@@ -72,16 +72,15 @@ class SecurityDeploymentValidatorTest {
     }
 
     @Test
-    void nativeOnlyStagingDeploymentRequiresTrustProxy() {
+    void nativeOnlyStagingDeploymentAllowsDirectExposureWithoutTrustProxy() {
         AppProperties app = nativeOnlyAppProperties(true);
         SecureProperties secure = secureProperties(true);
         SecurityDeploymentValidator validator = new SecurityDeploymentValidator(
             app, secure, new MockEnvironment().withProperty("spring.profiles.active", "staging"));
 
         assertThat(validator.requiresTransportHardening()).isTrue();
-        assertThatThrownBy(() -> validator.run(new DefaultApplicationArguments()))
-            .isInstanceOf(IllegalStateException.class)
-            .hasMessageContaining("app.trust-proxy=true");
+        assertThat(validator.requiresTrustedProxy()).isFalse();
+        validator.run(new DefaultApplicationArguments());
     }
 
     @Test
@@ -93,6 +92,7 @@ class SecurityDeploymentValidatorTest {
             app, secure, new MockEnvironment().withProperty("spring.profiles.active", "staging"));
 
         assertThat(validator.requiresTransportHardening()).isTrue();
+        assertThat(validator.requiresTrustedProxy()).isFalse();
         validator.run(new DefaultApplicationArguments());
     }
 
@@ -143,6 +143,20 @@ class SecurityDeploymentValidatorTest {
         SecurityDeploymentValidator validator = new SecurityDeploymentValidator(
             app, secure, new MockEnvironment().withProperty("spring.profiles.active", "prod"));
 
+        assertThat(validator.requiresTrustedProxy()).isTrue();
+        assertThatThrownBy(() -> validator.run(new DefaultApplicationArguments()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("app.trust-proxy=true");
+    }
+
+    @Test
+    void publicFrontendStagingDeploymentRequiresTrustProxy() {
+        AppProperties app = appProperties("https://dupert.example", true);
+        SecureProperties secure = secureProperties(true);
+        SecurityDeploymentValidator validator = new SecurityDeploymentValidator(
+            app, secure, new MockEnvironment().withProperty("spring.profiles.active", "staging"));
+
+        assertThat(validator.requiresTrustedProxy()).isTrue();
         assertThatThrownBy(() -> validator.run(new DefaultApplicationArguments()))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("app.trust-proxy=true");

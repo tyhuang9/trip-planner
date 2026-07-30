@@ -64,10 +64,17 @@ public class SecurityDeploymentValidator implements ApplicationRunner {
             throw new IllegalStateException(
                 "Production-like deployments require app.cookies.secure=true and secure.hsts.enabled=true");
         }
-        if (!appProperties.isTrustProxy()) {
+        if (requiresTrustedProxy() && !appProperties.isTrustProxy()) {
             throw new IllegalStateException(
                 "Production-like deployments require app.trust-proxy=true behind the platform proxy");
         }
+    }
+
+    boolean requiresTrustedProxy() {
+        if (environment.acceptsProfiles(Profiles.of("prod"))) {
+            return true;
+        }
+        return configuredBrowserOrigins().stream().anyMatch(origin -> !isLocalOrigin(origin));
     }
 
     private void validateCorsOrigins() {
