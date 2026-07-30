@@ -154,6 +154,25 @@ describe('<TripDateRangePicker>', () => {
     expect(onChange).toHaveBeenCalledWith({ endDate: '2026-05-03' })
   })
 
+  it('focuses the first calendar date instead of month navigation for an empty range', async () => {
+    render(
+      <TripDateRangePicker
+        startDate=""
+        endDate=""
+        onChange={vi.fn()}
+      />,
+    )
+    mockFieldRect()
+
+    await userEvent.click(screen.getByRole('button', { name: /trip dates/i }))
+
+    const dialog = screen.getByRole('dialog', { name: /trip dates/i })
+    const firstDate = within(within(dialog).getAllByRole('grid')[0]).getAllByRole('button')[0]
+    expect(firstDate).toHaveFocus()
+    expect(within(dialog).getByRole('button', { name: /previous month/i })).not.toHaveFocus()
+    expect(within(dialog).getByRole('button', { name: /next month/i })).not.toHaveFocus()
+  })
+
   it('starts a new range when reopening an existing range from the trigger', async () => {
     const onChange = vi.fn()
 
