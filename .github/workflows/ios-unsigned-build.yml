@@ -109,7 +109,7 @@ jobs:
         env:
           BASH_ENV: /dev/null
           ENV: /dev/null
-        run: node scripts/check-ios-archive-mach-o.mjs "${RUNNER_TEMP}/Dupert-unsigned.xcarchive/Products/Applications/App.app"
+        run: npm run check:ios-archive-mach-o -- "${RUNNER_TEMP}/Dupert-unsigned.xcarchive/Products/Applications/App.app"
 
       - name: Inspect unsigned Release app
         shell: bash

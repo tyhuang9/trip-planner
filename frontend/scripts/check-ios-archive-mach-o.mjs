@@ -171,14 +171,33 @@ function inventoryMachOFiles(appPath) {
   return files
 }
 
-function validateArchitecture(path, runner) {
+function revalidateMachOFile(file) {
+  let currentStats
+  try {
+    currentStats = lstatSync(file.path)
+  } catch {
+    throw new Error(`${file.path} changed while the app bundle was being inspected`)
+  }
+  if (currentStats.isSymbolicLink()
+    || !currentStats.isFile()
+    || currentStats.dev !== file.stats.dev
+    || currentStats.ino !== file.stats.ino) {
+    throw new Error(`${file.path} changed while the app bundle was being inspected`)
+  }
+}
+
+function validateArchitecture(file, runner) {
+  revalidateMachOFile(file)
+  const { path } = file
   const lines = checkedLines(run('/usr/bin/lipo', ['-archs', path], runner), 'lipo -archs')
   if (lines.length !== 1 || lines[0] !== 'arm64') {
     throw new Error(`${path} must contain exactly the arm64 architecture`)
   }
 }
 
-function validateBuildVersion(path, runner) {
+function validateBuildVersion(file, runner) {
+  revalidateMachOFile(file)
+  const { path } = file
   const lines = checkedLines(
     run('/usr/bin/xcrun', ['vtool', '-show-build', path], runner),
     'vtool -show-build',
@@ -223,7 +242,9 @@ function isSafeSystemDependency(dependency) {
     && !/[\0-\x1f\x7f]/u.test(remainder)
 }
 
-function validateDependencies(path, appPath, machOFiles, runner) {
+function validateDependencies(file, appPath, machOFiles, runner) {
+  revalidateMachOFile(file)
+  const { path } = file
   const lines = checkedLines(run('/usr/bin/otool', ['-L', path], runner), 'otool -L')
   if (lines.shift() !== `${path}:` || lines.length === 0) {
     throw new Error(`${path} has malformed otool dependency output`)
@@ -238,15 +259,20 @@ function validateDependencies(path, appPath, machOFiles, runner) {
     const embeddedPath = ALLOWED_RPATHS.get(dependency)
     if (!embeddedPath) throw new Error(`${path} has an unsafe or unexpected dependency: ${dependency}`)
     const expected = machOFiles.get(embeddedPath)
-    const currentStats = expected && lstatSync(resolve(appPath, embeddedPath))
-    if (!expected || !currentStats.isFile() || currentStats.isSymbolicLink()
-      || currentStats.dev !== expected.stats.dev || currentStats.ino !== expected.stats.ino) {
+    if (!expected || expected.path !== resolve(appPath, embeddedPath)) {
+      throw new Error(`${path} has an rpath dependency that does not resolve to the expected embedded file: ${dependency}`)
+    }
+    try {
+      revalidateMachOFile(expected)
+    } catch {
       throw new Error(`${path} has an rpath dependency that does not resolve to the expected embedded file: ${dependency}`)
     }
   }
 }
 
-function validateRunpaths(relativePath, path, runner) {
+function validateRunpaths(relativePath, file, runner) {
+  revalidateMachOFile(file)
+  const { path } = file
   const lines = checkedLines(run('/usr/bin/otool', ['-l', path], runner), 'otool -l')
   if (lines.shift() !== `${path}:`) throw new Error(`${path} has malformed otool load-command output`)
 
@@ -304,10 +330,10 @@ export function inspectIosArchiveMachO(appPath, { runner = spawnSync } = {}) {
   for (const relativePath of EXPECTED_MACH_O_FILES) {
     const file = machOFiles.get(relativePath)
     if ((file.stats.mode & 0o111) === 0) throw new Error(`${relativePath} must be executable`)
-    validateArchitecture(file.path, runner)
-    validateBuildVersion(file.path, runner)
-    validateDependencies(file.path, appPath, machOFiles, runner)
-    validateRunpaths(relativePath, file.path, runner)
+    validateArchitecture(file, runner)
+    validateBuildVersion(file, runner)
+    validateDependencies(file, appPath, machOFiles, runner)
+    validateRunpaths(relativePath, file, runner)
   }
   return actualInventory
 }

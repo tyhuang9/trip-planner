@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { chmodSync, renameSync, writeFileSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -95,6 +96,13 @@ async function withApp(t) {
   return fixture.appPath
 }
 
+function replaceMachO(path) {
+  const replacementPath = `${path}.replacement`
+  writeFileSync(replacementPath, Buffer.from('cffaedfe00000000', 'hex'))
+  chmodSync(replacementPath, 0o755)
+  renameSync(replacementPath, path)
+}
+
 test('accepts exactly the expected executable arm64 iOS 15.0 Mach-O inventory', async (t) => {
   const appPath = await withApp(t)
   const calls = []
@@ -130,6 +138,52 @@ test('accepts exactly the expected executable arm64 iOS 15.0 Mach-O inventory', 
   assert.equal(calls[0].options.maxBuffer, 1024 * 1024)
   assert.deepEqual(calls[0].args.slice(0, -1), ['-archs'])
   assert.equal(calls.filter(({ args }) => args[0] === '-l').length, 3)
+})
+
+test('rejects a Mach-O file replaced between external tool inspections', async (t) => {
+  for (const replaceAfterCall of [1, 2, 3]) {
+    await t.test(`after call ${replaceAfterCall}`, async (t) => {
+      const appPath = await withApp(t)
+      const targetPath = join(appPath, 'App')
+      const delegate = successRunner()
+      let callCount = 0
+      const runner = (command, args, options) => {
+        const result = delegate(command, args, options)
+        callCount += 1
+        if (callCount === replaceAfterCall) replaceMachO(targetPath)
+        return result
+      }
+
+      assert.throws(
+        () => inspectIosArchiveMachO(appPath, { runner }),
+        /App changed while the app bundle was being inspected/u,
+      )
+      assert.equal(callCount, replaceAfterCall)
+    })
+  }
+})
+
+test('rejects an embedded framework replaced during dependency inspection', async (t) => {
+  const appPath = await withApp(t)
+  const appBinaryPath = join(appPath, 'App')
+  const embeddedPath = join(appPath, 'Frameworks/Capacitor.framework/Capacitor')
+  const delegate = successRunner({
+    otool: (path) => dependencyOutput(path, path === appBinaryPath
+      ? ['@rpath/Capacitor.framework/Capacitor']
+      : ['/System/Library/Frameworks/Foundation.framework/Foundation']),
+  })
+  const runner = (command, args, options) => {
+    const result = delegate(command, args, options)
+    if (command === '/usr/bin/otool' && args[0] === '-L' && args.at(-1) === appBinaryPath) {
+      replaceMachO(embeddedPath)
+    }
+    return result
+  }
+
+  assert.throws(
+    () => inspectIosArchiveMachO(appPath, { runner }),
+    /rpath dependency that does not resolve to the expected embedded file/u,
+  )
 })
 
 test('discovers every thin and fat Mach-O magic and rejects it as extra inventory', async (t) => {
