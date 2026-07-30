@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor } from '@testing-library/react'
-import type { PropsWithChildren } from 'react'
+import { useEffect, type PropsWithChildren } from 'react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useTripStream } from '../hooks/useTripStream'
@@ -19,6 +19,7 @@ vi.mock('../hooks/useTrips', () => ({
 
 const useTripStreamMock = vi.mocked(useTripStream)
 const useTripMock = vi.mocked(useTrip)
+const bufferingChildMounted = vi.fn()
 let queryClient: QueryClient
 
 function makeAuth(
@@ -53,15 +54,18 @@ function Providers({ children }: PropsWithChildren) {
 }
 
 function BufferingChild({ buffering }: { buffering: boolean }) {
+  useEffect(() => {
+    bufferingChildMounted()
+  }, [])
   useTripRealtimeActivityBuffer(buffering)
   return <div>Trip child</div>
 }
 
-function renderBoundary(
+function boundaryTree(
   buffering = false,
   auth = makeAuth(),
 ) {
-  return render(
+  return (
     <Providers>
       <AuthContext.Provider value={auth}>
         <MemoryRouter initialEntries={['/trips/abc234def567']}>
@@ -72,8 +76,15 @@ function renderBoundary(
           </Routes>
         </MemoryRouter>
       </AuthContext.Provider>
-    </Providers>,
+    </Providers>
   )
+}
+
+function renderBoundary(
+  buffering = false,
+  auth = makeAuth(),
+) {
+  return render(boundaryTree(buffering, auth))
 }
 
 beforeEach(() => {
@@ -81,6 +92,7 @@ beforeEach(() => {
     defaultOptions: { queries: { retry: false } },
   })
   useTripMock.mockReturnValue({ isSuccess: true } as ReturnType<typeof useTrip>)
+  bufferingChildMounted.mockReset()
 })
 
 describe('<TripRealtimeBoundary>', () => {
@@ -95,19 +107,11 @@ describe('<TripRealtimeBoundary>', () => {
   })
 
   it('receives drag buffering state without giving the child stream ownership', async () => {
-    const view = renderBoundary()
+    const auth = makeAuth()
+    const view = renderBoundary(false, auth)
+    expect(bufferingChildMounted).toHaveBeenCalledOnce()
 
-    view.rerender(
-      <Providers>
-        <MemoryRouter initialEntries={['/trips/abc234def567']}>
-          <Routes>
-            <Route path="/trips/:publicId" element={<TripRealtimeBoundary />}>
-              <Route index element={<BufferingChild buffering />} />
-            </Route>
-          </Routes>
-        </MemoryRouter>
-      </Providers>,
-    )
+    view.rerender(boundaryTree(true, auth))
 
     await waitFor(() => {
       expect(useTripStreamMock).toHaveBeenLastCalledWith('abc234def567', {
@@ -115,6 +119,7 @@ describe('<TripRealtimeBoundary>', () => {
         enabled: true,
       })
     })
+    expect(bufferingChildMounted).toHaveBeenCalledOnce()
   })
 
   it('withholds the stream until the trip access query succeeds', () => {
