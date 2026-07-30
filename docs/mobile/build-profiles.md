@@ -85,10 +85,13 @@ simulator, and never shuts down Simulator automatically.
 
 ## Backend CORS deployment
 
-`ALLOWED_ORIGINS` remains the browser-origin list used by CORS, share links, and
-email-link configuration. Native WebView origins are a separate comma-separated
-`NATIVE_ALLOWED_ORIGINS` list. Set the following exact value on both the staging
-and production Render backends:
+`ALLOWED_ORIGINS` is the browser-origin list used by CORS. Share-link generation
+may use its first value only as a fallback when `APP_PUBLIC_FRONTEND_URL` is
+blank; it is not the setting for auth-link construction. Set
+`APP_PUBLIC_FRONTEND_URL` as the preferred public origin for auth links and share
+links, and configure it explicitly on both the staging and production Render
+backends. Native WebView origins are a separate comma-separated
+`NATIVE_ALLOWED_ORIGINS` list. Set the following exact value on both backends:
 
 ```bash
 NATIVE_ALLOWED_ORIGINS=capacitor://localhost,https://localhost
