@@ -6,6 +6,21 @@ versions, toolchain pins, public production configuration, and this evidence sch
 are internally consistent. It does **not** mean an artifact was signed, installed,
 tested on a device, approved for a store, or ready for release.
 
+<!-- issue64-release-policy
+contract_version=2
+claim_bearing_artifact=results_json_only
+-->
+
+Issue #64's physical-device contract is maintained in the
+[`auth-session-device-spike.md`](auth-session-device-spike.md) runbook,
+[`auth-session-device-evidence.catalog.json`](auth-session-device-evidence.catalog.json)
+canonical contract catalog,
+[`auth-session-device-evidence.template.json`](auth-session-device-evidence.template.json)
+fixture, and [`auth-session-transport-adr-template.md`](auth-session-transport-adr-template.md).
+These are **TEMPLATE / NOT EVIDENCE** and deliberately contain no device execution
+or credential values; only a dated, validated `results.json` copy is claim-bearing. The Authentication and guest sessions and Device install
+smoke gates below remain `BLOCKED` until a reviewed, redaction-safe run proves them.
+
 Run the secret-free preflight from `frontend/`:
 
 ```bash
@@ -66,11 +81,11 @@ a real macOS builder produces reproducible evidence.
 | Signing and secrets | BLOCKED | Unassigned | No approved signing workflow, secret store, or certificate fingerprints recorded |
 | Identity and versioning | BLOCKED | Unassigned | Source values agree, but signed artifact metadata has not been inspected |
 | Production configuration | BLOCKED | Unassigned | Source origin policy passes; packaged artifact inspection is not recorded |
-| Authentication and guest sessions | BLOCKED | Unassigned | Depends on issue #64 physical-device ADR and smoke evidence |
+| Authentication and guest sessions | BLOCKED | Unassigned | Issue #64 templates are TEMPLATE / NOT EVIDENCE; physical iPhone and Android ADR and smoke evidence is unexecuted |
 | Maps | BLOCKED | Unassigned | Depends on issue #66 renderer ADR and restricted-key evidence |
-| Universal/App Links | BLOCKED | Unassigned | Depends on issue #67 owned-host association files and signed fingerprints |
+| Universal/App Links | BLOCKED | Unassigned | Issue #67 code policy is implemented, but acceptance remains blocked on issue #64 ADR, deployed `/.well-known` association files, Apple Team ID, Android SHA-256 fingerprints, and signed physical-device cold/warm evidence |
 | Privacy and store metadata | BLOCKED | Unassigned | App-owned manifest source contract passes, but Xcode archive privacy report + App Store Connect reconciliation, vendor manifests, disclosures, review data, and screenshots are not recorded |
-| Device install smoke | BLOCKED | Unassigned | No signed iOS and Android installs or member/guest staging smoke evidence recorded |
+| Device install smoke | BLOCKED | Unassigned | Issue #64 device-spike template is TEMPLATE / NOT EVIDENCE; no signed iOS and Android installs or member/guest staging smoke evidence recorded |
 | Backward compatibility and rollback | BLOCKED | Unassigned | Previous-version compatibility and rollback drill are not recorded |
 | Monitoring and ownership | BLOCKED | Unassigned | Release owners, monitoring links, escalation path, and go/no-go approver are not assigned |
 <!-- mobile-release-gates:end -->
@@ -97,3 +112,12 @@ Before any row above moves to `PASS`, record:
 
 Issue #68 stays open until signed artifacts install and all acceptance evidence is
 recorded. This preflight deliberately performs no signing and reads no release secret.
+
+## Universal/App Links evidence status
+
+The application contains only the #67 client-side deep-link parser, memory-only
+handoff policy, and native capture bridge. This is not association or signing
+evidence. Do not add placeholder Apple App Site Association/Asset Links files or
+invent an Apple Team ID or Android certificate fingerprint. Full #67 acceptance is
+**BLOCKED** until issue #64 supplies its ADR and the production host, signing owners,
+and physical devices provide the evidence named in the gate ledger.
