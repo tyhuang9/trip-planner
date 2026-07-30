@@ -3,6 +3,7 @@ import MockAdapter from 'axios-mock-adapter'
 import axios from 'axios'
 import {
   __resetRefreshSingletonForTests,
+  API_REQUEST_TIMEOUT_MS,
   apiClient,
   AuthCoordinationUnavailableError,
   AuthResolutionPendingError,
@@ -59,6 +60,7 @@ afterEach(() => {
     Reflect.deleteProperty(globalThis.navigator, 'locks')
   }
   clearPendingLogoutIntent()
+  vi.unstubAllGlobals()
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
@@ -70,6 +72,11 @@ describe('apiClient request interceptor', () => {
 
   it('sends cookies with apiClient requests', () => {
     expect(apiClient.defaults.withCredentials).toBe(true)
+  })
+
+  it('uses a bounded timeout that still allows a cold backend start', () => {
+    expect(API_REQUEST_TIMEOUT_MS).toBe(60_000)
+    expect(apiClient.defaults.timeout).toBe(API_REQUEST_TIMEOUT_MS)
   })
 
   it('attaches Authorization header when a token is present', async () => {
@@ -398,6 +405,8 @@ describe('apiClient response interceptor — refresh on 401', () => {
 
 describe('refreshSession cross-tab coordination', () => {
   it('serializes delayed refresh work before another tab can revoke the session', async () => {
+    const healthFetch = vi.fn()
+    vi.stubGlobal('fetch', healthFetch)
     let lockTail = Promise.resolve<unknown>(undefined)
     const request = vi.fn(
       <T,>(
@@ -457,6 +466,7 @@ describe('refreshSession cross-tab coordination', () => {
     await logoutWork
     expect(revoke).toHaveBeenCalledOnce()
     expect(useAuthStore.getState().accessToken).toBeNull()
+    expect(healthFetch).not.toHaveBeenCalled()
   })
 
   it('does not refresh while logout revocation is pending', async () => {
@@ -490,6 +500,7 @@ describe('refreshSession cross-tab coordination', () => {
     expect(refreshMock.history.post[0].headers?.[AUTH_COOKIE_ACTION_HEADER]).toBe(
       AUTH_COOKIE_ACTION_VALUE,
     )
+    expect(refreshMock.history.post[0].timeout).toBe(API_REQUEST_TIMEOUT_MS)
     expect(first.accessToken).toBe('coalesced-tok')
     expect(second.accessToken).toBe('coalesced-tok')
   })

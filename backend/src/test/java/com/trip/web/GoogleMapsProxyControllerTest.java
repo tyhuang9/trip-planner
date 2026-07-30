@@ -52,7 +52,8 @@ import com.trip.service.place.GooglePlaceDetailsClient;
     "app.frontend-origin=http://localhost:3000",
     "app.jwt-secret=00000000000000000000000000000000000000000000000000000000000000aa",
     "app.log-email-pepper=000000000000000000000000000000aa",
-    "app.signup-enabled=false"
+    "app.signup-enabled=false",
+    "management.endpoint.health.validate-group-membership=false"
 }, classes = com.trip.Application.class)
 @AutoConfigureMockMvc
 @ActiveProfiles("google-proxy-test")

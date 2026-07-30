@@ -7,9 +7,11 @@ import { backendApiBaseUrl, buildApiUrl } from './baseUrl'
 import { useAuthStore } from '../auth/authStore'
 import { hasPendingLogoutIntent } from '../auth/logoutIntent'
 import type { AuthResponse } from '../types/auth'
+import { reportAmbiguousBackendFailure } from '../outage/outageMonitor'
 
 export const AUTH_COOKIE_ACTION_HEADER = 'X-Dupert-Auth-Cookie-Action'
 export const AUTH_COOKIE_ACTION_VALUE = '1'
+export const API_REQUEST_TIMEOUT_MS = 60_000
 
 /**
  * Single shared axios instance for every backend call.
@@ -27,6 +29,7 @@ export const AUTH_COOKIE_ACTION_VALUE = '1'
 export const apiClient = axios.create({
   baseURL: backendApiBaseUrl,
   withCredentials: true,
+  timeout: API_REQUEST_TIMEOUT_MS,
 })
 
 /** Endpoints that must NOT carry a bearer token. */
@@ -160,6 +163,7 @@ async function performRefresh(): Promise<AuthResponse> {
       undefined,
       {
         withCredentials: true,
+        timeout: API_REQUEST_TIMEOUT_MS,
         headers: { [AUTH_COOKIE_ACTION_HEADER]: AUTH_COOKIE_ACTION_VALUE },
       },
     )
@@ -171,6 +175,7 @@ async function performRefresh(): Promise<AuthResponse> {
     useAuthStore.getState().setSession({ accessToken, expiresInSeconds, user })
     return response.data
   } catch (err) {
+    reportAmbiguousBackendFailure(err)
     if (useAuthStore.getState().accessToken === accessTokenAtStart) {
       useAuthStore
         .getState()
@@ -278,6 +283,7 @@ apiClient.interceptors.request.use(async (config) => {
 apiClient.interceptors.response.use(
   (response: AxiosResponse) => response,
   async (error: AxiosError) => {
+    reportAmbiguousBackendFailure(error)
     const original = error.config as RetryableConfig | undefined
     const status = error.response?.status
 

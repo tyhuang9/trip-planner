@@ -1,5 +1,5 @@
 import { useId, useMemo, useState, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router'
 import { parseApiError, type ParsedApiError } from '../api/errors'
 import { GooglePlaceAutocomplete } from '../components/GooglePlaceAutocomplete'
 import { TripDateRangePicker } from '../components/TripDateRangePicker'

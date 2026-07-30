@@ -5,14 +5,14 @@ import java.time.OffsetDateTime;
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Profile;
+import org.springframework.context.event.EventListener;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.trip.domain.User;
+import com.trip.config.DatabaseReadyEvent;
 import com.trip.repo.UserRepository;
 import com.trip.web.auth.DisplayNameSanitizer;
 import com.trip.web.dto.UserSummary;
@@ -21,7 +21,7 @@ import com.trip.web.exception.ValidationException;
 
 @Service
 @Profile("local")
-public class LocalDevUserService implements ApplicationRunner {
+public class LocalDevUserService {
 
     public static final String TEST_EMAIL_SUFFIX = "@test.local";
     public static final String DEFAULT_PASSWORD = "password";
@@ -48,12 +48,6 @@ public class LocalDevUserService implements ApplicationRunner {
         this.clock = clock;
     }
 
-    @Override
-    @Transactional
-    public void run(ApplicationArguments args) {
-        seedDefaults();
-    }
-
     @Transactional(readOnly = true)
     public List<UserSummary> listTestUsers() {
         return userRepository.findByEmailEndingWithIgnoreCaseOrderByEmail(TEST_EMAIL_SUFFIX)
@@ -68,6 +62,12 @@ public class LocalDevUserService implements ApplicationRunner {
             upsertSeedUser(seed);
         }
         return listTestUsers();
+    }
+
+    @EventListener(DatabaseReadyEvent.class)
+    @Transactional
+    public void seedWhenDatabaseReady(DatabaseReadyEvent ignored) {
+        seedDefaults();
     }
 
     @Transactional
