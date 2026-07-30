@@ -228,7 +228,7 @@ export function EmailVerificationPage() {
           {message}
         </div>}
         {verificationFinishedWithCurrentSession ? (
-          <div className={styles.form} aria-busy={isSwitchingIdentity ? 'true' : undefined}>
+          <div className={styles.form}>
             {identitySwitchError ? (
               <div className={styles.banner} role="alert">{identitySwitchError}</div>
             ) : null}
@@ -252,7 +252,7 @@ export function EmailVerificationPage() {
           </div>
         ) : null}
         {needsIdentitySwitch ? (
-          <div className={styles.form} aria-busy={isSwitchingIdentity ? 'true' : undefined}>
+          <div className={styles.form}>
             <button
               className={styles.submit}
               type="button"

@@ -173,11 +173,12 @@ describe('<EmailVerificationPage>', () => {
     expect(signOut).not.toBeDisabled()
     expect(signOut).toHaveAttribute('aria-disabled', 'true')
     expect(signOut).toHaveAttribute('aria-busy', 'true')
-    expect(signOut.parentElement).toHaveAttribute('aria-busy', 'true')
     expect(keepCurrentSession).toBeDisabled()
-    expect(screen.getByRole('status')).toHaveTextContent(
+    const progressStatus = screen.getByRole('status')
+    expect(progressStatus).toHaveTextContent(
       'Your current session is being ended. Please wait.',
     )
+    expect(progressStatus.closest('[aria-busy]')).toBeNull()
     expect(screen.getAllByRole('status')).toHaveLength(1)
     await userEvent.click(signOut)
     expect(order).toEqual(['logout'])
@@ -344,11 +345,12 @@ describe('<EmailVerificationPage>', () => {
     expect(signOut).not.toBeDisabled()
     expect(signOut).toHaveAttribute('aria-disabled', 'true')
     expect(signOut).toHaveAttribute('aria-busy', 'true')
-    expect(signOut.parentElement).toHaveAttribute('aria-busy', 'true')
     expect(keepCurrentSession).toBeDisabled()
-    expect(screen.getAllByRole('status').find((status) => (
+    const progressStatus = screen.getAllByRole('status').find((status) => (
       status.textContent?.includes('Your current session is being ended. Please wait.')
-    ))).toBeInTheDocument()
+    ))
+    expect(progressStatus).toBeInTheDocument()
+    expect(progressStatus?.closest('[aria-busy]')).toBeNull()
     await act(async () => resolveLogout())
     const loginHeading = await screen.findByRole('heading', { name: 'Sign in to Dupert' })
     await vi.waitFor(() => expect(loginHeading).toHaveFocus())
