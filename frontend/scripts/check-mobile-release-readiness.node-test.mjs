@@ -23,6 +23,11 @@ function updateVercel(candidate, mutate) {
   mutate(config.rewrites, config)
   candidate.vercelConfig = JSON.stringify(config)
 }
+function addAccountStyles(candidate, css) {
+  const updated = candidate.accountDeletionResource.replace('</style>', `${css}\n    </style>`)
+  assert.notEqual(updated, candidate.accountDeletionResource, 'account-deletion stylesheet fixture was not found')
+  candidate.accountDeletionResource = updated
+}
 
 function completed() {
   const value = JSON.parse(sources().authSessionEvidenceTemplate)
@@ -174,6 +179,28 @@ test('enforces the public account-deletion resource contract', async (t) => {
     mutate(candidate)
     assert.match(messages(candidate), expected)
   })
+})
+
+test('rejects required account-deletion controls hidden by inline or stylesheet CSS', () => {
+  const cases = [
+    ['inline declaration', (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<a class="cta"', '<a class="cta" style="display: none"') }],
+    ['stylesheet rule', (candidate) => { addAccountStyles(candidate, '.cta { display: none; }') }],
+    ['conditional media rule', (candidate) => { addAccountStyles(candidate, '@media (max-width: 36rem) { .cta { visibility: hidden; } }') }],
+    ['conditional complex selector', (candidate) => { addAccountStyles(candidate, '@media (max-width: 36rem) { body > main > article > header a.cta[aria-describedby="sign-in-note"] { opacity: 0; } }') }],
+  ]
+
+  for (const [name, mutate] of cases) {
+    const candidate = sources()
+    mutate(candidate)
+    assert.match(messages(candidate), /visible, focusable \/login CTA/, name)
+  }
+})
+
+test('allows a stylesheet hiding rule that does not match a required control', () => {
+  const candidate = sources()
+  addAccountStyles(candidate, '.unrelated-control { display: none; }')
+
+  assert.deepEqual(inspectMobileReleaseReadiness(candidate), [])
 })
 
 test('rejects native identifier and version drift', () => {
