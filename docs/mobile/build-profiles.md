@@ -157,9 +157,12 @@ This is build and static-artifact evidence only. The APK is not uploaded,
 signed, installed, launched on an emulator/device, submitted to Play, or a
 claim of runtime, production, release-readiness, or store compatibility. The
 repository uses Gradle 8.14.3 and Java 21, and the wrapper pins Gradle's
-published checksum for the 8.14.3 complete distribution. Transitive Gradle
-dependency verification remains outside this unsigned-artifact check and
-should be reviewed as part of normal dependency maintenance.
+published checksum for the 8.14.3 complete distribution. The Gradle dependency
+graph resolved by this unsigned-artifact build is subject to the repository's
+committed strict SHA-256 verification metadata; see
+[Android Gradle dependency verification](android-dependency-verification.md).
+Dependency-coordinate changes must follow that document's reviewed regeneration
+process.
 
 ## Deferred native qualification
 
