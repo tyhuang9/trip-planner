@@ -30,6 +30,42 @@ const ALLOWED_RPATHS = new Map([
   ['@rpath/Capacitor.framework/Capacitor', 'Frameworks/Capacitor.framework/Capacitor'],
   ['@rpath/Cordova.framework/Cordova', 'Frameworks/Cordova.framework/Cordova'],
 ])
+const EXPECTED_RUNPATHS = new Map([
+  ['App', ['/usr/lib/swift', '@executable_path/Frameworks']],
+  ['Frameworks/Capacitor.framework/Capacitor', [
+    '/usr/lib/swift',
+    '@executable_path/Frameworks',
+    '@loader_path/Frameworks',
+  ]],
+  ['Frameworks/Cordova.framework/Cordova', [
+    '@executable_path/Frameworks',
+    '@loader_path/Frameworks',
+  ]],
+])
+const ALLOWED_USR_LIB_DEPENDENCIES = new Set([
+  '/usr/lib/libSystem.B.dylib',
+  '/usr/lib/libc++.1.dylib',
+  '/usr/lib/libobjc.A.dylib',
+  '/usr/lib/libz.1.dylib',
+  '/usr/lib/swift/libswiftCore.dylib',
+  '/usr/lib/swift/libswiftCoreFoundation.dylib',
+  '/usr/lib/swift/libswiftCoreGraphics.dylib',
+  '/usr/lib/swift/libswiftCoreImage.dylib',
+  '/usr/lib/swift/libswiftCoreLocation.dylib',
+  '/usr/lib/swift/libswiftDarwin.dylib',
+  '/usr/lib/swift/libswiftDispatch.dylib',
+  '/usr/lib/swift/libswiftFoundation.dylib',
+  '/usr/lib/swift/libswiftMetal.dylib',
+  '/usr/lib/swift/libswiftOSLog.dylib',
+  '/usr/lib/swift/libswiftObjectiveC.dylib',
+  '/usr/lib/swift/libswiftQuartzCore.dylib',
+  '/usr/lib/swift/libswiftSpatial.dylib',
+  '/usr/lib/swift/libswiftUIKit.dylib',
+  '/usr/lib/swift/libswiftUniformTypeIdentifiers.dylib',
+  '/usr/lib/swift/libswiftXPC.dylib',
+  '/usr/lib/swift/libswiftos.dylib',
+  '/usr/lib/swift/libswiftsimd.dylib',
+])
 const TOOL_TIMEOUT_MS = 15_000
 const TOOL_MAX_BUFFER = 1024 * 1024
 
@@ -176,16 +212,15 @@ function validateBuildVersion(path, runner) {
 }
 
 function isSafeSystemDependency(dependency) {
-  const prefixes = ['/System/Library/Frameworks/', '/usr/lib/']
-  return prefixes.some((prefix) => {
-    if (!dependency.startsWith(prefix)) return false
-    const remainder = dependency.slice(prefix.length)
-    return remainder.length > 0
-      && !remainder.includes('\\')
-      && !remainder.includes('//')
-      && remainder.split('/').every((part) => part !== '.' && part !== '..' && part.length > 0)
-      && !/[\0-\x1f\x7f]/u.test(remainder)
-  })
+  if (ALLOWED_USR_LIB_DEPENDENCIES.has(dependency)) return true
+  const prefix = '/System/Library/Frameworks/'
+  if (!dependency.startsWith(prefix)) return false
+  const remainder = dependency.slice(prefix.length)
+  return remainder.length > 0
+    && !remainder.includes('\\')
+    && !remainder.includes('//')
+    && remainder.split('/').every((part) => part !== '.' && part !== '..' && part.length > 0)
+    && !/[\0-\x1f\x7f]/u.test(remainder)
 }
 
 function validateDependencies(path, appPath, machOFiles, runner) {
@@ -208,6 +243,44 @@ function validateDependencies(path, appPath, machOFiles, runner) {
       || currentStats.dev !== expected.stats.dev || currentStats.ino !== expected.stats.ino) {
       throw new Error(`${path} has an rpath dependency that does not resolve to the expected embedded file: ${dependency}`)
     }
+  }
+}
+
+function validateRunpaths(relativePath, path, runner) {
+  const lines = checkedLines(run('/usr/bin/otool', ['-l', path], runner), 'otool -l')
+  if (lines.shift() !== `${path}:`) throw new Error(`${path} has malformed otool load-command output`)
+
+  const runpaths = []
+  const loadCommands = new Set()
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!lines[index].includes('LC_RPATH')) continue
+    const loadCommand = lines[index - 1]?.match(/^Load command (\d+)$/u)?.[1]
+    const nextLoadCommand = lines.findIndex((line, nextIndex) =>
+      nextIndex > index && /^Load command \d+$/u.test(line))
+    const blockEnd = nextLoadCommand === -1 ? lines.length : nextLoadCommand
+    const commandSize = lines[index + 1]?.match(/^\s+cmdsize (\d+)$/u)?.[1]
+    const pathMatch = lines[index + 2]?.match(/^\s+path (\S+) \(offset 12\)$/u)
+    const expectedCommandSize = pathMatch
+      ? Math.ceil((12 + Buffer.byteLength(pathMatch[1]) + 1) / 8) * 8
+      : null
+    if (!loadCommand
+      || lines[index] !== '          cmd LC_RPATH'
+      || commandSize === undefined
+      || !pathMatch
+      || Number(commandSize) !== expectedCommandSize
+      || blockEnd !== index + 3) {
+      throw new Error(`${path} has malformed LC_RPATH output`)
+    }
+    if (loadCommands.has(loadCommand)) throw new Error(`${path} has duplicate LC_RPATH load commands`)
+    loadCommands.add(loadCommand)
+    runpaths.push(pathMatch[1])
+  }
+
+  if (new Set(runpaths).size !== runpaths.length) throw new Error(`${path} has duplicate LC_RPATH entries`)
+  const actual = [...runpaths].sort()
+  const expected = [...EXPECTED_RUNPATHS.get(relativePath)].sort()
+  if (actual.length !== expected.length || actual.some((runpath, index) => runpath !== expected[index])) {
+    throw new Error(`${path} LC_RPATH entries must be exactly ${expected.join(', ')}; found ${actual.join(', ') || 'none'}`)
   }
 }
 
@@ -234,6 +307,7 @@ export function inspectIosArchiveMachO(appPath, { runner = spawnSync } = {}) {
     validateArchitecture(file.path, runner)
     validateBuildVersion(file.path, runner)
     validateDependencies(file.path, appPath, machOFiles, runner)
+    validateRunpaths(relativePath, file.path, runner)
   }
   return actualInventory
 }

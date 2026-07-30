@@ -47,12 +47,44 @@ function dependencyOutput(path, dependencies = ['/System/Library/Frameworks/Foun
   return `${path}:\n${dependencies.map((dependency) => `\t${dependency} (compatibility version 1.0.0, current version 2.0.0)`).join('\n')}\n`
 }
 
+function expectedRunpaths(path) {
+  if (path.endsWith('/App')) return ['/usr/lib/swift', '@executable_path/Frameworks']
+  if (path.includes('/Capacitor.framework/')) {
+    return ['/usr/lib/swift', '@executable_path/Frameworks', '@loader_path/Frameworks']
+  }
+  return ['@executable_path/Frameworks', '@loader_path/Frameworks']
+}
+
+function loadCommandsOutput(path, runpaths = expectedRunpaths(path)) {
+  const blocks = runpaths.map((runpath, index) => {
+    const commandSize = Math.ceil((12 + Buffer.byteLength(runpath) + 1) / 8) * 8
+    return `Load command ${index + 1}
+          cmd LC_RPATH
+      cmdsize ${commandSize}
+         path ${runpath} (offset 12)`
+  })
+  const runpathBlocks = blocks.length > 0 ? `\n${blocks.join('\n')}` : ''
+  return `${path}:
+Load command 0
+      cmd LC_SEGMENT_64
+  cmdsize 72
+  segname __TEXT${runpathBlocks}\n`
+}
+
 function successRunner(overrides = {}) {
   return (command, args, options) => {
     const path = args.at(-1)
-    const key = command === '/usr/bin/lipo' ? 'lipo' : command === '/usr/bin/xcrun' ? 'vtool' : 'otool'
+    const key = command === '/usr/bin/lipo'
+      ? 'lipo'
+      : command === '/usr/bin/xcrun'
+        ? 'vtool'
+        : args[0] === '-l' ? 'otoolLoad' : 'otool'
     const stdout = overrides[key]?.(path, command, args, options)
-      ?? (key === 'lipo' ? 'arm64\n' : key === 'vtool' ? buildOutput(path) : dependencyOutput(path))
+      ?? (key === 'lipo'
+        ? 'arm64\n'
+        : key === 'vtool'
+          ? buildOutput(path)
+          : key === 'otoolLoad' ? loadCommandsOutput(path) : dependencyOutput(path))
     return { error: undefined, signal: null, status: 0, stderr: '', stdout }
   }
 }
@@ -87,7 +119,7 @@ test('accepts exactly the expected executable arm64 iOS 15.0 Mach-O inventory', 
   }
 
   assert.deepEqual(inspectIosArchiveMachO(appPath, { runner }), [...MACH_O_FILES].sort())
-  assert.equal(calls.length, 9)
+  assert.equal(calls.length, 12)
   assert.deepEqual([...new Set(calls.map(({ command }) => command))].sort(), [
     '/usr/bin/lipo',
     '/usr/bin/otool',
@@ -97,6 +129,7 @@ test('accepts exactly the expected executable arm64 iOS 15.0 Mach-O inventory', 
   assert.equal(calls[0].options.timeout, 15_000)
   assert.equal(calls[0].options.maxBuffer, 1024 * 1024)
   assert.deepEqual(calls[0].args.slice(0, -1), ['-archs'])
+  assert.equal(calls.filter(({ args }) => args[0] === '-l').length, 3)
 })
 
 test('discovers every thin and fat Mach-O magic and rejects it as extra inventory', async (t) => {
@@ -177,6 +210,8 @@ test('rejects private, unsafe absolute, traversal, unexpected rpath, loader, and
     '/System/Library/PrivateFrameworks/Secret.framework/Secret',
     '/opt/vendor/libVendor.dylib',
     '/usr/lib/../private/libSecret.dylib',
+    '/usr/lib/libMobileGestalt.dylib',
+    '/usr/lib/swift/libswiftCrypto.dylib',
     '/System/Library/Frameworks//UIKit.framework/UIKit',
     '@rpath/Other.framework/Other',
     '@rpath/../Capacitor.framework/Capacitor',
@@ -191,6 +226,91 @@ test('rejects private, unsafe absolute, traversal, unexpected rpath, loader, and
       /unsafe or unexpected dependency/u,
     )
   }
+})
+
+test('accepts exact LC_RPATH inventories independent of order', async (t) => {
+  const appPath = await withApp(t)
+  assert.doesNotThrow(() => inspectIosArchiveMachO(appPath, { runner: successRunner({
+    otoolLoad: (path) => loadCommandsOutput(path, expectedRunpaths(path).reverse()),
+  }) }))
+})
+
+test('rejects missing, unexpected, duplicate, and unsafe LC_RPATH entries', async (t) => {
+  const appPath = await withApp(t)
+  const unexpectedRunpaths = [
+    '/System/Library/PrivateFrameworks',
+    '/tmp/vendor',
+    '/usr/lib/swift/../private',
+    '/usr/lib//swift',
+    '@loader_path/../Frameworks',
+    '@loader_path/Other',
+    '@executable_path/../Frameworks',
+    '@executable_path/PlugIns',
+    '@rpath/Frameworks',
+  ]
+  const inventories = [
+    [],
+    ['/usr/lib/swift'],
+    ['/usr/lib/swift', '@executable_path/Frameworks', '/tmp/extra'],
+    ['/usr/lib/swift', '@executable_path/Frameworks', '@executable_path/Frameworks'],
+    ...unexpectedRunpaths.map((runpath) => [runpath, '@executable_path/Frameworks']),
+  ]
+  for (const runpaths of inventories) {
+    assert.throws(
+      () => inspectIosArchiveMachO(appPath, { runner: successRunner({
+        otoolLoad: (path) => loadCommandsOutput(path, runpaths),
+      }) }),
+      /LC_RPATH/u,
+    )
+  }
+})
+
+test('rejects malformed LC_RPATH output and duplicate load commands', async (t) => {
+  const appPath = await withApp(t)
+  const malformedOutputs = [
+    (path) => loadCommandsOutput(path).replace('          cmd LC_RPATH', '          cmd LC_RPATH extra'),
+    (path) => loadCommandsOutput(path).replace('      cmdsize 40', '      cmdsize nope'),
+    (path) => loadCommandsOutput(path).replace('      cmdsize 40', '      cmdsize 48'),
+    (path) => loadCommandsOutput(path).replace(' (offset 12)', ''),
+    (path) => loadCommandsOutput(path).replace('         path /usr/lib/swift (offset 12)\n', ''),
+    (path) => loadCommandsOutput(path).replace(
+      '         path /usr/lib/swift (offset 12)',
+      '         path /usr/lib/swift (offset 12)\n         unexpected field',
+    ),
+    (path) => loadCommandsOutput(path).replace('Load command 2', 'Load command 1'),
+    (path) => `${path}:\n${path}:\n`,
+  ]
+  for (const otoolLoad of malformedOutputs) {
+    assert.throws(
+      () => inspectIosArchiveMachO(appPath, { runner: successRunner({ otoolLoad }) }),
+      /LC_RPATH|malformed otool load-command/u,
+    )
+  }
+})
+
+test('rejects otool -l failure, signal, timeout, stderr, and oversized output', async (t) => {
+  const appPath = await withApp(t)
+  const delegate = successRunner()
+  const timeout = Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })
+  const results = [
+    { status: 2, signal: null, stderr: '', stdout: '' },
+    { status: null, signal: 'SIGKILL', stderr: '', stdout: '' },
+    { error: timeout, status: null, signal: 'SIGKILL', stderr: '', stdout: '' },
+    { status: 0, signal: null, stderr: 'warning', stdout: 'output\n' },
+    { status: 0, signal: null, stderr: '', stdout: `${'x'.repeat(1024 * 1024)}x` },
+  ]
+  for (const result of results) {
+    const runner = (command, args, options) => args[0] === '-l'
+      ? result
+      : delegate(command, args, options)
+    assert.throws(() => inspectIosArchiveMachO(appPath, { runner }), /otool/u)
+  }
+  assert.throws(() => inspectIosArchiveMachO(appPath, {
+    runner: (command, args, options) => {
+      if (args[0] === '-l') throw new Error('boom')
+      return delegate(command, args, options)
+    },
+  }), /otool could not start/u)
 })
 
 test('rejects tool failure, signal, timeout, thrown runners, stderr, and oversized output', async (t) => {
