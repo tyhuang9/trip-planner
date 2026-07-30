@@ -172,7 +172,13 @@ reserve_device() {
   CURRENT_PROCESS_START="$(process_start "$$")"
   [[ -n "$CURRENT_PROCESS_START" ]] || fail "Could not verify the current process identity for simulator ownership."
   lock_reservations
+  if stored_state="$(read_state)"; then
+    IFS=$'\t' read -r stored_root stored_udid stored_booted <<< "$stored_state"
+  fi
   refuse_different_worktree_reservation "$udid"
+  if [[ "$stored_root" == "$ROOT_DIR" && "$stored_udid" != "$udid" && ! -e "$reservation" && ! -L "$reservation" ]]; then
+    fail "This worktree already owns simulator $stored_udid; run npm run stopios before reserving $udid."
+  fi
 
   if create_pending_reservation "$reservation"; then
     unlock_reservations
@@ -185,15 +191,15 @@ reserve_device() {
     if pending_process_is_alive "$pid" "$owner_process_start"; then
       fail "Simulator $udid already has a start in progress."
     fi
+    if [[ "$stored_root" == "$ROOT_DIR" && "$stored_udid" != "$udid" ]]; then
+      fail "This worktree already owns simulator $stored_udid; run npm run stopios before reserving $udid."
+    fi
     rm -f "$reservation"
     create_pending_reservation "$reservation" || fail "Simulator $udid was reclaimed by another start."
     unlock_reservations
     return
   fi
 
-  if stored_state="$(read_state)"; then
-    IFS=$'\t' read -r stored_root stored_udid stored_booted <<< "$stored_state"
-  fi
   [[ "$owner" == "$ROOT_DIR" ]] || fail "Simulator $udid is reserved by another worktree."
   [[ "$stored_root" == "$ROOT_DIR" && "$stored_udid" == "$udid" ]] \
     || fail "This worktree holds the reservation for $udid, but its local state is missing, invalid, or records a different simulator. After confirming Dupert is not running on that simulator, remove $reservation and run npm run startios again."

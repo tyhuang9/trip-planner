@@ -381,6 +381,32 @@ test('does not let one worktree reserve a different simulator while it owns anot
   )))
 })
 
+test('treats valid local state as ownership when refusing a different simulator', async (t) => {
+  const subject = await fixture({
+    devices: [iphone('Booted'), secondIphone('Booted')],
+    state: { simulatorUdid, bootedByShortcut: false },
+  })
+  t.after(subject.cleanup)
+  await rm(subject.reservation)
+  const originalState = JSON.parse(await readFile(join(subject.root, '.dupert/ios-lifecycle.json'), 'utf8'))
+
+  const result = subject.run('start', { DUPERT_IOS_SIMULATOR: secondSimulatorUdid })
+
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, new RegExp(`already owns simulator ${simulatorUdid}`))
+  assert.match(result.stderr, /run npm run stopios/)
+  assert.doesNotMatch(await subject.commandsRun(), /npm |npx |simctl boot /)
+  assert.deepEqual(
+    JSON.parse(await readFile(join(subject.root, '.dupert/ios-lifecycle.json'), 'utf8')),
+    originalState,
+  )
+  await assert.rejects(readFile(join(
+    subject.root,
+    '.git/dupert-ios-shortcuts',
+    `${secondSimulatorUdid}--io.github.tyhuang9.dupert.lock`,
+  )))
+})
+
 test('rejects a concurrent start reserved by another worktree', async (t) => {
   const subject = await fixture({ devices: [iphone('Booted')], reservationOwner: '/different/worktree' })
   t.after(subject.cleanup)
