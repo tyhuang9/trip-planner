@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { basename, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -17,7 +17,8 @@ function collectFiles(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name)
     if (entry.isDirectory()) return collectFiles(path)
-    return entry.isFile() ? [path] : []
+    if (entry.isFile()) return [path]
+    throw new Error('Native bundle contains a symbolic link or unsupported filesystem entry.')
   })
 }
 
@@ -38,13 +39,7 @@ function inspectTextFile(path, configuredBrowserValues) {
   return findings
 }
 
-export function inspectNativeBundle(directory, environment = process.env) {
-  const outputDirectory = resolve(directory)
-  const manifestPath = join(outputDirectory, '.vite', 'manifest.json')
-  if (!existsSync(manifestPath)) {
-    throw new Error(`Could not find a Vite manifest at ${manifestPath}. Build a native profile first.`)
-  }
-
+function inspectBundleContents(outputDirectory, environment) {
   const configuredBrowserValues = [
     ['VITE_GOOGLE_MAPS_API_KEY', environment.VITE_GOOGLE_MAPS_API_KEY?.trim()],
     ['VITE_APP_ACCESS_PASSWORD', environment.VITE_APP_ACCESS_PASSWORD?.trim()],
@@ -62,14 +57,37 @@ export function inspectNativeBundle(directory, environment = process.env) {
   return violations
 }
 
-export function assertNativeBundlePolicy(directory, environment = process.env) {
-  const violations = inspectNativeBundle(directory, environment)
+function assertNoViolations(violations) {
   if (violations.length === 0) return
 
   const affectedFiles = violations
     .map(({ file, findings }) => `${file}: ${findings.join(', ')}`)
     .join('\n')
   throw new Error(`Native bundle includes browser-only code or public configuration:\n${affectedFiles}`)
+}
+
+export function inspectNativeBundle(directory, environment = process.env) {
+  const outputDirectory = resolve(directory)
+  const manifestPath = join(outputDirectory, '.vite', 'manifest.json')
+  if (!existsSync(manifestPath) || !lstatSync(manifestPath).isFile()) {
+    throw new Error(`Could not find a Vite manifest at ${manifestPath}. Build a native profile first.`)
+  }
+
+  return inspectBundleContents(outputDirectory, environment)
+}
+
+export function assertNativeBundlePolicy(directory, environment = process.env) {
+  assertNoViolations(inspectNativeBundle(directory, environment))
+}
+
+export function assertPackagedNativeBundlePolicy(directory, environment = process.env) {
+  const outputDirectory = resolve(directory)
+  const entrypointPath = join(outputDirectory, 'index.html')
+  if (!existsSync(entrypointPath) || !lstatSync(entrypointPath).isFile()) {
+    throw new Error(`Could not find the packaged native entrypoint at ${entrypointPath}.`)
+  }
+
+  assertNoViolations(inspectBundleContents(outputDirectory, environment))
 }
 
 const invokedPath = process.argv[1] && resolve(process.argv[1])

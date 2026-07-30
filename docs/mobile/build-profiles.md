@@ -122,6 +122,48 @@ The platform facade owns foreground/background lifecycle subscription. Native
 builds subscribe through the Capacitor App plugin; callers must use this facade
 rather than adding direct Capacitor globals.
 
+## Android data exposure boundary
+
+The committed main Android manifest sets `android:allowBackup="false"`, variant
+manifests cannot override it, and no source set contains a `FileProvider`.
+`npm run check:android-data-exposure` fails if that backup setting is missing,
+unsafe, duplicated, or overridden; if a `FileProvider` or
+`file_paths.xml` returns; or if a broad `external-path` or `cache-path` is
+introduced. This is a source policy, not device evidence: Android 12+ device-
+to-device transfer behavior can vary by OEM, so `allowBackup="false"` is not a
+universal D2D-prevention claim.
+
+Any future file sharing must use a narrowly scoped provider in a separate
+reviewed change that updates this policy and verifies the resulting native
+behavior. Do not restore the old broad root paths.
+
+## Unsigned Android CI artifact evidence
+
+The path-scoped **Android unsigned artifact** workflow builds the
+`native-production` bundle with a public CI-only test backend and blank browser
+Maps/app-wall values, then syncs Android only and runs
+`:app:assembleRelease`. It inspects the ephemeral exact
+`app-release-unsigned.apk` with Android Build Tools and the pinned hosted-runner
+NDK: `aapt` checks the application ID, version, and SDK declarations;
+archive inspection must find neither v1 signature entries nor an APK Signing
+Block before `apksigner` corroborates the explicit no-signature condition; the
+packaged `assets/public` bundle is checked against the native bundle policy;
+and `zipalign -c -P 16 -v 4` is always run. When an APK packages
+`lib/**/*.so`, every library is inspected with NDK `llvm-objdump -p` and every
+`LOAD` alignment must be at least `2**14`; when no native libraries are
+packaged, that ELF-specific check is accurately marked not applicable.
+
+This is build and static-artifact evidence only. The APK is not uploaded,
+signed, installed, launched on an emulator/device, submitted to Play, or a
+claim of runtime, production, release-readiness, or store compatibility. The
+repository uses Gradle 8.14.3 and Java 21, and the wrapper pins Gradle's
+published checksum for the 8.14.3 complete distribution. The Gradle dependency
+graph resolved by this unsigned-artifact build is subject to the repository's
+committed strict SHA-256 verification metadata; see
+[Android Gradle dependency verification](android-dependency-verification.md).
+Dependency-coordinate changes must follow that document's reviewed regeneration
+process.
+
 ## Deferred native qualification
 
 This issue deliberately does not add Apple Team/distribution signing, Android

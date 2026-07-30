@@ -1,0 +1,70 @@
+{
+  "schema_version": 2,
+  "platforms": {
+    "ios": {
+      "device_type": "physical_iphone",
+      "platform_case": "ios_webview_domain_configuration"
+    },
+    "android": {
+      "device_type": "physical_android",
+      "platform_case": "android_third_party_cookie_behavior"
+    }
+  },
+  "contexts": {
+    "member": {
+      "cases": [
+        "member_login",
+        "access_token_expiry_refresh_rotation",
+        "background_resume",
+        "force_kill_relaunch",
+        "logout",
+        "account_deletion",
+        "email_verification_return",
+        "password_reset_return",
+        "trip_rest_read",
+        "trip_write",
+        "sse_streaming_genuine_without_global_native_http_patch",
+        "offline_loss_reconnect_each_session_boundary"
+      ],
+      "credential_lifecycle": [
+        "issued",
+        "stored",
+        "attached",
+        "rotated",
+        "revoked"
+      ]
+    },
+    "guest": {
+      "cases": [
+        "guest_acceptance",
+        "background_resume",
+        "force_kill_relaunch",
+        "guest_relaunch",
+        "trip_rest_read",
+        "trip_write",
+        "sse_streaming_genuine_without_global_native_http_patch",
+        "guest_claim",
+        "guest_expiry",
+        "guest_revocation",
+        "offline_loss_reconnect_each_session_boundary"
+      ],
+      "credential_lifecycle": [
+        "issued",
+        "stored",
+        "attached",
+        "claimed",
+        "revoked"
+      ]
+    }
+  },
+  "adr": {
+    "allowed_outcomes": [
+      "cookie_only_proven",
+      "native_credential_transport"
+    ],
+    "forbidden_fallbacks": [
+      "endpoint_only_fallback",
+      "web_storage_refresh_or_guest_token_workaround"
+    ]
+  }
+}
