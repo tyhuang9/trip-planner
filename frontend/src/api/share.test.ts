@@ -1,3 +1,4 @@
+import axios from 'axios'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import MockAdapter from 'axios-mock-adapter'
 import { apiClient } from './client'
@@ -98,24 +99,31 @@ describe('share api', () => {
   })
 
   it('accepts an account invite', async () => {
-    apiMock.onPost('/share/raw-token/accept').reply(200, {
-      publicId: 'abc234def567',
-      role: 'EDITOR',
-    })
+    apiMock.onPost('/share/accept').reply((config) => [
+      200,
+      {
+        publicId: 'abc234def567',
+        role: 'EDITOR',
+        body: JSON.parse(config.data as string),
+      },
+    ])
 
-    await expect(acceptShareLink('raw-token')).resolves.toEqual({
+    await expect(acceptShareLink('raw-token')).resolves.toMatchObject({
       publicId: 'abc234def567',
       role: 'EDITOR',
+      body: { token: 'raw-token' },
     })
+    expect(apiMock.history.post[0]?.url).toBe('/share/accept')
+    expect(apiMock.history.post[0]?.url).not.toContain('raw-token')
   })
 
   it('accepts a guest invite', async () => {
-    apiMock.onPost('/share/raw-token/guest').reply((config) => [
+    apiMock.onPost('/share/guest').reply((config) => [
       200,
       {
         publicId: 'abc234def567',
         role: 'VIEWER',
-        displayName: JSON.parse(config.data as string).displayName,
+        ...JSON.parse(config.data as string),
       },
     ])
 
@@ -125,6 +133,21 @@ describe('share api', () => {
       publicId: 'abc234def567',
       role: 'VIEWER',
       displayName: 'Guest Alice',
+      token: 'raw-token',
     })
+    expect(apiMock.history.post[0]?.url).toBe('/share/guest')
+    expect(apiMock.history.post[0]?.url).not.toContain('raw-token')
+  })
+
+  it('redacts share credentials from rejected Axios request configs', async () => {
+    const token = 'sensitive-share-token-123456'
+    apiMock.onPost('/share/accept').reply(404, { error: 'not_found' })
+
+    const error = await acceptShareLink(token).catch((caught) => caught)
+
+    expect(axios.isAxiosError(error)).toBe(true)
+    expect(error.config?.url).toBe('/share/accept')
+    expect(error.response?.status).toBe(404)
+    expect(JSON.stringify(error.config)).not.toContain(token)
   })
 })

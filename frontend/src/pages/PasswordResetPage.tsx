@@ -1,15 +1,22 @@
 import { useEffect, useId, useState, type FormEvent } from 'react'
-import { Link, useSearchParams } from 'react-router'
+import { Link, useParams, useSearchParams } from 'react-router'
 import { confirmPasswordReset } from '../api/auth'
 import { parseApiError } from '../api/errors'
 import { usePageTitle } from '../utils/usePageTitle'
+import { consumeDeepLinkHandoff, getDeepLinkHandoff } from '../deep-links/vault'
 import styles from './AuthForm.module.css'
 
 export default function PasswordResetPage() {
   usePageTitle('Reset password - Dupert')
 
   const [searchParams, setSearchParams] = useSearchParams()
-  const [token] = useState(() => searchParams.get('token') ?? searchParams.get('code') ?? '')
+  const { handoffId } = useParams()
+  const [token] = useState(() => {
+    const handoff = getDeepLinkHandoff(handoffId)
+    return handoff?.kind === 'reset-password'
+      ? handoff.token
+      : searchParams.get('token') ?? searchParams.get('code') ?? ''
+  })
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -17,7 +24,9 @@ export default function PasswordResetPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const passwordId = useId()
   const confirmPasswordId = useId()
+  const passwordMismatchId = useId()
   const hasResetToken = token.trim().length > 0
+  const hasPasswordMismatch = errorMessage === 'New passwords do not match.'
 
   useEffect(() => {
     if (!searchParams.has('token') && !searchParams.has('code')) return
@@ -43,6 +52,7 @@ export default function PasswordResetPage() {
     setIsSubmitting(true)
     try {
       await confirmPasswordReset({ token, password })
+      consumeDeepLinkHandoff(handoffId)
       setSuccessMessage('Password reset complete. You can sign in now.')
       setPassword('')
       setConfirmPassword('')
@@ -73,7 +83,7 @@ export default function PasswordResetPage() {
           </div>
         )}
         {errorMessage && (
-          <div className={styles.banner} role="alert">
+          <div id={hasPasswordMismatch ? passwordMismatchId : undefined} className={styles.banner} role="alert">
             <span className={styles.bannerIcon} aria-hidden="true">
               !
             </span>
@@ -81,7 +91,7 @@ export default function PasswordResetPage() {
           </div>
         )}
 
-        <form className={styles.form} onSubmit={onSubmit} noValidate>
+        {hasResetToken ? <form className={styles.form} onSubmit={onSubmit} noValidate>
           <label className={styles.field} htmlFor={passwordId}>
             <span className={styles.label}>New password</span>
             <input
@@ -93,6 +103,8 @@ export default function PasswordResetPage() {
               onChange={(event) => setPassword(event.target.value)}
               required
               disabled={isSubmitting}
+              aria-invalid={hasPasswordMismatch}
+              aria-describedby={hasPasswordMismatch ? passwordMismatchId : undefined}
             />
           </label>
           <label className={styles.field} htmlFor={confirmPasswordId}>
@@ -106,12 +118,18 @@ export default function PasswordResetPage() {
               onChange={(event) => setConfirmPassword(event.target.value)}
               required
               disabled={isSubmitting}
+              aria-invalid={hasPasswordMismatch}
+              aria-describedby={hasPasswordMismatch ? passwordMismatchId : undefined}
             />
           </label>
           <button className={styles.submit} type="submit" disabled={isSubmitting || !hasResetToken}>
             {isSubmitting ? 'Resetting...' : 'Reset password'}
           </button>
-        </form>
+        </form> : (
+          <p className={styles.altLink}>
+            <Link to="/login?mode=password-reset">Request a new password reset link</Link>
+          </p>
+        )}
 
         <p className={styles.altLink}>
           <Link to="/login">Back to sign in</Link>
