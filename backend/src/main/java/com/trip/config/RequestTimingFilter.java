@@ -2,6 +2,8 @@ package com.trip.config;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,23 +27,26 @@ public class RequestTimingFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(RequestTimingFilter.class);
     private static final long SLOW_REQUEST_MS = 500L;
+    private static final Pattern LEGACY_SHARE_PATH = Pattern.compile(
+        "^/api/share/[^/]+/(accept|guest)$");
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain chain)
             throws ServletException, IOException {
-        long startedAt = System.nanoTime();
+        long startedAt = nanoTime();
         try {
             chain.doFilter(request, response);
         } finally {
-            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(nanoTime() - startedAt);
+            String path = observablePath(request.getRequestURI());
             response.setHeader("Server-Timing", "app;dur=" + elapsedMs);
             if (elapsedMs >= SLOW_REQUEST_MS) {
                 log.info(
                     "Slow request method={} path={} status={} durationMs={} correlationId={}",
                     request.getMethod(),
-                    request.getRequestURI(),
+                    path,
                     response.getStatus(),
                     elapsedMs,
                     MDC.get(CorrelationIdFilter.MDC_KEY));
@@ -49,11 +54,20 @@ public class RequestTimingFilter extends OncePerRequestFilter {
                 log.debug(
                     "Request completed method={} path={} status={} durationMs={} correlationId={}",
                     request.getMethod(),
-                    request.getRequestURI(),
+                    path,
                     response.getStatus(),
                     elapsedMs,
                     MDC.get(CorrelationIdFilter.MDC_KEY));
             }
         }
+    }
+
+    protected long nanoTime() {
+        return System.nanoTime();
+    }
+
+    static String observablePath(String path) {
+        Matcher match = LEGACY_SHARE_PATH.matcher(path);
+        return match.matches() ? "/api/share/{token}/" + match.group(1) : path;
     }
 }

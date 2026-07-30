@@ -150,60 +150,63 @@ export function MobileWorkspaceChrome({
           <section
             ref={menuPopupRef}
             id="mobile-trip-menu"
-            className={styles.menuPopup}
+            className={styles.menuDialog}
             role="dialog"
             aria-modal="true"
             aria-labelledby="mobile-trip-menu-title"
             onMouseDown={(event) => event.stopPropagation()}
           >
-            <header className={styles.menuHeader}>
-              <div>
-                <p>Trip options</p>
-                <h2 id="mobile-trip-menu-title">{tripName}</h2>
-              </div>
-              <button
-                type="button"
-                ref={closeButtonRef}
-                className={styles.closeButton}
-                aria-label="Close trip menu"
-                onClick={closeMenu}
-              >
-                <X size={20} aria-hidden="true" />
-              </button>
-            </header>
-            <nav className={styles.menuActions} aria-label="Trip actions">
-              <Link to="/trips" onClick={closeMenu}>
-                <ChevronLeft size={18} aria-hidden="true" />
-                My trips
-              </Link>
-              {isAuthenticated ? (
-                <button
-                  type="button"
-                  onClick={() => handleMenuAction(onOpenMembers)}
-                >
-                  <Users size={18} aria-hidden="true" />
-                  Members
-                </button>
-              ) : null}
-              {canEditTrip ? (
-                <button
-                  type="button"
-                  onClick={() => handleMenuAction(onOpenShare)}
-                >
-                  <Share2 size={18} aria-hidden="true" />
-                  Share trip
-                </button>
-              ) : null}
-              {canEditTrip ? (
-                <button
-                  type="button"
-                  onClick={() => handleMenuAction(onOpenSettings)}
-                >
-                  <Settings size={18} aria-hidden="true" />
-                  Trip settings
-                </button>
-              ) : null}
-            </nav>
+            <div className={styles.menuPopup}>
+              <header className={styles.menuHeader}>
+                <div>
+                  <p>Trip options</p>
+                  <h2 id="mobile-trip-menu-title">{tripName}</h2>
+                </div>
+                <span className={styles.menuHeaderCloseSpacer} aria-hidden="true" />
+              </header>
+              <nav className={styles.menuActions} aria-label="Trip actions">
+                <Link to="/trips" onClick={closeMenu}>
+                  <ChevronLeft size={18} aria-hidden="true" />
+                  My trips
+                </Link>
+                {isAuthenticated ? (
+                  <button
+                    type="button"
+                    onClick={() => handleMenuAction(onOpenMembers)}
+                  >
+                    <Users size={18} aria-hidden="true" />
+                    Members
+                  </button>
+                ) : null}
+                {canEditTrip ? (
+                  <button
+                    type="button"
+                    onClick={() => handleMenuAction(onOpenShare)}
+                  >
+                    <Share2 size={18} aria-hidden="true" />
+                    Share trip
+                  </button>
+                ) : null}
+                {canEditTrip ? (
+                  <button
+                    type="button"
+                    onClick={() => handleMenuAction(onOpenSettings)}
+                  >
+                    <Settings size={18} aria-hidden="true" />
+                    Trip settings
+                  </button>
+                ) : null}
+              </nav>
+            </div>
+            <button
+              type="button"
+              ref={closeButtonRef}
+              className={styles.closeButton}
+              aria-label="Close trip menu"
+              onClick={closeMenu}
+            >
+              <X size={20} aria-hidden="true" />
+            </button>
           </section>
         </div>
       ) : null}
