@@ -1,9 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { useState, type ReactNode } from 'react'
+import { StrictMode, useState, type ReactNode } from 'react'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { AxiosError, AxiosHeaders } from 'axios'
 import { EmailVerificationPage } from './EmailVerificationPage'
 import { verifyEmail } from '../api/auth'
@@ -27,6 +27,16 @@ vi.mock('../api/trips', async () => {
 })
 
 const verifyEmailMock = vi.mocked(verifyEmail)
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, reject, resolve }
+}
 
 function makeAuth(overrides: Partial<AuthContextValue> = {}): AuthContextValue {
   return {
@@ -78,6 +88,14 @@ const AUTH_RESPONSE: AuthResponse = {
     displayName: 'Verified User',
     emailVerified: true,
   },
+}
+
+function authResponse(email: string, accessToken: string): AuthResponse {
+  return {
+    ...AUTH_RESPONSE,
+    accessToken,
+    user: { ...AUTH_RESPONSE.user, email },
+  }
 }
 
 function makeAxiosError(status: number, data: unknown): AxiosError {
@@ -211,6 +229,227 @@ describe('<EmailVerificationPage>', () => {
     })
     expect(await screen.findByTestId('trips-page')).toBeInTheDocument()
     expect(useAuthStore.getState().user?.email).toBe('verified@example.com')
+  })
+
+  it('does not re-submit a consumed token when a session appears during verification', async () => {
+    const verification = deferred<AuthResponse>()
+    const logout = vi.fn()
+    verifyEmailMock.mockReturnValue(verification.promise)
+
+    function AuthRaceHarness({ children }: { children: ReactNode }) {
+      const [authenticated, setAuthenticated] = useState(false)
+      logout.mockImplementation(async () => {
+        useAuthStore.getState().clearSession()
+        setAuthenticated(false)
+      })
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              useAuthStore.getState().setSession({
+                accessToken: 'existing-token',
+                expiresInSeconds: 900,
+                user: { ...AUTH_RESPONSE.user, email: 'existing@example.com' },
+              })
+              setAuthenticated(true)
+            }}
+          >
+            Establish another session
+          </button>
+          <AuthContext.Provider value={makeAuth({
+            authStatus: authenticated ? 'authenticated' : 'unauthenticated',
+            isAuthenticated: authenticated,
+            user: authenticated ? { ...AUTH_RESPONSE.user, email: 'existing@example.com' } : null,
+            logout,
+          })}>
+            {children}
+          </AuthContext.Provider>
+        </>
+      )
+    }
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthRaceHarness>
+          <MemoryRouter initialEntries={['/verify-email?token=single-use-token']}>
+            <Routes>
+              <Route path="/verify-email" element={<EmailVerificationPage />} />
+              <Route path="/login" element={<div>Sign in page</div>} />
+            </Routes>
+          </MemoryRouter>
+        </AuthRaceHarness>
+      </QueryClientProvider>,
+    )
+
+    await vi.waitFor(() => expect(verifyEmailMock).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByRole('button', { name: /establish another session/i }))
+    await act(async () => verification.resolve(AUTH_RESPONSE))
+
+    expect(useAuthStore.getState().user?.email).toBe('existing@example.com')
+    expect(screen.getByRole('heading', { name: /email verified/i })).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent(/current signed-in session was not changed/i)
+    await userEvent.click(screen.getByRole('button', { name: /sign out and sign in with the verified account/i }))
+    expect(await screen.findByText('Sign in page')).toBeInTheDocument()
+    expect(logout).toHaveBeenCalledTimes(1)
+    expect(verifyEmailMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets only token B update auth and navigate after the URL switches from token A', async () => {
+    const verificationA = deferred<AuthResponse>()
+    const verificationB = deferred<AuthResponse>()
+    verifyEmailMock.mockImplementation(({ token }) => (
+      token === 'token-a' ? verificationA.promise : verificationB.promise
+    ))
+
+    function NavigationHarness() {
+      const navigate = useNavigate()
+      const location = useLocation()
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => navigate('/verify-email?token=token-b&return=%2Fdestination-b')}
+          >
+            Switch to token B
+          </button>
+          <div data-testid="location">{location.pathname}{location.search}</div>
+        </>
+      )
+    }
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthContext.Provider value={makeAuth()}>
+          <MemoryRouter initialEntries={['/verify-email?token=token-a&return=%2Fdestination-a']}>
+            <NavigationHarness />
+            <Routes>
+              <Route path="/verify-email" element={<EmailVerificationPage />} />
+              <Route path="/destination-a" element={<div>Destination A</div>} />
+              <Route path="/destination-b" element={<div>Destination B</div>} />
+            </Routes>
+          </MemoryRouter>
+        </AuthContext.Provider>
+      </QueryClientProvider>,
+    )
+
+    await vi.waitFor(() => expect(verifyEmailMock).toHaveBeenCalledWith({ token: 'token-a' }))
+    await userEvent.click(screen.getByRole('button', { name: /switch to token b/i }))
+    await vi.waitFor(() => expect(verifyEmailMock).toHaveBeenCalledWith({ token: 'token-b' }))
+
+    await act(async () => verificationA.resolve(authResponse('token-a@example.com', 'token-a-access')))
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/verify-email\?token=token-b/)
+    expect(screen.getByRole('status')).toHaveTextContent(/verifying your email/i)
+    expect(useAuthStore.getState().user).toBeNull()
+
+    await act(async () => verificationB.resolve(authResponse('token-b@example.com', 'token-b-access')))
+    expect(await screen.findByText('Destination B')).toBeInTheDocument()
+    expect(screen.queryByText('Destination A')).not.toBeInTheDocument()
+    expect(useAuthStore.getState().user?.email).toBe('token-b@example.com')
+  })
+
+  it('ignores token A rejection after the URL switches to token B', async () => {
+    const verificationA = deferred<AuthResponse>()
+    const verificationB = deferred<AuthResponse>()
+    verifyEmailMock.mockImplementation(({ token }) => (
+      token === 'token-a' ? verificationA.promise : verificationB.promise
+    ))
+
+    function NavigationHarness() {
+      const navigate = useNavigate()
+      return (
+        <button type="button" onClick={() => navigate('/verify-email?token=token-b')}>
+          Switch to token B
+        </button>
+      )
+    }
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthContext.Provider value={makeAuth()}>
+          <MemoryRouter initialEntries={['/verify-email?token=token-a']}>
+            <NavigationHarness />
+            <Routes><Route path="/verify-email" element={<EmailVerificationPage />} /></Routes>
+          </MemoryRouter>
+        </AuthContext.Provider>
+      </QueryClientProvider>,
+    )
+
+    await vi.waitFor(() => expect(verifyEmailMock).toHaveBeenCalledWith({ token: 'token-a' }))
+    await userEvent.click(screen.getByRole('button', { name: /switch to token b/i }))
+    await vi.waitFor(() => expect(verifyEmailMock).toHaveBeenCalledWith({ token: 'token-b' }))
+    await act(async () => verificationA.reject(makeAxiosError(400, { error: 'invalid_verification_token' })))
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent(/verifying your email/i)
+    expect(useAuthStore.getState().user).toBeNull()
+  })
+
+  it('ignores verification completion after the page unmounts', async () => {
+    const verification = deferred<AuthResponse>()
+    verifyEmailMock.mockReturnValue(verification.promise)
+
+    function UnmountHarness() {
+      const [showVerification, setShowVerification] = useState(true)
+      const location = useLocation()
+      return (
+        <>
+          <button type="button" onClick={() => setShowVerification(false)}>
+            Close verification
+          </button>
+          <div data-testid="location">{location.pathname}{location.search}</div>
+          {showVerification ? <EmailVerificationPage /> : <div>Verification closed</div>}
+        </>
+      )
+    }
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthContext.Provider value={makeAuth()}>
+          <MemoryRouter initialEntries={['/verify-email?token=unmounted-token']}>
+            <UnmountHarness />
+          </MemoryRouter>
+        </AuthContext.Provider>
+      </QueryClientProvider>,
+    )
+
+    await vi.waitFor(() => expect(verifyEmailMock).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByRole('button', { name: /close verification/i }))
+    await act(async () => verification.resolve(AUTH_RESPONSE))
+
+    expect(screen.getByText('Verification closed')).toBeInTheDocument()
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/verify-email\?token=unmounted-token$/)
+    expect(useAuthStore.getState().user).toBeNull()
+  })
+
+  it('submits each verification token only once under StrictMode effect replay', async () => {
+    const verification = deferred<AuthResponse>()
+    verifyEmailMock.mockReturnValue(verification.promise)
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+    render(
+      <StrictMode>
+        <QueryClientProvider client={queryClient}>
+          <AuthContext.Provider value={makeAuth()}>
+            <MemoryRouter initialEntries={['/verify-email?token=strict-token']}>
+              <Routes>
+                <Route path="/verify-email" element={<EmailVerificationPage />} />
+                <Route path="/trips" element={<div>Trips after verification</div>} />
+              </Routes>
+            </MemoryRouter>
+          </AuthContext.Provider>
+        </QueryClientProvider>
+      </StrictMode>,
+    )
+
+    await vi.waitFor(() => expect(verifyEmailMock).toHaveBeenCalledTimes(1))
+    await act(async () => verification.resolve(AUTH_RESPONSE))
+    expect(await screen.findByText('Trips after verification')).toBeInTheDocument()
+    expect(verifyEmailMock).toHaveBeenCalledTimes(1)
   })
 
   it('redirects to a safe return path after verification', async () => {
