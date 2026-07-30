@@ -20,11 +20,33 @@ const ACCOUNT_DELETION_SUMMARY = ['Deletion is permanent and cannot be undone.',
 const ACCOUNT_DELETION_CONSEQUENCES = ['Your account is permanently removed.', 'You are signed out on this device. Dupert cancels saved sign-ins, and other devices ask you to sign in again after their current access expires.', 'Trips you own with no other Dupert members are deleted.', 'Trips you own with other Dupert members are transferred to one of them.', 'Content in retained shared trips may remain.', 'Your signed-in Dupert name is removed from retained activity history, but a guest name you used before signing in may remain.', 'Share links you created and guest access that depends on them are removed.']
 const EVIDENCE_KEYS = ['safe_reference', 'observed_result', 'network_trace_reference', 'artifact_identity_checksum', 'redaction_notes']
 const CASE_KEYS = ['case_id', 'preconditions', 'actions', 'expected_outcome', 'cleanup', 'status', 'evidence']
+const ADR_TEXT_FIELDS = ['security_properties', 'migration_compatibility', 'revised_estimate']
+const ADR_WORK_FIELDS = ['frontend_work', 'backend_work']
+const ADR_ACCEPTANCE_FIELDS = ['selected_outcome', 'decision_artifact_reference', 'security_properties', ...ADR_WORK_FIELDS, 'migration_compatibility', 'revised_estimate', 'follow_up_issue_references']
+const ADR_CONTRACT_KEYS = [...ADR_ACCEPTANCE_FIELDS, 'allowed_outcomes', 'fallback_outcomes', 'forbidden_fallbacks']
+const FOLLOW_UP_ISSUE_REFERENCE = /^https:\/\/github\.com\/tyhuang9\/dupert\/issues\/([1-9]\d*)$/
+const NO_FALLBACK_WORK = 'NO_FALLBACK_WORK'
+const ADR_WORK_REQUIREMENTS = {
+  cookie_only_proven: {
+    frontend: { classification: 'no_fallback_work', scope_ids: [] },
+    backend: { classification: 'no_fallback_work', scope_ids: [] },
+  },
+  native_credential_transport: {
+    frontend: {
+      classification: 'explicit_native_transport_work',
+      scope_ids: ['member_credential_storage', 'guest_credential_storage', 'member_and_guest_request_attachment', 'refresh_rotation_and_session_boundaries', 'verification_and_password_reset_returns', 'rest_and_sse_transport'],
+    },
+    backend: {
+      classification: 'explicit_native_transport_work',
+      scope_ids: ['member_credential_issue_rotate_revoke', 'guest_credential_issue_claim_revoke', 'login_verification_logout_deletion', 'guest_acceptance_expiry_revocation', 'rest_and_sse_authentication', 'migration_and_web_compatibility'],
+    },
+  },
+}
 const RAW_SECRET = /(?:authorization\s*[:=]\s*(?:bearer|basic)|x[-_]api[-_]key\s*[:=]|\bbearer\s+[a-z0-9._-]{20,}|\bbasic\s+[a-z0-9+/=]{12,}|\beyJ[a-z0-9_-]{10,}\.[a-z0-9_-]+\.|(?:access|refresh|guest|reset)[_-]?token\s*[:=]|verification[-_]code\s*[:=]|api[-_]?key\s*[:=]|(?:set-)?cookie\s*[:=]|password\s*[:=]\s*[^\s"']+|https?:\/\/[^\s"']+\/(?:reset|verify|verification)[^\s"']*|[?&](?:token|secret|api[-_]?key|password|code|reset[-_]?token|verification[-_]?code)=)/i
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
 const IMMUTABLE_DOCUMENT_HASHES = {
-  'auth-session-device-spike.md': '7df8881bb4f581926fd99dc71a01ddeec80af5ff47300ad1057242c85a381a11',
-  'auth-session-transport-adr-template.md': '9d8da67a404a53fa0e23b47915c1790d635493454b3d2150789c42955f8a8d81',
+  'auth-session-device-spike.md': '93feb4a1885ff59245a78e108b893b695e68f2f2a06fabd02ed0b306af049a54',
+  'auth-session-transport-adr-template.md': 'fae29dde238d4828b6ee2692e8ab0cebe5f12f7ba1f6e42cb0efc00d23091dbc',
 }
 
 function capture(text, pattern, label, violations) { const match = text.match(pattern); if (!match) { violations.push(`${label} is missing`); return null }; return match[1] }
@@ -40,7 +62,7 @@ function isRfc3339(value) { const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):
 function inspectCatalog(catalog, violations) {
   const violationCount = violations.length
   if (!requireExactKeys(catalog, ['schema_version', 'platforms', 'contexts', 'adr'], 'device evidence catalog', violations)) return false
-  if (catalog.schema_version !== 2) violations.push('device evidence catalog schema_version must be 2')
+  if (catalog.schema_version !== 3) violations.push('device evidence catalog schema_version must be 3')
   if (!requireExactKeys(catalog.platforms, ['ios', 'android'], 'device evidence catalog platforms', violations)) return false
   if (!requireExactKeys(catalog.contexts, ['member', 'guest'], 'device evidence catalog contexts', violations)) return false
   for (const [platform, deviceType, platformCase] of [['ios', 'physical_iphone', 'ios_webview_domain_configuration'], ['android', 'physical_android', 'android_third_party_cookie_behavior']]) {
@@ -49,8 +71,12 @@ function inspectCatalog(catalog, violations) {
   for (const context of ['member', 'guest']) if (requireExactKeys(catalog.contexts[context], ['cases', 'credential_lifecycle'], `catalog ${context}`, violations)) {
     for (const key of ['cases', 'credential_lifecycle']) if (!Array.isArray(catalog.contexts[context][key]) || !catalog.contexts[context][key].length || new Set(catalog.contexts[context][key]).size !== catalog.contexts[context][key].length) violations.push(`catalog ${context} ${key} must be a nonempty unique array`)
   }
-  if (!requireExactKeys(catalog.adr, ['allowed_outcomes', 'forbidden_fallbacks'], 'catalog ADR', violations)) return false
-  if (JSON.stringify(catalog.adr.allowed_outcomes) !== JSON.stringify(['cookie_only_proven', 'native_credential_transport']) || JSON.stringify(catalog.adr.forbidden_fallbacks) !== JSON.stringify(['endpoint_only_fallback', 'web_storage_refresh_or_guest_token_workaround'])) violations.push('catalog ADR semantics are invalid')
+  if (!requireExactKeys(catalog.adr, ['allowed_outcomes', 'fallback_outcomes', 'forbidden_fallbacks', 'required_acceptance_fields', 'work_requirements'], 'catalog ADR', violations)) return false
+  if (JSON.stringify(catalog.adr.allowed_outcomes) !== JSON.stringify(['cookie_only_proven', 'native_credential_transport'])
+    || JSON.stringify(catalog.adr.fallback_outcomes) !== JSON.stringify(['native_credential_transport'])
+    || JSON.stringify(catalog.adr.forbidden_fallbacks) !== JSON.stringify(['endpoint_only_fallback', 'web_storage_refresh_or_guest_token_workaround'])
+    || JSON.stringify(catalog.adr.required_acceptance_fields) !== JSON.stringify(ADR_ACCEPTANCE_FIELDS)
+    || JSON.stringify(catalog.adr.work_requirements) !== JSON.stringify(ADR_WORK_REQUIREMENTS)) violations.push('catalog ADR semantics are invalid')
   return violations.length === violationCount
 }
 
@@ -93,11 +119,37 @@ function inspectCase(entry, expectedId, label, contextId, options, violations) {
   }
 }
 
+function fallbackFlowIds(catalog) {
+  return Object.entries(catalog.contexts).flatMap(([contextId, context]) => [
+    ...context.cases.map((caseId) => `${contextId}.case.${caseId}`),
+    ...context.credential_lifecycle.map((stageId) => `${contextId}.credential_lifecycle.${stageId}`),
+  ])
+}
+
+function inspectAdrWork(value, domain, label, template, expected, violations) {
+  if (!requireExactKeys(value, ['classification', 'scope_ids', 'details'], `${label} ADR ${domain}_work`, violations)) return
+  if (!Array.isArray(value.scope_ids)) violations.push(`${label} ADR ${domain}_work scope_ids must be an array`)
+  if (template) {
+    if (value.classification !== 'UNEXECUTED') violations.push(`${label} ADR ${domain}_work classification must remain UNEXECUTED`)
+    if (Array.isArray(value.scope_ids) && value.scope_ids.length !== 0) violations.push(`${label} ADR ${domain}_work scope_ids must remain empty`)
+    if (value.details !== 'UNEXECUTED') violations.push(`${label} ADR ${domain}_work details must remain UNEXECUTED`)
+    return
+  }
+  if (!expected) return
+  if (value.classification !== expected.classification) violations.push(`${label} ADR ${domain}_work classification must be ${expected.classification}`)
+  if (JSON.stringify(value.scope_ids) !== JSON.stringify(expected.scope_ids)) violations.push(`${label} ADR ${domain}_work scope_ids must exactly match the selected outcome`)
+  if (expected.classification === 'no_fallback_work') {
+    if (value.details !== NO_FALLBACK_WORK) violations.push(`${label} ADR ${domain}_work details must be ${NO_FALLBACK_WORK}`)
+  } else if (typeof value.details !== 'string' || !value.details.trim() || value.details === 'UNEXECUTED' || value.details === NO_FALLBACK_WORK) {
+    violations.push(`${label} ADR ${domain}_work details must describe completed fallback work`)
+  }
+}
+
 function inspectResults(document, label, template, violations, catalog, resultInfo = {}) {
   if (!template && RAW_SECRET.test(JSON.stringify(document))) violations.push(`${label} contains a raw credential or capture`)
   const topKeys = ['schema_version', 'template_status', 'notice', 'copy_results_to', 'result_status_vocabulary', 'platforms', 'redaction_policy', 'adr_contract', 'references']
   if (!requireExactKeys(document, topKeys, label, violations)) return
-  if (document.schema_version !== 2) { violations.push(`${label} schema_version must be 2`); return }
+  if (document.schema_version !== 3) { violations.push(`${label} schema_version must be 3`); return }
   if (template && document.template_status !== 'UNEXECUTED') violations.push('device evidence template status must remain UNEXECUTED')
   if (!template && document.template_status !== 'COMPLETED') violations.push(`${label} template_status must be COMPLETED`)
   const expectedNotice = template ? 'TEMPLATE / NOT EVIDENCE — immutable source; JSON results are the sole claim-bearing artifact.' : 'COMPLETED RESULTS / CLAIM-BEARING ARTIFACT'
@@ -169,14 +221,54 @@ function inspectResults(document, label, template, violations, catalog, resultIn
   if (!template && runCommits.size !== 1) violations.push(`${label} platforms must use the same commit_or_tag`)
   if (!template && runVersions.size !== 1) violations.push(`${label} platforms must use the same app_version`)
   if (!requireExactKeys(document.redaction_policy, ['raw_capture_policy', 'safe_reference_policy'], `${label} redaction policy`, violations) || !/never commit raw captures/i.test(document.redaction_policy.raw_capture_policy ?? '')) violations.push(`${label} must prohibit raw captures`)
-  const adrKeys = ['selected_outcome', 'decision_artifact_reference', 'allowed_outcomes', 'forbidden_fallbacks']
-  if (requireExactKeys(document.adr_contract, adrKeys, `${label} ADR contract`, violations)) {
-    if (JSON.stringify(document.adr_contract.allowed_outcomes) !== JSON.stringify(catalog.adr.allowed_outcomes) || JSON.stringify(document.adr_contract.forbidden_fallbacks) !== JSON.stringify(catalog.adr.forbidden_fallbacks)) violations.push(`${label} ADR catalogs are invalid`)
+  if (requireExactKeys(document.adr_contract, ADR_CONTRACT_KEYS, `${label} ADR contract`, violations)) {
+    if (JSON.stringify(document.adr_contract.allowed_outcomes) !== JSON.stringify(catalog.adr.allowed_outcomes)
+      || JSON.stringify(document.adr_contract.fallback_outcomes) !== JSON.stringify(catalog.adr.fallback_outcomes)
+      || JSON.stringify(document.adr_contract.forbidden_fallbacks) !== JSON.stringify(catalog.adr.forbidden_fallbacks)) violations.push(`${label} ADR catalogs are invalid`)
     if (template) {
-      for (const key of ['selected_outcome', 'decision_artifact_reference']) if (document.adr_contract[key] !== 'UNEXECUTED') violations.push(`${label} ADR ${key} must remain UNEXECUTED`)
+      for (const key of ['selected_outcome', 'decision_artifact_reference', ...ADR_TEXT_FIELDS]) if (document.adr_contract[key] !== 'UNEXECUTED') violations.push(`${label} ADR ${key} must remain UNEXECUTED`)
+      for (const domain of ['frontend', 'backend']) inspectAdrWork(document.adr_contract[`${domain}_work`], domain, label, true, null, violations)
+      if (!Array.isArray(document.adr_contract.follow_up_issue_references) || document.adr_contract.follow_up_issue_references.length !== 0) violations.push(`${label} ADR follow_up_issue_references must remain an empty array`)
     } else {
-      if (typeof document.adr_contract.selected_outcome !== 'string' || !catalog.adr.allowed_outcomes.includes(document.adr_contract.selected_outcome)) violations.push(`${label} ADR selected_outcome must be exactly one approved scalar`)
+      const selectedOutcome = document.adr_contract.selected_outcome
+      const selectedOutcomeIsValid = typeof selectedOutcome === 'string' && catalog.adr.allowed_outcomes.includes(selectedOutcome)
+      if (!selectedOutcomeIsValid) violations.push(`${label} ADR selected_outcome must be exactly one approved scalar`)
       if (document.adr_contract.decision_artifact_reference !== `restricted://issue-64/${resultInfo.runId}/decision`) violations.push(`${label} ADR decision_artifact_reference must match the result run`)
+      for (const key of ADR_TEXT_FIELDS) if (typeof document.adr_contract[key] !== 'string' || !document.adr_contract[key].trim() || document.adr_contract[key] === 'UNEXECUTED') violations.push(`${label} ADR ${key} must be completed text`)
+      const workRequirements = selectedOutcomeIsValid ? catalog.adr.work_requirements[selectedOutcome] : null
+      for (const domain of ['frontend', 'backend']) inspectAdrWork(document.adr_contract[`${domain}_work`], domain, label, false, workRequirements?.[domain], violations)
+
+      const followUps = document.adr_contract.follow_up_issue_references
+      if (!Array.isArray(followUps)) {
+        violations.push(`${label} ADR follow-up issue references must be an array`)
+      } else {
+        const expectedFlowIds = fallbackFlowIds(catalog)
+        const expectedFlowIdSet = new Set(expectedFlowIds)
+        const coveredFlowIds = new Set()
+        const usedIssueUrls = new Set()
+        for (const [index, reference] of followUps.entries()) {
+          const referenceLabel = `${label} ADR follow-up issue reference ${index + 1}`
+          if (!requireExactKeys(reference, ['issue_url', 'flow_ids'], referenceLabel, violations)) continue
+          const match = FOLLOW_UP_ISSUE_REFERENCE.exec(reference.issue_url)
+          if (!match || match[1] === '64') violations.push(`${referenceLabel} issue_url must be a canonical separate tyhuang9/dupert issue URL`)
+          if (usedIssueUrls.has(reference.issue_url)) violations.push(`${label} ADR follow-up issue references must not repeat issue_url values`)
+          usedIssueUrls.add(reference.issue_url)
+          if (!Array.isArray(reference.flow_ids)) {
+            violations.push(`${referenceLabel} flow_ids must be an array`)
+            continue
+          }
+          if (reference.flow_ids.length === 0) violations.push(`${referenceLabel} flow_ids must not be empty`)
+          if (new Set(reference.flow_ids).size !== reference.flow_ids.length) violations.push(`${referenceLabel} flow_ids must not repeat within an issue`)
+          for (const flowId of reference.flow_ids) {
+            if (typeof flowId !== 'string' || !expectedFlowIdSet.has(flowId)) violations.push(`${referenceLabel} contains an unknown flow_id`)
+            else if (coveredFlowIds.has(flowId)) violations.push(`${label} ADR follow-up issue references must not duplicate flow coverage`)
+            else coveredFlowIds.add(flowId)
+          }
+        }
+        if (selectedOutcomeIsValid && catalog.adr.fallback_outcomes.includes(selectedOutcome) && followUps.length === 0) violations.push(`${label} ADR ${selectedOutcome} requires at least one follow-up issue reference`)
+        if (selectedOutcomeIsValid && catalog.adr.fallback_outcomes.includes(selectedOutcome) && expectedFlowIds.some((flowId) => !coveredFlowIds.has(flowId))) violations.push(`${label} ADR ${selectedOutcome} follow-up issue references must cover every catalog member/guest case and credential-lifecycle flow exactly once`)
+        if (selectedOutcomeIsValid && !catalog.adr.fallback_outcomes.includes(selectedOutcome) && followUps.length !== 0) violations.push(`${label} ADR ${selectedOutcome} follow-up issue references must be empty`)
+      }
     }
   }
   if (!requireExactKeys(document.references, ['catalog', 'spike', 'adr'], `${label} references`, violations) || document.references.catalog !== 'docs/mobile/auth-session-device-evidence.catalog.json' || document.references.spike !== 'docs/mobile/auth-session-device-spike.md' || document.references.adr !== 'docs/mobile/auth-session-transport-adr-template.md') violations.push(`${label} references are invalid`)
@@ -186,8 +278,8 @@ function inspectDeviceEvidenceContract(sources, violations) {
   if (!catalog || !inspectCatalog(catalog, violations)) return
   const document = parseJsonDocument(sources.authSessionEvidenceTemplate, 'auth-session-device-evidence.template.json', violations)
   if (document) inspectResults(document, 'device evidence template', true, violations, catalog)
-  marker(sources.authSessionDeviceSpike, 'issue64-spike-policy', { contract_version: '2', claim_bearing_artifact: 'results_json_only', immutable_template: 'true', raw_captures: 'external_restricted_only' }, violations)
-  marker(sources.authSessionAdrTemplate, 'issue64-adr-policy', { contract_version: '2', allowed_outcomes: 'cookie_only_proven,native_credential_transport', forbidden_fallbacks: 'endpoint_only_fallback,web_storage_refresh_or_guest_token_workaround', decision_artifact: 'results_json_only' }, violations)
+  marker(sources.authSessionDeviceSpike, 'issue64-spike-policy', { contract_version: '3', claim_bearing_artifact: 'results_json_only', immutable_template: 'true', raw_captures: 'external_restricted_only' }, violations)
+  marker(sources.authSessionAdrTemplate, 'issue64-adr-policy', { contract_version: '3', allowed_outcomes: 'cookie_only_proven,native_credential_transport', forbidden_fallbacks: 'endpoint_only_fallback,web_storage_refresh_or_guest_token_workaround', decision_artifact: 'results_json_only' }, violations)
   for (const [name, contents, notice] of [['auth-session-device-spike.md', sources.authSessionDeviceSpike, '> **TEMPLATE / NOT EVIDENCE** — This runbook carries no status, result, or decision.'], ['auth-session-transport-adr-template.md', sources.authSessionAdrTemplate, '> **TEMPLATE / NOT EVIDENCE** — This document is instruction-only and records no decision.']]) {
     if (contents.split(notice).length !== 2) violations.push(`${name} must contain its exact immutable notice once`)
     if (RAW_SECRET.test(contents)) violations.push(`${name} contains a raw credential`)

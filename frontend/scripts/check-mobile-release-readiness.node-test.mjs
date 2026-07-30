@@ -12,6 +12,34 @@ const messages = (candidate) => inspectMobileReleaseReadiness(candidate).join('\
 const sourceFiles = ['docs/mobile/auth-session-device-evidence.catalog.json', 'docs/mobile/auth-session-device-evidence.template.json', 'docs/mobile/auth-session-device-spike.md', 'docs/mobile/auth-session-transport-adr-template.md', 'frontend/public/account-deletion.html', 'frontend/vercel.json']
 const resultPath = 'docs/mobile/evidence/issue-64/2026-07-29/safe-run-1/results.json'
 
+function contractCatalog() {
+  return JSON.parse(sources().authSessionEvidenceCatalog)
+}
+function expectedFallbackFlowIds() {
+  return Object.entries(contractCatalog().contexts).flatMap(([contextId, context]) => [
+    ...context.cases.map((caseId) => `${contextId}.case.${caseId}`),
+    ...context.credential_lifecycle.map((stageId) => `${contextId}.credential_lifecycle.${stageId}`),
+  ])
+}
+function outcomeWork(outcome, domain) {
+  const requirement = contractCatalog().adr.work_requirements[outcome][domain]
+  return {
+    classification: requirement.classification,
+    scope_ids: [...requirement.scope_ids],
+    details: requirement.classification === 'no_fallback_work'
+      ? 'NO_FALLBACK_WORK'
+      : `Completed explicit native credential transport work for the catalog-owned ${domain} scopes.`,
+  }
+}
+function fallbackFollowUps() {
+  const flowIds = expectedFallbackFlowIds()
+  const splitAt = Math.ceil(flowIds.length / 2)
+  return [
+    { issue_url: 'https://github.com/tyhuang9/dupert/issues/65', flow_ids: flowIds.slice(0, splitAt) },
+    { issue_url: 'https://github.com/tyhuang9/dupert/issues/66', flow_ids: flowIds.slice(splitAt) },
+  ]
+}
+
 function replaceAccountText(candidate, text, replacement = 'Removed text.') {
   const pattern = text.trim().split(/\s+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+')
   const updated = candidate.accountDeletionResource.replace(new RegExp(pattern), replacement)
@@ -37,6 +65,12 @@ function completed() {
   const result = fill(value)
   result.adr_contract.selected_outcome = 'cookie_only_proven'
   result.adr_contract.decision_artifact_reference = 'restricted://issue-64/safe-run-1/decision'
+  result.adr_contract.security_properties = 'Preserves HttpOnly credentials, rotation, revocation, and least-privilege boundaries.'
+  result.adr_contract.frontend_work = outcomeWork('cookie_only_proven', 'frontend')
+  result.adr_contract.backend_work = outcomeWork('cookie_only_proven', 'backend')
+  result.adr_contract.migration_compatibility = 'Existing web sessions remain compatible without a credential migration.'
+  result.adr_contract.revised_estimate = 'One engineering day for release verification and evidence review.'
+  result.adr_contract.follow_up_issue_references = []
   let referenceId = 0
   for (const [platformIndex, platform] of result.platforms.entries()) {
     const checksum = 'sha256:' + (platformIndex === 0 ? 'a' : 'b').repeat(64)
@@ -54,6 +88,21 @@ function completed() {
     }
     for (const caseEntry of platform.platform_cases) setEvidence(caseEntry.evidence, 'platform')
   }
+  return result
+}
+function withAdrAcceptance(result, {
+  outcome = 'cookie_only_proven',
+  followUps = [],
+} = {}) {
+  Object.assign(result.adr_contract, {
+    selected_outcome: outcome,
+    security_properties: 'Preserves HttpOnly credentials, rotation, revocation, and least-privilege boundaries.',
+    frontend_work: outcomeWork(outcome, 'frontend'),
+    backend_work: outcomeWork(outcome, 'backend'),
+    migration_compatibility: 'Existing web sessions remain compatible without a credential migration.',
+    revised_estimate: 'One engineering day for release verification and evidence review.',
+    follow_up_issue_references: followUps,
+  })
   return result
 }
 function tracked(result = completed()) {
@@ -333,12 +382,12 @@ test('rejects untracked templates, invalid paths, marker drift, extra gates, and
   assert.match(output, /release-gate table must use/)
 })
 
-test('rejects schema v3 in the source template', () => {
-  const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.schema_version = 3; candidate.authSessionEvidenceTemplate = JSON.stringify(document); assert.match(messages(candidate), /schema_version must be 2/)
+test('rejects schema v4 in the source template', () => {
+  const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.schema_version = 4; candidate.authSessionEvidenceTemplate = JSON.stringify(document); assert.match(messages(candidate), /schema_version must be 3/)
 })
 
-test('rejects schema v3 in a completed result', () => {
-  const result = completed(); result.schema_version = 3; assert.match(messages(tracked(result)), /schema_version must be 2/)
+test('rejects schema v4 in a completed result', () => {
+  const result = completed(); result.schema_version = 4; assert.match(messages(tracked(result)), /schema_version must be 3/)
 })
 
 test('uses explicit context for offline boundaries regardless of member and guest path text', () => {
@@ -352,6 +401,146 @@ test('rejects missing, multiple, invalid, or forbidden ADR selections', () => {
 
 test('rejects missing, mismatched, or unsafe ADR decision references', () => {
   for (const mutate of [(r) => { delete r.adr_contract.decision_artifact_reference }, (r) => { r.adr_contract.decision_artifact_reference = 'restricted://issue-64/other-run/decision' }, (r) => { r.adr_contract.decision_artifact_reference = 'https://example.test/decision?code=raw' }]) { const result = completed(); mutate(result); assert.match(messages(tracked(result)), /ADR|raw credential/) }
+})
+
+test('accepts complete ADR acceptance evidence for both approved outcomes', () => {
+  assert.deepEqual(inspectMobileReleaseReadiness(tracked(withAdrAcceptance(completed()))), [])
+  const fallback = withAdrAcceptance(completed(), {
+    outcome: 'native_credential_transport',
+    followUps: fallbackFollowUps(),
+  })
+  assert.deepEqual(inspectMobileReleaseReadiness(tracked(fallback)), [])
+})
+
+test('requires every ADR acceptance field', () => {
+  for (const field of ['security_properties', 'frontend_work', 'backend_work', 'migration_compatibility', 'revised_estimate', 'follow_up_issue_references']) {
+    const result = withAdrAcceptance(completed())
+    delete result.adr_contract[field]
+    assert.match(messages(tracked(result)), new RegExp(`ADR contract.*${field}`))
+  }
+})
+
+test('requires fallback follow-up issues and forbids them for cookie-only evidence', () => {
+  const missing = withAdrAcceptance(completed(), { outcome: 'native_credential_transport' })
+  assert.match(messages(tracked(missing)), /native_credential_transport.*at least one follow-up issue reference/)
+
+  const unexpected = withAdrAcceptance(completed(), {
+    followUps: [{ issue_url: 'https://github.com/tyhuang9/dupert/issues/65', flow_ids: [expectedFallbackFlowIds()[0]] }],
+  })
+  assert.match(messages(tracked(unexpected)), /cookie_only_proven.*follow-up issue references must be empty/)
+})
+
+test('rejects malformed ADR acceptance narratives', () => {
+  for (const field of ['security_properties', 'migration_compatibility', 'revised_estimate']) {
+    for (const value of [null, [], '   ', 'UNEXECUTED']) {
+      const result = withAdrAcceptance(completed())
+      result.adr_contract[field] = value
+      assert.match(messages(tracked(result)), new RegExp(`ADR ${field} must be completed text`))
+    }
+  }
+})
+
+test('rejects outcome work that contradicts the catalog-owned classification or scope', () => {
+  const cookieClassification = withAdrAcceptance(completed())
+  cookieClassification.adr_contract.frontend_work.classification = 'explicit_native_transport_work'
+  assert.match(messages(tracked(cookieClassification)), /frontend_work classification must be no_fallback_work/)
+
+  const cookieScopes = withAdrAcceptance(completed())
+  cookieScopes.adr_contract.backend_work.scope_ids = ['rest_and_sse_authentication']
+  assert.match(messages(tracked(cookieScopes)), /backend_work scope_ids must exactly match the selected outcome/)
+
+  const cookieDetails = withAdrAcceptance(completed())
+  cookieDetails.adr_contract.frontend_work.details = 'Fallback work was completed.'
+  assert.match(messages(tracked(cookieDetails)), /frontend_work details must be NO_FALLBACK_WORK/)
+
+  const nativeClassification = withAdrAcceptance(completed(), { outcome: 'native_credential_transport', followUps: fallbackFollowUps() })
+  nativeClassification.adr_contract.backend_work.classification = 'no_fallback_work'
+  assert.match(messages(tracked(nativeClassification)), /backend_work classification must be explicit_native_transport_work/)
+
+  const nativeScopes = withAdrAcceptance(completed(), { outcome: 'native_credential_transport', followUps: fallbackFollowUps() })
+  nativeScopes.adr_contract.frontend_work.scope_ids.pop()
+  assert.match(messages(tracked(nativeScopes)), /frontend_work scope_ids must exactly match the selected outcome/)
+
+  const nativeDetails = withAdrAcceptance(completed(), { outcome: 'native_credential_transport', followUps: fallbackFollowUps() })
+  nativeDetails.adr_contract.backend_work.details = 'NO_FALLBACK_WORK'
+  assert.match(messages(tracked(nativeDetails)), /backend_work details must describe completed fallback work/)
+})
+
+test('rejects malformed fallback work objects', () => {
+  for (const mutate of [
+    () => null,
+    (work) => ({ ...work, extra: true }),
+    (work) => ({ ...work, scope_ids: 'rest_and_sse_transport' }),
+    (work) => ({ ...work, details: 'UNEXECUTED' }),
+  ]) {
+    const result = withAdrAcceptance(completed(), { outcome: 'native_credential_transport', followUps: fallbackFollowUps() })
+    result.adr_contract.frontend_work = mutate(result.adr_contract.frontend_work)
+    assert.match(messages(tracked(result)), /ADR frontend_work/)
+  }
+})
+
+test('rejects malformed, duplicate, partial, or self-referential fallback issue coverage', () => {
+  const flowIds = expectedFallbackFlowIds()
+  const valid = fallbackFollowUps()
+  const cases = [
+    ['non-array references', 'https://github.com/tyhuang9/dupert/issues/65', /follow-up issue references must be an array/],
+    ['non-object reference', ['#65'], /follow-up issue reference 1 must be an object/],
+    ['unexpected reference key', [{ ...valid[0], extra: true }, valid[1]], /follow-up issue reference 1 must contain exactly/],
+    ['pull request URL', [{ issue_url: 'https://github.com/tyhuang9/dupert/pull/65', flow_ids: flowIds }], /canonical separate tyhuang9\/dupert issue URL/],
+    ['issue 64 self-reference', [{ issue_url: 'https://github.com/tyhuang9/dupert/issues/64', flow_ids: flowIds }], /canonical separate tyhuang9\/dupert issue URL/],
+    ['duplicate issue URL', [{ issue_url: valid[0].issue_url, flow_ids: valid[0].flow_ids }, { issue_url: valid[0].issue_url, flow_ids: valid[1].flow_ids }], /must not repeat issue_url values/],
+    ['empty flow IDs', [{ issue_url: valid[0].issue_url, flow_ids: [] }], /flow_ids must not be empty/],
+    ['non-array flow IDs', [{ issue_url: valid[0].issue_url, flow_ids: flowIds[0] }], /flow_ids must be an array/],
+    ['unknown flow ID', [{ issue_url: valid[0].issue_url, flow_ids: [...flowIds, 'member.case.unknown'] }], /contains an unknown flow_id/],
+    ['duplicate within issue', [{ issue_url: valid[0].issue_url, flow_ids: [...flowIds, flowIds[0]] }], /flow_ids must not repeat within an issue/],
+    ['duplicate across issues', [{ issue_url: valid[0].issue_url, flow_ids: flowIds }, { issue_url: valid[1].issue_url, flow_ids: [flowIds[0]] }], /must not duplicate flow coverage/],
+    ['partial catalog coverage', [{ issue_url: valid[0].issue_url, flow_ids: flowIds.slice(0, -1) }], /must cover every catalog member\/guest case and credential-lifecycle flow exactly once/],
+  ]
+  for (const [name, followUps, expected] of cases) {
+    const result = withAdrAcceptance(completed(), { outcome: 'native_credential_transport', followUps })
+    assert.match(messages(tracked(result)), expected, name)
+  }
+})
+
+test('rejects raw credentials in ADR acceptance evidence', () => {
+  const result = withAdrAcceptance(completed())
+  result.adr_contract.security_properties = 'Authorization: Bearer raw-secret-value-that-must-not-ship'
+  assert.match(messages(tracked(result)), /raw credential/)
+})
+
+test('requires issue 64 JSON evidence contract schema v3', () => {
+  const candidate = sources()
+  const catalog = JSON.parse(candidate.authSessionEvidenceCatalog)
+  const template = JSON.parse(candidate.authSessionEvidenceTemplate)
+  catalog.schema_version = 2
+  template.schema_version = 2
+  candidate.authSessionEvidenceCatalog = JSON.stringify(catalog)
+  candidate.authSessionEvidenceTemplate = JSON.stringify(template)
+  assert.match(messages(candidate), /schema_version must be 3/)
+})
+
+test('keeps issue 64 v3 markers, catalog semantics, and source template aligned', () => {
+  const catalogCandidate = sources()
+  const catalog = JSON.parse(catalogCandidate.authSessionEvidenceCatalog)
+  catalog.adr.work_requirements.native_credential_transport.frontend.scope_ids.pop()
+  catalogCandidate.authSessionEvidenceCatalog = JSON.stringify(catalog)
+  assert.match(messages(catalogCandidate), /catalog ADR semantics are invalid/)
+
+  const templateCandidate = sources()
+  const template = JSON.parse(templateCandidate.authSessionEvidenceTemplate)
+  template.adr_contract.fallback_outcomes = []
+  template.adr_contract.follow_up_issue_references = [{ issue_url: 'https://github.com/tyhuang9/dupert/issues/65', flow_ids: ['member.case.member_login'] }]
+  templateCandidate.authSessionEvidenceTemplate = JSON.stringify(template)
+  const templateOutput = messages(templateCandidate)
+  assert.match(templateOutput, /ADR catalogs are invalid/)
+  assert.match(templateOutput, /follow_up_issue_references must remain an empty array/)
+
+  const markerCandidate = sources()
+  markerCandidate.authSessionDeviceSpike = markerCandidate.authSessionDeviceSpike.replace('contract_version=3', 'contract_version=2')
+  markerCandidate.authSessionAdrTemplate = markerCandidate.authSessionAdrTemplate.replace('contract_version=3', 'contract_version=2')
+  const markerOutput = messages(markerCandidate)
+  assert.match(markerOutput, /issue64-spike-policy marker contract_version must equal 3/)
+  assert.match(markerOutput, /issue64-adr-policy marker contract_version must equal 3/)
 })
 
 test('rejects Authorization Basic in completed procedural fields', () => {
@@ -401,7 +590,7 @@ test('rejects reused references and cloned cross-platform evidence', () => {
 })
 
 test('unrelated release violations do not suppress device-contract violations', () => {
-  const candidate = sources(); candidate.workflow = candidate.workflow.replace("node-version: '22'", "node-version: '24'"); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.schema_version = 3; candidate.authSessionEvidenceTemplate = JSON.stringify(document); const output = messages(candidate); assert.match(output, /CI Node version/); assert.match(output, /schema_version must be 2/)
+  const candidate = sources(); candidate.workflow = candidate.workflow.replace("node-version: '22'", "node-version: '24'"); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.schema_version = 4; candidate.authSessionEvidenceTemplate = JSON.stringify(document); const output = messages(candidate); assert.match(output, /CI Node version/); assert.match(output, /schema_version must be 3/)
 })
 
 test('rejects an all-FAIL completed result with cookie-only selected', () => {
