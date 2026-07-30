@@ -95,6 +95,24 @@ afterEach(() => {
 })
 
 describe('<LoginPage>', () => {
+  it('opens the password reset request state from a recovery link', () => {
+    renderLogin(makeAuth(), '/login?mode=password-reset')
+    expect(screen.getByRole('heading', { name: 'Reset password' })).toBeInTheDocument()
+    expect(screen.getByLabelText(/email/i)).toBeInTheDocument()
+    expect(document.title).toBe('Request password reset – Dupert')
+  })
+
+  it('keeps explicit password-reset mode available to an authenticated user', () => {
+    useAuthStore.getState().setSession({
+      accessToken: 'existing-token',
+      expiresInSeconds: 900,
+      user: { id: 1, email: 'signed-in@example.com', displayName: 'Signed In', emailVerified: true },
+    })
+    renderLogin(makeAuth({ isAuthenticated: true, authStatus: 'authenticated' }), '/login?mode=password-reset')
+    expect(screen.getByRole('heading', { name: 'Reset password' })).toBeInTheDocument()
+    expect(screen.queryByTestId('post-login')).not.toBeInTheDocument()
+    expect(document.title).toBe('Request password reset – Dupert')
+  })
   it('shows a page shell while auth restoration is pending', () => {
     renderLogin(makeAuth({ isInitializing: true }))
     expect(screen.getByRole('heading', { name: /preparing your trip planner/i })).toBeInTheDocument()

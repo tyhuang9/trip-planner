@@ -4,11 +4,13 @@ import MockAdapter from 'axios-mock-adapter'
 import type { PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { apiClient } from '../api/client'
+import { parseApiError } from '../api/errors'
 import type { ShareLink, TripMember } from '../types/share'
 import type { Trip } from '../types/trip'
 import { tripKeys } from './useTrips'
 import {
   shareKeys,
+  useAcceptGuestShareLink,
   useAcceptShareLink,
   useClaimGuestSession,
   useCreateShareLink,
@@ -138,10 +140,14 @@ describe('useShareLinks', () => {
   it('invalidates trips after accepting a share link as an authenticated user', async () => {
     queryClient.setQueryData(tripKeys.lists(), [])
     queryClient.setQueryData(tripKeys.detail('abc234def567'), SAMPLE_TRIP)
-    apiMock.onPost('/share/raw-token/accept').reply(200, {
-      publicId: 'abc234def567',
-      role: 'EDITOR',
-    })
+    apiMock.onPost('/share/accept').reply((config) => [
+      200,
+      {
+        publicId: 'abc234def567',
+        role: 'EDITOR',
+        received: JSON.parse(config.data as string),
+      },
+    ])
 
     const { result } = renderHook(() => useAcceptShareLink(), { wrapper })
 
@@ -151,6 +157,80 @@ describe('useShareLinks', () => {
 
     expect(queryClient.getQueryState(tripKeys.lists())?.isInvalidated).toBe(true)
     expect(queryClient.getQueryState(tripKeys.detail('abc234def567'))?.isInvalidated).toBe(true)
+    expect(apiMock.history.post[0]?.url).toBe('/share/accept')
+    expect(JSON.parse(apiMock.history.post[0]?.data as string)).toEqual({
+      token: 'raw-token',
+    })
+  })
+
+  it('sends guest share credentials only in the request body', async () => {
+    apiMock.onPost('/share/guest').reply(200, {
+      publicId: 'abc234def567',
+      role: 'VIEWER',
+      displayName: 'Guest Alice',
+    })
+    const { result } = renderHook(() => useAcceptGuestShareLink(), { wrapper })
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        token: 'raw-token',
+        body: { displayName: 'Guest Alice' },
+      })
+    })
+
+    expect(apiMock.history.post[0]?.url).toBe('/share/guest')
+    expect(JSON.parse(apiMock.history.post[0]?.data as string)).toEqual({
+      token: 'raw-token',
+      displayName: 'Guest Alice',
+    })
+  })
+
+  it('does not retain a rejected member share credential in mutation state', async () => {
+    const token = 'member-sentinel-token-123456'
+    apiMock.onPost('/share/accept').reply(404, { error: 'not_found' })
+    const { result } = renderHook(() => useAcceptShareLink(), { wrapper })
+    let rejected: unknown
+
+    await act(async () => {
+      rejected = await result.current.mutateAsync(token).catch((error) => error)
+    })
+
+    expect(queryClient.getMutationCache().getAll()).toHaveLength(0)
+    expect(result.current.isPending).toBe(false)
+    expect(result.current.error).toBe(rejected)
+    expect(parseApiError(result.current.error).code).toBe('not_found')
+    expect(JSON.stringify({ hook: result.current, cache: queryClient.getMutationCache().getAll() }))
+      .not.toContain(token)
+  })
+
+  it('does not retain a rejected guest share credential in mutation state', async () => {
+    const token = 'guest-sentinel-token-1234567'
+    apiMock.onPost('/share/guest').reply(400, {
+      error: 'validation_failed',
+      fieldErrors: [
+        { field: 'displayName', message: 'displayName is required' },
+        { field: 'token', message: token },
+      ],
+    })
+    const { result } = renderHook(() => useAcceptGuestShareLink(), { wrapper })
+    let rejected: unknown
+
+    await act(async () => {
+      rejected = await result.current.mutateAsync({
+        token,
+        body: { displayName: 'Guest Alice' },
+      }).catch((error) => error)
+    })
+
+    expect(queryClient.getMutationCache().getAll()).toHaveLength(0)
+    expect(result.current.isPending).toBe(false)
+    expect(result.current.error).toBe(rejected)
+    expect(parseApiError(result.current.error)).toMatchObject({
+      code: 'validation_failed',
+      fieldErrors: { displayName: 'displayName is required' },
+    })
+    expect(JSON.stringify({ hook: result.current, cache: queryClient.getMutationCache().getAll() }))
+      .not.toContain(token)
   })
 
   it('stores a claimed guest trip in list and detail caches', async () => {

@@ -5,6 +5,8 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from '@tanstack/react-query'
+import axios from 'axios'
+import { useCallback, useMemo, useState } from 'react'
 import {
   acceptGuestShareLink,
   acceptShareLink,
@@ -33,6 +35,105 @@ export const shareKeys = {
   all: ['share-links'] as const,
   forTrip: (publicId: string) => [...shareKeys.all, publicId] as const,
   members: (publicId: string) => ['trip-members', publicId] as const,
+}
+
+interface EphemeralMutationResult<TData, TVariables> {
+  mutateAsync: (variables: TVariables) => Promise<TData>
+  isPending: boolean
+  error: Error | null
+  reset: () => void
+}
+
+interface SafeMutationErrorData {
+  error?: string
+  fieldErrors?: Array<{ field: string; message: string }>
+}
+
+const SAFE_SHARE_FIELD_MESSAGES: Record<string, ReadonlySet<string>> = {
+  displayName: new Set([
+    'displayName is required',
+    'displayName must not exceed 200 characters',
+  ]),
+  token: new Set(['token is required', 'token format is invalid']),
+}
+
+function useEphemeralMutation<TData, TVariables>(
+  operation: (variables: TVariables) => Promise<TData>,
+  onSuccess?: (data: TData) => void,
+): EphemeralMutationResult<TData, TVariables> {
+  const [isPending, setIsPending] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
+
+  const reset = useCallback(() => {
+    setIsPending(false)
+    setError(null)
+  }, [])
+
+  const mutateAsync = useCallback(async (variables: TVariables) => {
+    setIsPending(true)
+    setError(null)
+    try {
+      const data = await operation(variables)
+      onSuccess?.(data)
+      setIsPending(false)
+      return data
+    } catch (caught) {
+      const safeError = sanitizeMutationError(caught)
+      setIsPending(false)
+      setError(safeError)
+      throw safeError
+    }
+  }, [onSuccess, operation])
+
+  return useMemo(() => ({ mutateAsync, isPending, error, reset }), [
+    error,
+    isPending,
+    mutateAsync,
+    reset,
+  ])
+}
+
+function sanitizeMutationError(caught: unknown): Error {
+  if (!axios.isAxiosError(caught)) {
+    return new Error('Share acceptance failed.')
+  }
+
+  const error = new Error('Share acceptance failed.') as Error & {
+    isAxiosError: true
+    response?: { status: number; data: SafeMutationErrorData }
+  }
+  error.name = 'AxiosError'
+  error.isAxiosError = true
+  if (caught.response) {
+    const responseData = caught.response.data
+    const code = responseData && typeof responseData === 'object'
+      && 'error' in responseData
+      && typeof responseData.error === 'string'
+      && /^[a-z0-9_]{1,64}$/.test(responseData.error)
+      ? responseData.error
+      : undefined
+    const fieldErrors = responseData && typeof responseData === 'object'
+      && 'fieldErrors' in responseData
+      && Array.isArray(responseData.fieldErrors)
+      ? responseData.fieldErrors.flatMap((entry: unknown) => {
+          if (!entry || typeof entry !== 'object'
+              || !('field' in entry) || typeof entry.field !== 'string'
+              || !('message' in entry) || typeof entry.message !== 'string'
+              || !SAFE_SHARE_FIELD_MESSAGES[entry.field]?.has(entry.message)) {
+            return []
+          }
+          return [{ field: entry.field, message: entry.message }]
+        }).slice(0, 2)
+      : []
+    error.response = {
+      status: caught.response.status,
+      data: {
+        ...(code ? { error: code } : {}),
+        ...(fieldErrors.length > 0 ? { fieldErrors } : {}),
+      },
+    }
+  }
+  return error
 }
 
 function upsertShareLink(existing: ShareLink[] | undefined, link: ShareLink): ShareLink[] {
@@ -151,32 +252,31 @@ export function useRenameShareLink(): UseMutationResult<
   })
 }
 
-export function useAcceptShareLink(): UseMutationResult<
+export function useAcceptShareLink(): EphemeralMutationResult<
   AcceptShareLinkResponse,
-  Error,
   string
 > {
   const queryClient = useQueryClient()
+  const onSuccess = useCallback((accepted: AcceptShareLinkResponse) => {
+    void queryClient.invalidateQueries({ queryKey: tripKeys.lists() })
+    void queryClient.invalidateQueries({
+      queryKey: tripKeys.detail(accepted.publicId),
+    })
+  }, [queryClient])
 
-  return useMutation({
-    mutationFn: acceptShareLink,
-    onSuccess: (accepted) => {
-      void queryClient.invalidateQueries({ queryKey: tripKeys.lists() })
-      void queryClient.invalidateQueries({
-        queryKey: tripKeys.detail(accepted.publicId),
-      })
-    },
-  })
+  return useEphemeralMutation(acceptShareLink, onSuccess)
 }
 
-export function useAcceptGuestShareLink(): UseMutationResult<
+export function useAcceptGuestShareLink(): EphemeralMutationResult<
   AcceptGuestShareLinkResponse,
-  Error,
   { token: string; body: AcceptGuestShareLinkRequest }
 > {
-  return useMutation({
-    mutationFn: ({ token, body }) => acceptGuestShareLink(token, body),
-  })
+  const acceptGuest = useCallback(
+    ({ token, body }: { token: string; body: AcceptGuestShareLinkRequest }) =>
+      acceptGuestShareLink(token, body),
+    [],
+  )
+  return useEphemeralMutation(acceptGuest)
 }
 
 export function useClaimGuestSession(): UseMutationResult<Trip, Error, void> {

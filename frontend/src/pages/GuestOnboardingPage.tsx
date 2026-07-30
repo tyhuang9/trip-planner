@@ -3,12 +3,18 @@ import { Link, useNavigate, useParams } from 'react-router'
 import { parseApiError } from '../api/errors'
 import { useAcceptGuestShareLink } from '../hooks/useShareLinks'
 import { usePageTitle } from '../utils/usePageTitle'
+import { consumeDeepLinkHandoff, getDeepLinkHandoff } from '../deep-links/vault'
+import { requestDeepLinkRouteFocus } from '../deep-links/routeFocusRequest'
 import styles from './SharePages.module.css'
 
 export default function GuestOnboardingPage() {
   usePageTitle('Guest access – Dupert')
 
-  const { token } = useParams()
+  const { token: routeToken, handoffId } = useParams()
+  const handoff = getDeepLinkHandoff(handoffId)
+  const token = handoff?.kind === 'share' || handoff?.kind === 'share-guest'
+    ? handoff.token
+    : routeToken
   const navigate = useNavigate()
   const acceptMutation = useAcceptGuestShareLink()
   const [displayName, setDisplayName] = useState('')
@@ -24,7 +30,10 @@ export default function GuestOnboardingPage() {
       token,
       body: { displayName },
     })
-    navigate(`/trips/${encodeURIComponent(accepted.publicId)}`, { replace: true })
+    consumeDeepLinkHandoff(handoffId)
+    const destination = `/trips/${encodeURIComponent(accepted.publicId)}`
+    requestDeepLinkRouteFocus(destination)
+    navigate(destination, { replace: true })
   }
 
   return (
@@ -67,7 +76,7 @@ export default function GuestOnboardingPage() {
           >
             {acceptMutation.isPending ? 'Joining...' : 'Join as guest'}
           </button>
-          <Link to={`/share/${encodeURIComponent(token ?? '')}`} className={styles.secondaryLink}>
+          <Link to={handoffId ? `/link/${handoffId}` : `/share/${encodeURIComponent(token ?? '')}`} className={styles.secondaryLink}>
             Back
           </Link>
         </div>

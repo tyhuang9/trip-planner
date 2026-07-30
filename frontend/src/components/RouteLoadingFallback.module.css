@@ -11,6 +11,13 @@
   gap: var(--space-4);
 }
 
+.status {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-base);
+}
+
 .line,
 .map {
   display: block;
