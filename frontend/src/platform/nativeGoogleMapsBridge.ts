@@ -148,8 +148,9 @@ function registerFocusListener() {
   void capacitorGoogleMaps.addListener('isMapInFocus', (event) => {
     const { mapId, x, y } = event as unknown as MapFocusEvent
     const target = document.elementFromPoint(x, y) as HTMLElement | null
+    const mapElement = target?.closest('capacitor-google-map') as HTMLElement | null
     void capacitorGoogleMaps.dispatchMapEvent({
-      focus: target?.dataset.internalId === mapId,
+      focus: mapElement?.dataset.internalId === mapId,
       id: mapId,
     })
   })
@@ -188,8 +189,6 @@ export class NativeGoogleMap {
       })
     }
 
-    map.observeBounds()
-
     // WKWebView needs one layout turn to create the scroll view the iOS plugin
     // uses as its native map container.
     await new Promise<void>((resolve) => window.setTimeout(resolve, 200))
@@ -206,10 +205,19 @@ export class NativeGoogleMap {
         id: options.id,
       })
     } catch (error) {
-      await map.removeBridgeListeners()
+      try {
+        await map.removeBridgeListeners()
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          'Failed to create native map and clean up bridge listeners',
+          { cause: cleanupError },
+        )
+      }
       throw error
     }
 
+    map.observeBounds()
     return map
   }
 
@@ -226,12 +234,29 @@ export class NativeGoogleMap {
   }
 
   async destroy() {
-    this.resizeObserver?.disconnect()
-    this.resizeObserver = null
-    window.removeEventListener('scroll', this.handleScroll)
-    window.removeEventListener('resize', this.handleScroll)
-    await this.removeBridgeListeners()
-    await capacitorGoogleMaps.destroy({ id: this.id })
+    let cleanupError: unknown
+    let cleanupFailed = false
+    try {
+      await this.removeBridgeListeners()
+    } catch (error) {
+      cleanupError = error
+      cleanupFailed = true
+    }
+
+    try {
+      await capacitorGoogleMaps.destroy({ id: this.id })
+    } catch (destroyError) {
+      if (cleanupFailed) {
+        throw new AggregateError(
+          [cleanupError, destroyError],
+          'Failed to destroy native map after bridge cleanup failed',
+          { cause: destroyError },
+        )
+      }
+      throw destroyError
+    }
+
+    if (cleanupFailed) throw cleanupError
   }
 
   fitBounds(bounds: NativeMapBounds, padding?: number) {
@@ -277,9 +302,9 @@ export class NativeGoogleMap {
       const bounds = mapElementBounds(this.element)
       const isHidden = bounds.width === 0 || bounds.height === 0
       if (!isHidden && wasHidden && Capacitor.getPlatform() === 'ios') {
-        void capacitorGoogleMaps.onDisplay({ id: this.id, mapBounds: bounds })
+        void this.updateMapBounds('onDisplay', bounds)
       } else if (!isHidden && (previous.width !== bounds.width || previous.height !== bounds.height)) {
-        void capacitorGoogleMaps.onResize({ id: this.id, mapBounds: bounds })
+        void this.updateMapBounds('onResize', bounds)
       }
       previous = bounds
       wasHidden = isHidden
@@ -312,14 +337,26 @@ export class NativeGoogleMap {
     this.resizeObserver = null
     window.removeEventListener('scroll', this.handleScroll)
     window.removeEventListener('resize', this.handleScroll)
-    await Promise.all(Array.from(this.listenerHandles.values(), (handle) => handle.remove()))
+    const removals = await Promise.allSettled(
+      Array.from(this.listenerHandles.values(), (handle) => handle.remove()),
+    )
     this.listenerHandles.clear()
+    const errors = removals
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map((result) => result.reason)
+    if (errors.length > 0) {
+      const noun = errors.length === 1 ? 'listener' : 'listeners'
+      throw new AggregateError(errors, `Failed to remove ${errors.length} native map bridge ${noun}`)
+    }
   }
 
-  private updateMapBounds(method: 'onResize' | 'onScroll') {
+  private updateMapBounds(
+    method: 'onDisplay' | 'onResize' | 'onScroll',
+    mapBounds = mapElementBounds(this.element),
+  ) {
     return capacitorGoogleMaps[method]({
       id: this.id,
-      mapBounds: mapElementBounds(this.element),
+      mapBounds,
     }).catch(() => undefined)
   }
 }
