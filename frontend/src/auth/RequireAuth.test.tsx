@@ -80,7 +80,8 @@ describe('<RequireAuth>', () => {
     )
     expect(screen.queryByTestId('protected')).toBeNull()
     expect(screen.queryByTestId('login')).toBeNull()
-    expect(document.querySelector('[aria-busy="true"]')).not.toBeNull()
+    expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite')
+    expect(screen.getByRole('status')).toHaveAttribute('aria-busy', 'true')
     expect(screen.getByRole('heading', { name: /preparing your trip planner/i })).toBeInTheDocument()
   })
 
@@ -111,6 +112,8 @@ describe('<RequireAuth>', () => {
     expect(
       screen.getByRole('heading', { name: /could not confirm your session/i }),
     ).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveAttribute('aria-live', 'assertive')
+    expect(screen.getByRole('alert')).not.toHaveAttribute('aria-busy')
 
     fireEvent.click(screen.getByRole('button', { name: /try again/i }))
     expect(retryAuthResolution).toHaveBeenCalledOnce()

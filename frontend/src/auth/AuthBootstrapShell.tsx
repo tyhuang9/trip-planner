@@ -31,7 +31,7 @@ export function AuthBootstrapShell() {
       <section
         className={styles.card}
         role={isOfflineUnknown ? 'alert' : 'status'}
-        aria-live="polite"
+        aria-live={isOfflineUnknown ? 'assertive' : 'polite'}
         aria-busy={isOfflineUnknown ? undefined : 'true'}
       >
         {!isOfflineUnknown ? <span className={styles.spinner} aria-hidden="true" /> : null}
