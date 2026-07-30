@@ -1,14 +1,25 @@
-import { describe, expect, it } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { RequireAuth } from './RequireAuth'
 import { AuthContext, type AuthContextValue } from './authContextValue'
+import {
+  clearPendingLogoutIntent,
+  persistPendingLogoutIntent,
+} from './logoutIntent'
+
+afterEach(() => {
+  clearPendingLogoutIntent()
+  vi.restoreAllMocks()
+})
 
 function makeAuth(overrides: Partial<AuthContextValue> = {}): AuthContextValue {
   return {
+    authStatus: 'unauthenticated',
     user: null,
     isAuthenticated: false,
     isInitializing: false,
+    retryAuthResolution: async () => {},
     login: async () => ({
       id: 1,
       email: 'a@b.com',
@@ -61,7 +72,11 @@ describe('<RequireAuth>', () => {
   it('renders an aria-busy placeholder while initializing', () => {
     renderWithAuth(
       '/protected',
-      makeAuth({ isInitializing: true, isAuthenticated: false }),
+      makeAuth({
+        authStatus: 'restoring',
+        isInitializing: true,
+        isAuthenticated: false,
+      }),
     )
     expect(screen.queryByTestId('protected')).toBeNull()
     expect(screen.queryByTestId('login')).toBeNull()
@@ -80,10 +95,79 @@ describe('<RequireAuth>', () => {
     // honouring end-to-end.
   })
 
+  it('hides protected content while auth is unresolved and offers retry', () => {
+    const retryAuthResolution = vi.fn(async () => {})
+    renderWithAuth(
+      '/protected',
+      makeAuth({
+        authStatus: 'offline-unknown',
+        isInitializing: true,
+        retryAuthResolution,
+      }),
+    )
+
+    expect(screen.queryByTestId('protected')).toBeNull()
+    expect(screen.queryByTestId('login')).toBeNull()
+    expect(
+      screen.getByRole('heading', { name: /could not confirm your session/i }),
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /try again/i }))
+    expect(retryAuthResolution).toHaveBeenCalledOnce()
+  })
+
+  it('unmounts protected content while rejected session data is cleared', () => {
+    renderWithAuth(
+      '/protected',
+      makeAuth({
+        authStatus: 'clearing-session',
+        isInitializing: true,
+        isAuthenticated: false,
+      }),
+    )
+
+    expect(screen.queryByTestId('protected')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('login')).not.toBeInTheDocument()
+    expect(document.querySelector('[aria-busy="true"]')).not.toBeNull()
+  })
+
+  it('explains that an offline logout is locally enforced', () => {
+    persistPendingLogoutIntent()
+    renderWithAuth(
+      '/protected',
+      makeAuth({ authStatus: 'offline-unknown', isInitializing: true }),
+    )
+
+    expect(
+      screen.getByRole('heading', { name: /finishing sign out/i }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /signed out on this device/i,
+    )
+    expect(screen.queryByTestId('protected')).toBeNull()
+  })
+
+  it('warns the user to keep the app open when logout intent is memory-only', () => {
+    vi.spyOn(Object.getPrototypeOf(localStorage), 'setItem').mockImplementation(() => {
+      throw new DOMException('Storage blocked', 'SecurityError')
+    })
+    persistPendingLogoutIntent()
+
+    renderWithAuth(
+      '/protected',
+      makeAuth({ authStatus: 'offline-unknown', isInitializing: true }),
+    )
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/keep dupert open/i)
+    expect(screen.getByRole('alert')).toHaveTextContent(/could not save/i)
+    expect(screen.queryByTestId('protected')).toBeNull()
+  })
+
   it('renders the matched outlet when authenticated', () => {
     renderWithAuth(
       '/protected',
       makeAuth({
+        authStatus: 'authenticated',
         isInitializing: false,
         isAuthenticated: true,
         user: { id: 1, email: 'a@b.com', displayName: 'A', emailVerified: true },

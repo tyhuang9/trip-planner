@@ -38,7 +38,7 @@ import {
 import { timelineDayColor } from '../utils/timelineDayColors'
 import styles from './TripMap.module.css'
 
-interface TripMapProps {
+export interface TripMapProps {
   activities: Activity[]
   activityMarkerColors?: Record<number, string>
   activityMarkerMode?: 'default' | 'timeline-days'
@@ -218,7 +218,9 @@ const MAP_ROUTE_STALE_TIME_MS = 60 * 60 * 1000
 const MAP_ROUTE_GC_TIME_MS = 60 * 60 * 1000
 const MAX_CONCURRENT_ROUTE_REQUESTS = 4
 const MIN_ROUTE_REQUEST_START_INTERVAL_MS = 600
-const MAP_GEOCODE_STALE_TIME_MS = 30 * 24 * 60 * 60 * 1000
+// Keep stale timers below the browser/Node timeout ceiling; Query adds 1 ms
+// when scheduling stale state, so leave that millisecond of headroom here.
+const MAP_GEOCODE_STALE_TIME_MS = 24 * 24 * 60 * 60 * 1000 - 1
 const MAP_GEOCODE_GC_TIME_MS = 60 * 60 * 1000
 
 function isFiniteCoordinate(value: unknown): value is number {

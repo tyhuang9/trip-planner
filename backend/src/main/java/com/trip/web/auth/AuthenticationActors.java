@@ -1,5 +1,7 @@
 package com.trip.web.auth;
 
+import java.util.Optional;
+
 import org.springframework.security.core.Authentication;
 
 import com.trip.service.trip.TripActor;
@@ -36,6 +38,18 @@ public final class AuthenticationActors {
             return TripActor.guest(guest.rawToken());
         }
         throw unauthenticated();
+    }
+
+    /** Returns the opaque guest credential only when the guest filter authenticated it. */
+    public static Optional<String> guestToken(Authentication authentication) {
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return Optional.empty();
+        }
+        Object principal = authentication.getPrincipal();
+        if (principal instanceof GuestPrincipal guest) {
+            return Optional.of(guest.rawToken());
+        }
+        return Optional.empty();
     }
 
     private static org.springframework.security.authentication.AuthenticationCredentialsNotFoundException unauthenticated() {

@@ -4,6 +4,7 @@ import { StrictMode, useEffect } from 'react'
 import userEvent from '@testing-library/user-event'
 import MockAdapter from 'axios-mock-adapter'
 import axios from 'axios'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { OutageBoundary } from './OutageBoundary'
 import { __resetOutageMonitorForTests, reportAmbiguousBackendFailure } from './outageMonitor'
 import { AuthProvider } from '../auth/AuthContext'
@@ -22,6 +23,21 @@ function app() {
 function AuthMountProbe({ onMount }: { onMount: () => void }) {
   useEffect(onMount, [onMount])
   return <span>Authenticated app mounted</span>
+}
+
+function authApp(onMount: () => void) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  return (
+    <QueryClientProvider client={queryClient}>
+      <OutageBoundary>
+        <AuthProvider>
+          <AuthMountProbe onMount={onMount} />
+        </AuthProvider>
+      </OutageBoundary>
+    </QueryClientProvider>
+  )
 }
 
 afterEach(() => {
@@ -44,13 +60,7 @@ describe('<OutageBoundary>', () => {
     refreshMock = new MockAdapter(axios)
     refreshMock.onPost('/api/auth/refresh').reply(401, { error: 'unauthenticated' })
     vi.stubGlobal('fetch', fetchMock)
-    render(
-      <OutageBoundary>
-        <AuthProvider>
-          <AuthMountProbe onMount={authChildMounted} />
-        </AuthProvider>
-      </OutageBoundary>,
-    )
+    render(authApp(authChildMounted))
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
     expect(screen.getByRole('status')).toHaveTextContent(/checking dupert’s route/i)
@@ -74,13 +84,7 @@ describe('<OutageBoundary>', () => {
     refreshMock = new MockAdapter(axios)
     refreshMock.onPost('/api/auth/refresh').reply(401, { error: 'unauthenticated' })
     vi.stubGlobal('fetch', fetchMock)
-    render(
-      <OutageBoundary>
-        <AuthProvider>
-          <AuthMountProbe onMount={authChildMounted} />
-        </AuthProvider>
-      </OutageBoundary>,
-    )
+    render(authApp(authChildMounted))
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
     expect(authChildMounted).not.toHaveBeenCalled()
@@ -156,7 +160,10 @@ describe('<OutageBoundary>', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(app())
 
-    reportAmbiguousBackendFailure({ response: { status: 500 } } as never)
+    reportAmbiguousBackendFailure({
+      isAxiosError: true,
+      response: { status: 500 },
+    })
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(/neon database/i)
     expect(alert).toHaveTextContent(/used up its monthly neon free-tier allowance/i)

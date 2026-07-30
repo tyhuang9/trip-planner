@@ -119,6 +119,21 @@ class SecurityDeploymentValidatorTest {
     }
 
     @Test
+    void productionLikeDeploymentRejectsWildcardNativeCorsOrigins() {
+        AppProperties app = appProperties("https://dupert.example", true);
+        app.setNativeAllowedOrigins("*");
+        app.setTrustProxy(true);
+        SecureProperties secure = secureProperties(true);
+        SecurityDeploymentValidator validator = new SecurityDeploymentValidator(
+            app, secure, new MockEnvironment().withProperty("spring.profiles.active", "staging"));
+
+        assertThatThrownBy(() -> validator.run(new DefaultApplicationArguments()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("NATIVE_ALLOWED_ORIGINS")
+            .hasMessageContaining("wildcards are not allowed");
+    }
+
+    @Test
     void signupOutsideLocalRequiresEmailConfiguration() {
         AppProperties app = appProperties("https://dupert.example", true);
         app.setTrustProxy(true);

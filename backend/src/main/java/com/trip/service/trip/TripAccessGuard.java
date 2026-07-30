@@ -1,6 +1,5 @@
 package com.trip.service.trip;
 
-import java.time.OffsetDateTime;
 import java.util.Optional;
 
 import org.springframework.security.access.AccessDeniedException;
@@ -8,16 +7,12 @@ import org.springframework.security.authentication.AuthenticationCredentialsNotF
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.trip.domain.GuestSession;
-import com.trip.domain.ShareLink;
 import com.trip.domain.Trip;
 import com.trip.domain.TripMember;
 import com.trip.domain.TripRole;
-import com.trip.repo.GuestSessionRepository;
-import com.trip.repo.ShareLinkRepository;
 import com.trip.repo.TripMemberRepository;
 import com.trip.repo.TripRepository;
-import com.trip.service.share.ShareTokenService;
+import com.trip.service.share.GuestSessionAccessService;
 import com.trip.web.exception.NotFoundException;
 
 /**
@@ -27,30 +22,22 @@ import com.trip.web.exception.NotFoundException;
  * doesn't exist" from "trip exists but I'm not on it" — that distinction would make
  * {@code publicId} an enumerable existence oracle.
  *
- * <p>This chunk wires the JWT/user path. The guest-session path (Piece 5) will plug in
- * via a future {@code resolveForGuest(publicId, guestSessionId)} method on this same
- * class; the current method names are deliberately user-scoped so the guest variant
- * doesn't have to fight for naming space.
+ * <p>Both member JWTs and anonymous guest credentials converge here. Guest access is
+ * revalidated against the persisted session and share-link lifecycle on every request.
  */
 @Service
 public class TripAccessGuard {
 
     private final TripRepository tripRepository;
     private final TripMemberRepository tripMemberRepository;
-    private final GuestSessionRepository guestSessionRepository;
-    private final ShareLinkRepository shareLinkRepository;
-    private final ShareTokenService shareTokenService;
+    private final GuestSessionAccessService guestSessionAccessService;
 
     public TripAccessGuard(TripRepository tripRepository,
                            TripMemberRepository tripMemberRepository,
-                           GuestSessionRepository guestSessionRepository,
-                           ShareLinkRepository shareLinkRepository,
-                           ShareTokenService shareTokenService) {
+                           GuestSessionAccessService guestSessionAccessService) {
         this.tripRepository = tripRepository;
         this.tripMemberRepository = tripMemberRepository;
-        this.guestSessionRepository = guestSessionRepository;
-        this.shareLinkRepository = shareLinkRepository;
-        this.shareTokenService = shareTokenService;
+        this.guestSessionAccessService = guestSessionAccessService;
     }
 
     /**
@@ -118,26 +105,21 @@ public class TripAccessGuard {
 
     @Transactional(readOnly = true)
     public ResolvedTrip resolveForGuest(String publicId, String rawGuestToken) {
-        if (rawGuestToken == null || rawGuestToken.isBlank()) {
-            throw new AuthenticationCredentialsNotFoundException("missing guest token");
+        GuestSessionAccessService.ResolvedGuestSession guest;
+        try {
+            guest = guestSessionAccessService.resolve(rawGuestToken);
+        } catch (NotFoundException missingLifecycle) {
+            throw new AuthenticationCredentialsNotFoundException(
+                "invalid guest session", missingLifecycle);
         }
-        String hash = shareTokenService.sha256Hex(rawGuestToken);
-        GuestSession guestSession = guestSessionRepository.findByTokenHash(hash)
-            .orElseThrow(() -> new AuthenticationCredentialsNotFoundException("invalid guest token"));
-        ShareLink shareLink = shareLinkRepository.findById(guestSession.getShareLinkId())
-            .orElseThrow(() -> new AuthenticationCredentialsNotFoundException("missing share link"));
-        OffsetDateTime now = OffsetDateTime.now();
-        if (shareLink.getRevokedAt() != null) {
-            throw new AuthenticationCredentialsNotFoundException("revoked guest share link");
-        }
-        if (shareLink.getExpiresAt() != null && !shareLink.getExpiresAt().isAfter(now)) {
-            throw new AuthenticationCredentialsNotFoundException("expired guest share link");
+        if (!publicId.equals(guest.publicId())) {
+            throw new NotFoundException("guest token does not grant this trip");
         }
         Trip trip = tripRepository.findByPublicId(publicId)
             .orElseThrow(() -> new NotFoundException("trip not found: publicId=" + publicId));
-        if (!trip.getId().equals(shareLink.getTripId())) {
+        if (!trip.getId().equals(guest.tripId())) {
             throw new NotFoundException("guest token does not grant this trip");
         }
-        return new ResolvedTrip(trip, shareLink.getRole(), guestSession.getId());
+        return new ResolvedTrip(trip, guest.role(), guest.guestSessionId());
     }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from 'react'
+import { useEffect, useId, useRef, type RefObject } from 'react'
 import styles from './ConfirmDialog.module.css'
 
 interface ConfirmDialogProps {
@@ -9,6 +9,8 @@ interface ConfirmDialogProps {
   cancelLabel?: string
   confirming?: boolean
   errorMessage?: string | null
+  modalFocusBranch?: boolean
+  restoreFocusFallbackRef?: RefObject<HTMLElement | null>
   onCancel: () => void
   onConfirm: () => void
 }
@@ -21,6 +23,8 @@ export function ConfirmDialog({
   cancelLabel = 'Cancel',
   confirming = false,
   errorMessage,
+  modalFocusBranch = false,
+  restoreFocusFallbackRef,
   onCancel,
   onConfirm,
 }: ConfirmDialogProps) {
@@ -37,6 +41,7 @@ export function ConfirmDialog({
   useEffect(() => {
     previousFocusRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const restoreFocusFallback = restoreFocusFallbackRef?.current
 
     const focusTimer = window.setTimeout(() => {
       cancelButtonRef.current?.focus()
@@ -53,13 +58,18 @@ export function ConfirmDialog({
     return () => {
       window.clearTimeout(focusTimer)
       document.removeEventListener('keydown', handleKeyDown)
-      previousFocusRef.current?.focus()
+      if (previousFocusRef.current?.isConnected) {
+        previousFocusRef.current.focus()
+      } else {
+        restoreFocusFallback?.focus()
+      }
     }
-  }, [])
+  }, [restoreFocusFallbackRef])
 
   return (
     <div
       className={styles.backdrop}
+      data-modal-focus-branch={modalFocusBranch ? 'true' : undefined}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
           onCancel()

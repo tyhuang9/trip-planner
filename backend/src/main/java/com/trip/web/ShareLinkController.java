@@ -19,8 +19,10 @@ import org.springframework.web.bind.annotation.RestController;
 import com.trip.service.share.ShareLinkService;
 import com.trip.web.auth.AuthenticationActors;
 import com.trip.web.auth.GuestSessionCookie;
+import com.trip.web.dto.share.AcceptGuestShareLinkBodyRequest;
 import com.trip.web.dto.share.AcceptGuestShareLinkRequest;
 import com.trip.web.dto.share.AcceptGuestShareLinkResponse;
+import com.trip.web.dto.share.AcceptShareLinkRequest;
 import com.trip.web.dto.share.AcceptShareLinkResponse;
 import com.trip.web.dto.share.CreateShareLinkRequest;
 import com.trip.web.dto.share.CreateShareLinkResponse;
@@ -86,21 +88,52 @@ public class ShareLinkController {
         return ResponseEntity.ok(shareLinkService.rename(publicId, userId, linkId, body.name()));
     }
 
-    @PostMapping("/api/share/{token}/accept")
+    @PostMapping("/api/share/accept")
     public ResponseEntity<AcceptShareLinkResponse> acceptForUser(
+            @Valid @RequestBody AcceptShareLinkRequest body,
+            Authentication authentication) {
+        return acceptForUser(body.token(), authentication);
+    }
+
+    @PostMapping("/api/share/guest")
+    public ResponseEntity<AcceptGuestShareLinkResponse> acceptForGuest(
+            @Valid @RequestBody AcceptGuestShareLinkBodyRequest body,
+            HttpServletResponse response) {
+        return acceptForGuest(body.token(), body.displayName(), response);
+    }
+
+    /** Compatibility route for clients deployed before token body transport. */
+    @Deprecated(forRemoval = true)
+    @PostMapping("/api/share/{token}/accept")
+    public ResponseEntity<AcceptShareLinkResponse> acceptForUserLegacy(
             @PathVariable @Pattern(regexp = SHARE_TOKEN_PATTERN) String token,
+            Authentication authentication) {
+        return acceptForUser(token, authentication);
+    }
+
+    /** Compatibility route for clients deployed before token body transport. */
+    @Deprecated(forRemoval = true)
+    @PostMapping("/api/share/{token}/guest")
+    public ResponseEntity<AcceptGuestShareLinkResponse> acceptForGuestLegacy(
+            @PathVariable @Pattern(regexp = SHARE_TOKEN_PATTERN) String token,
+            @Valid @RequestBody AcceptGuestShareLinkRequest body,
+            HttpServletResponse response) {
+        return acceptForGuest(token, body.displayName(), response);
+    }
+
+    private ResponseEntity<AcceptShareLinkResponse> acceptForUser(
+            String token,
             Authentication authentication) {
         Long userId = AuthenticationActors.requireUserId(authentication);
         return ResponseEntity.ok(shareLinkService.acceptForUser(token, userId));
     }
 
-    @PostMapping("/api/share/{token}/guest")
-    public ResponseEntity<AcceptGuestShareLinkResponse> acceptForGuest(
-            @PathVariable @Pattern(regexp = SHARE_TOKEN_PATTERN) String token,
-            @Valid @RequestBody AcceptGuestShareLinkRequest body,
+    private ResponseEntity<AcceptGuestShareLinkResponse> acceptForGuest(
+            String token,
+            String displayName,
             HttpServletResponse response) {
         ShareLinkService.AcceptedGuestSession accepted =
-            shareLinkService.acceptForGuest(token, body.displayName());
+            shareLinkService.acceptForGuest(token, displayName);
         guestSessionCookie.addToResponse(response, accepted.rawGuestToken());
         return ResponseEntity.ok(accepted.response());
     }

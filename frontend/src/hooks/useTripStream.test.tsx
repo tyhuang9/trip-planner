@@ -60,6 +60,7 @@ function tripEvent(type: string, overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+  sessionStorage.clear()
   queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -97,7 +98,10 @@ describe('useTripStream', () => {
     })
     expect(fetchEventSourceMock.mock.calls[0][0]).toBe('/api/trips/abc234def567/stream')
     expect(streamOptions().credentials).toBe('include')
-    expect(streamOptions().headers).toEqual({ Authorization: 'Bearer live-token' })
+    expect(streamOptions().headers).toMatchObject({
+      Authorization: 'Bearer live-token',
+      'X-Dupert-Stream-Client': expect.stringMatching(/^[A-Za-z0-9._~-]{16,64}$/),
+    })
     expect(streamOptions().openWhenHidden).toBe(false)
   })
 
@@ -150,7 +154,33 @@ describe('useTripStream', () => {
     await waitFor(() => {
       expect(fetchEventSourceMock).toHaveBeenCalledTimes(1)
     })
-    expect(streamOptions().headers).toEqual({ Authorization: 'Bearer fresh-token' })
+    expect(streamOptions().headers).toMatchObject({
+      Authorization: 'Bearer fresh-token',
+      'X-Dupert-Stream-Client': expect.stringMatching(/^[A-Za-z0-9._~-]{16,64}$/),
+    })
+  })
+
+  it('uses the same opaque client identity after a route remount', async () => {
+    const first = renderHook(() => useTripStream('abc234def567'), { wrapper })
+    await waitFor(() => expect(fetchEventSourceMock).toHaveBeenCalledTimes(1))
+    const firstClientId = streamOptions().headers?.['X-Dupert-Stream-Client']
+    first.unmount()
+
+    renderHook(() => useTripStream('abc234def567'), { wrapper })
+    await waitFor(() => expect(fetchEventSourceMock).toHaveBeenCalledTimes(2))
+
+    expect(streamOptions().headers?.['X-Dupert-Stream-Client']).toBe(firstClientId)
+  })
+
+  it('preserves cookie-backed guest auth while sending the client identity', async () => {
+    renderHook(() => useTripStream('abc234def567'), { wrapper })
+
+    await waitFor(() => expect(fetchEventSourceMock).toHaveBeenCalledTimes(1))
+
+    expect(streamOptions().credentials).toBe('include')
+    expect(streamOptions().headers).toEqual({
+      'X-Dupert-Stream-Client': expect.stringMatching(/^[A-Za-z0-9._~-]{16,64}$/),
+    })
   })
 
   it('does not retry forbidden stream setup failures', async () => {
@@ -188,6 +218,41 @@ describe('useTripStream', () => {
 
     expect(streamOptions().onerror?.(new Error('network lost'))).toBe(1000)
     expect(streamOptions().onerror?.(new Error('network lost'))).toBe(2000)
+  })
+
+  it('resynchronizes exactly once when a dropped stream reopens', async () => {
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+    renderHook(() => useTripStream('abc234def567'), { wrapper })
+    await waitFor(() => expect(fetchEventSourceMock).toHaveBeenCalledTimes(1))
+
+    expect(streamOptions().onerror?.(new Error('network lost'))).toBeGreaterThan(0)
+    await act(async () => {
+      await streamOptions().onopen(
+        new Response('', { headers: { 'content-type': 'text/event-stream' } }),
+      )
+      await streamOptions().onopen(
+        new Response('', { headers: { 'content-type': 'text/event-stream' } }),
+      )
+    })
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: tripKeys.detail('abc234def567'),
+    })
+    expect(invalidateSpy.mock.calls.filter(
+      ([options]) => JSON.stringify(options) === JSON.stringify({
+        queryKey: tripKeys.detail('abc234def567'),
+      }),
+    )).toHaveLength(1)
+  })
+
+  it('aborts the stream when its route owner unmounts', async () => {
+    const { unmount } = renderHook(() => useTripStream('abc234def567'), { wrapper })
+    await waitFor(() => expect(fetchEventSourceMock).toHaveBeenCalledTimes(1))
+    const signal = streamOptions().signal
+
+    unmount()
+
+    expect(signal.aborted).toBe(true)
   })
 
   it('coalesces activity query invalidation for a realtime burst', async () => {
@@ -308,6 +373,18 @@ describe('useTripStream', () => {
     })
   })
 
+  it('ignores server heartbeat events', async () => {
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+    renderHook(() => useTripStream('abc234def567'), { wrapper })
+    await waitFor(() => expect(fetchEventSourceMock).toHaveBeenCalledTimes(1))
+
+    act(() => {
+      streamOptions().onmessage({ event: 'heartbeat', data: '' })
+    })
+
+    expect(invalidateSpy).not.toHaveBeenCalled()
+  })
+
   it('closes while hidden and resynchronizes once after reconnecting', async () => {
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
     renderHook(() => useTripStream('abc234def567'), { wrapper })
@@ -321,9 +398,13 @@ describe('useTripStream', () => {
       setDocumentVisibility('hidden')
     })
     expect(firstSignal.aborted).toBe(true)
+    window.dispatchEvent(new Event('focus'))
+    expect(fetchEventSourceMock).toHaveBeenCalledTimes(1)
 
     act(() => {
       setDocumentVisibility('visible')
+      window.dispatchEvent(new Event('focus'))
+      window.dispatchEvent(new Event('pageshow'))
     })
     await waitFor(() => {
       expect(fetchEventSourceMock).toHaveBeenCalledTimes(2)

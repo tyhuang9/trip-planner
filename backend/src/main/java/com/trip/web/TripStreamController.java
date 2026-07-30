@@ -10,6 +10,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -34,6 +35,8 @@ import jakarta.validation.constraints.Pattern;
 public class TripStreamController {
 
     static final String PUBLIC_ID_PATTERN = "[a-z0-9]{1,24}";
+    public static final String STREAM_CLIENT_HEADER = "X-Dupert-Stream-Client";
+    static final String STREAM_CLIENT_PATTERN = "[A-Za-z0-9._~-]{16,64}";
 
     private final TripAccessGuard tripAccessGuard;
     private final TripEventBroker tripEventBroker;
@@ -50,6 +53,8 @@ public class TripStreamController {
     @GetMapping(path = "/trips/{publicId}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamTrip(
             @PathVariable @Pattern(regexp = PUBLIC_ID_PATTERN) String publicId,
+            @RequestHeader(name = STREAM_CLIENT_HEADER, required = false)
+            @Pattern(regexp = STREAM_CLIENT_PATTERN) String streamClientId,
             Authentication authentication,
             HttpServletRequest request) {
         TripActor actor = AuthenticationActors.requireTripActor(authentication);
@@ -57,7 +62,8 @@ public class TripStreamController {
         return tripEventBroker.subscribe(
             resolved.trip().getId(),
             streamActorKey(actor),
-            RateLimitFilter.clientIp(request, trustProxy));
+            RateLimitFilter.clientIp(request, trustProxy),
+            streamClientId);
     }
 
     private static String streamActorKey(TripActor actor) {

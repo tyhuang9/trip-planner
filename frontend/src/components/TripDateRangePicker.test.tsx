@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { TripDateRangePicker } from './TripDateRangePicker'
@@ -225,11 +225,16 @@ describe('<TripDateRangePicker>', () => {
     )
     mockFieldRect()
 
-    await userEvent.click(screen.getByRole('button', { name: /trip dates/i }))
+    const trigger = screen.getByRole('button', { name: /trip dates/i })
+    await userEvent.click(trigger)
     expect(screen.getByRole('dialog', { name: /trip dates/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /choose friday, may 1, 2026/i })).toHaveFocus()
 
-    fireEvent.keyDown(document, { key: 'Escape' })
+    await userEvent.keyboard('{Escape}')
 
-    expect(screen.queryByRole('dialog', { name: /trip dates/i })).not.toBeInTheDocument()
+    await vi.waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /trip dates/i })).not.toBeInTheDocument()
+      expect(trigger).toHaveFocus()
+    })
   })
 })

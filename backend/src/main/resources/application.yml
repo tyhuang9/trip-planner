@@ -39,8 +39,6 @@ spring:
   flyway:
     # DatabaseMigrationCoordinator owns migration so database loss cannot block boot.
     enabled: false
-    baseline-on-migrate: false
-    locations: classpath:db/migration
   jackson:
     deserialization:
       fail-on-unknown-properties: true
@@ -73,6 +71,8 @@ server:
 app:
   # CORS allowlist. Comma-separated list of exact origins. Required.
   frontend-origin: ${ALLOWED_ORIGINS:}
+  # Native WebView CORS allowlist. Comma-separated exact origins; never a wildcard.
+  native-allowed-origins: ${NATIVE_ALLOWED_ORIGINS:}
   # Public browser origin used when composing email links.
   public-frontend-url: ${APP_PUBLIC_FRONTEND_URL:}
   # JWT HS256 secret. Required — must be >= 32 bytes after decode. No default in prod.
@@ -84,6 +84,9 @@ app:
   cookies:
     secure: false
     same-site: ${APP_COOKIES_SAME_SITE:Strict}
+  # Keep the persisted anonymous credential and browser cookie on one lifetime.
+  guest-session:
+    ttl: ${GUEST_SESSION_TTL:14d}
   signup-enabled: ${SIGNUP_ENABLED:true}
   email:
     brevo-api-key: ${BREVO_API_KEY:}
@@ -99,6 +102,12 @@ app:
     geocode-ttl: ${GOOGLE_MAPS_GEOCODE_TTL:30d}
     route-ttl: ${GOOGLE_MAPS_ROUTE_TTL:1h}
     photo-ttl: ${GOOGLE_MAPS_PHOTO_TTL:1d}
+  # SSE is probed every 15s, is stale after two missed probes, and is renewed
+  # after 2m so abandoned transport state cannot occupy capacity indefinitely.
+  realtime:
+    heartbeat-interval: ${SSE_HEARTBEAT_INTERVAL:15s}
+    stale-after: ${SSE_STALE_AFTER:30s}
+    max-lifetime: ${SSE_MAX_LIFETIME:2m}
   # Honor X-Forwarded-For for client-IP resolution. Default false; flip to true only
   # behind a proxy that overwrites (not appends) the header (Fly, Vercel).
   trust-proxy: ${APP_TRUST_PROXY:false}

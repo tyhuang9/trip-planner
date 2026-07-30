@@ -1,0 +1,91 @@
+.prompt {
+  position: fixed;
+  right: max(var(--space-4), env(safe-area-inset-right));
+  bottom: max(var(--space-4), env(safe-area-inset-bottom));
+  z-index: 1000;
+  display: grid;
+  width: min(420px, calc(100vw - (2 * var(--space-4))));
+  gap: var(--space-3);
+  padding: var(--space-4);
+  color: var(--color-text);
+  background: var(--color-floating-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(18px);
+}
+
+.title {
+  display: block;
+  margin-bottom: var(--space-1);
+  font-size: var(--font-size-base);
+}
+
+.message {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-base);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.primaryAction,
+.secondaryAction {
+  min-height: 44px;
+  padding: 0 var(--space-4);
+  font: inherit;
+  font-weight: 700;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.primaryAction {
+  color: var(--color-primary-fg);
+  background: var(--color-primary);
+  border: 1px solid var(--color-primary);
+}
+
+.primaryAction:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+}
+
+.primaryAction:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.secondaryAction {
+  color: var(--color-text);
+  background: transparent;
+  border: 1px solid var(--color-border-strong);
+}
+
+.secondaryAction:hover {
+  background: var(--color-primary-softer);
+}
+
+.primaryAction:focus-visible,
+.secondaryAction:focus-visible {
+  outline: 3px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+@media (max-width: 480px) {
+  .prompt {
+    right: max(var(--space-3), env(safe-area-inset-right));
+    bottom: max(var(--space-3), env(safe-area-inset-bottom));
+    width: calc(100vw - (2 * var(--space-3)) - env(safe-area-inset-left) - env(safe-area-inset-right));
+  }
+
+  .actions,
+  .primaryAction,
+  .secondaryAction {
+    width: 100%;
+  }
+}

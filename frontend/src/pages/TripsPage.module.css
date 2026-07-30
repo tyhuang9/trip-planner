@@ -984,6 +984,18 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* Keep the card track fluid at handset widths instead of retaining the
+     desktop card max-width against the start edge of the grid. */
+  .tripGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* iOS zooms the viewport when a focused input uses a font smaller than
+     16px. The search field can be focused after a filter is reset. */
+  .searchField input {
+    font-size: var(--font-size-base);
+  }
+
   .filterGroup {
     justify-content: flex-start;
   }

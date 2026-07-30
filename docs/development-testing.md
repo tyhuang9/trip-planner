@@ -30,10 +30,11 @@ In the local profile, email verification is disabled, new users are immediately 
 From the repo root:
 
 ```bash
+npm run db:up
 npm run dev
 ```
 
-The dev script sources `backend/.env` and defaults the backend to `SPRING_PROFILES_ACTIVE=local`.
+The dev script sources `backend/.env` and defaults the backend to `SPRING_PROFILES_ACTIVE=local`. The copied `backend/.env.example` points to the local PostgreSQL container; see the [local database guide](../README.md#local-postgresql-database) to use a different port or intentionally override it with Neon.
 
 ## Log In As A Seeded User
 
@@ -80,6 +81,8 @@ curl -i -X POST http://localhost:8000/api/dev/users/reseed
 ```
 
 `reseed` recreates the default `@test.local` users. It does not wipe the database.
+
+To wipe all local development data for the selected PostgreSQL major, use `npm run db:reset` from the repo root and confirm the prompt. It verifies and removes only `dupert_local_postgres_<major>_data`, starts an empty local database, and the next `npm run dev` applies Flyway migrations and recreates the default users. Volumes for other majors remain intact. In non-interactive automation, use `npm run db:reset -- --force` only when deleting that local data is intended.
 
 ## Production Safety
 

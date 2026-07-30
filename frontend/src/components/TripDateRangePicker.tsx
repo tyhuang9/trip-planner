@@ -153,6 +153,7 @@ export function TripDateRangePicker({
   const [activePart, setActivePart] = useState<DateRangePart>('start')
   const fieldRef = useRef<HTMLDivElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
   const [panelStyle, setPanelStyle] = useState<CSSProperties | null>(null)
   const [panelPlacement, setPanelPlacement] = useState<DatePickerPlacement>('below')
   const [visibleMonth, setVisibleMonth] = useState(() =>
@@ -216,6 +217,21 @@ export function TripDateRangePicker({
     updatePanelPosition()
   }, [isOpen, updatePanelPosition, visibleMonth])
 
+  useLayoutEffect(() => {
+    if (!isOpen) return
+    const initialFocus =
+      panelRef.current?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]') ??
+      panelRef.current?.querySelector<HTMLButtonElement>('button:not([disabled])')
+    initialFocus?.focus({ preventScroll: true })
+  }, [isOpen])
+
+  const closePicker = useCallback((restoreTriggerFocus: boolean) => {
+    setIsOpen(false)
+    if (restoreTriggerFocus) {
+      window.requestAnimationFrame(() => triggerRef.current?.focus({ preventScroll: true }))
+    }
+  }, [])
+
   useEffect(() => {
     if (!isOpen) return undefined
 
@@ -223,11 +239,13 @@ export function TripDateRangePicker({
       const target = event.target
       if (!(target instanceof Node)) return
       if (fieldRef.current?.contains(target) || panelRef.current?.contains(target)) return
-      setIsOpen(false)
+      closePicker(false)
     }
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setIsOpen(false)
+        event.preventDefault()
+        event.stopPropagation()
+        closePicker(true)
       }
     }
 
@@ -242,7 +260,7 @@ export function TripDateRangePicker({
       window.removeEventListener('resize', updatePanelPosition)
       window.removeEventListener('scroll', updatePanelPosition, true)
     }
-  }, [isOpen, updatePanelPosition])
+  }, [closePicker, isOpen, updatePanelPosition])
 
   function openPicker(part: DateRangePart = startDate && !endDate ? 'end' : 'start') {
     if (disabled) return
@@ -318,6 +336,7 @@ export function TripDateRangePicker({
       aria-modal="false"
       aria-labelledby={dateRangeId}
       id={datePickerId}
+      data-modal-focus-branch="true"
     >
       <div className={styles.datePickerCalendarArea}>
         <button
@@ -352,7 +371,7 @@ export function TripDateRangePicker({
         <button
           type="button"
           className={styles.datePickerDone}
-          onClick={() => setIsOpen(false)}
+          onClick={() => closePicker(true)}
         >
           Done
         </button>
@@ -366,6 +385,7 @@ export function TripDateRangePicker({
         {label}
       </span>
       <button
+        ref={triggerRef}
         type="button"
         className={styles.dateRangeTrigger}
         onClick={() => openPicker()}

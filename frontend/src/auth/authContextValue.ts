@@ -7,6 +7,7 @@ import type {
   UpdateProfileRequest,
   UserSummary,
 } from '../types/auth'
+import type { AuthStatus } from './authStore'
 
 /**
  * Auth context shape exposed to the rest of the app. The state fields
@@ -19,6 +20,7 @@ import type {
  * that for HMR to work cleanly.
  */
 export interface AuthContextValue {
+  authStatus: AuthStatus
   user: UserSummary | null
   isAuthenticated: boolean
   /**
@@ -28,6 +30,7 @@ export interface AuthContextValue {
    * /login on every cold load.
    */
   isInitializing: boolean
+  retryAuthResolution: () => Promise<void>
   login: (body: LoginRequest) => Promise<UserSummary>
   register: (body: RegisterRequest) => Promise<RegisterResponse>
   updateProfile: (body: UpdateProfileRequest) => Promise<UserSummary>

@@ -19,11 +19,11 @@ These screenshots use the local demo seed data described in [Development Auth Te
 
 ## Tech stack
 
-**Backend** — Java 21, Spring Boot 3.5, Gradle, Spring Security, Spring Data JPA, Flyway, JJWT, Bucket4j, PostgreSQL (hosted on [Neon](https://neon.tech)).
+**Backend** — Java 21, Spring Boot 3.5, Gradle, Spring Security, Spring Data JPA, Flyway, JJWT, Bucket4j, PostgreSQL (local Docker for development; [Neon](https://neon.tech) in production).
 
 **Frontend** — Vite, React 19, TypeScript, React Router, TanStack Query, Zustand, Axios, `@microsoft/fetch-event-source` (SSE), `@vis.gl/react-google-maps`, `@dnd-kit`, `date-fns`. Plain CSS Modules.
 
-**External services** — [Google Maps Platform](https://developers.google.com/maps) (browser map rendering plus backend-proxied Places, geocoding, photos, and routes); [Neon](https://neon.tech) (managed Postgres); [Brevo](https://www.brevo.com/) (transactional auth email in production).
+**External services** — [Google Maps Platform](https://developers.google.com/maps) (browser map rendering plus backend-proxied Places, geocoding, photos, and routes); [Neon](https://neon.tech) (managed production Postgres); [Brevo](https://www.brevo.com/) (transactional auth email in production).
 
 **Realtime** — Server-Sent Events (`/api/trips/{id}/stream`); events carry pointers, not payloads, so subscribers always refetch through the authenticated API.
 
@@ -31,11 +31,12 @@ These screenshots use the local demo seed data described in [Development Auth Te
 
 - **JDK 21** (Temurin recommended). Verify: `java -version` reports `21`.
 - **Node 20+** and **npm**.
-- A **Neon** project (free tier is fine). Grab the dev-branch connection string from the Neon dashboard.
+- **Docker Desktop** (or Docker Engine) with **Docker Compose v2** for the default local PostgreSQL database.
+- A **Neon** project only if you intentionally want to use a hosted database instead of the local default.
 - A **Google Maps Platform** browser API key for the Maps JavaScript API. Restrict this key by HTTP referrer to `http://localhost:3000/*` for local development and to your production origins later.
 - A **Google Maps Platform** backend API key for Places API (New), Geocoding API, and Routes API requests. Restrict this key for backend use only.
 
-No Docker, no local Postgres install, no global Gradle.
+No manual PostgreSQL or global Gradle installation is required.
 
 ## Setup
 
@@ -45,11 +46,12 @@ cd dupert
 cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env
 # Edit backend/.env and fill in real values for:
-#   DATABASE_URL          (Neon connection string — wrap in single quotes if it
-#                          contains '&', e.g. '...?sslmode=require&channel_binding=require')
+#   DATABASE_URL          (local Postgres is pre-filled; use a quoted Neon URL
+#                          only when intentionally overriding it, e.g. '...?sslmode=require&channel_binding=require')
 #   JWT_SECRET            (generate: openssl rand -hex 32)
 #   LOG_EMAIL_PEPPER      (generate: openssl rand -hex 16)
 #   ALLOWED_ORIGINS       (exact frontend origin, e.g. http://localhost:3000)
+#   NATIVE_ALLOWED_ORIGINS (exact Capacitor origins for deployed native CORS)
 #   APP_PUBLIC_FRONTEND_URL (same public frontend origin used in email links)
 #   SPRING_PROFILES_ACTIVE=local for local development
 #   GOOGLE_MAPS_API_KEY   (backend key for Places, Geocoding, Routes, and photos)
@@ -70,6 +72,42 @@ npm install
 ```
 
 The backend uses the Gradle wrapper, so the first `./gradlew` invocation will fetch Gradle automatically — nothing to install ahead of time.
+
+## Local PostgreSQL database
+
+The checked-in `backend/.env.example` uses a local PostgreSQL 16 container. PostgreSQL 16 is a mature, supported major, and real PostgreSQL is the intended compatibility target for the existing PostgreSQL-specific Flyway migrations and JPA/Hibernate mappings. Start it before the app:
+
+```bash
+npm run db:up
+npm run dev
+```
+
+For detached services, use `npm run startdb` / `npm run stopdb` and `npm run startback` / `npm run stopback`. Backend state and logs are scoped to `.dupert/runtime/` in each worktree. The Compose database is intentionally shared across worktrees through its repository-local project and volume names, so `stopdb` stops that shared database service for every worktree using it. `startback` requires `backend/.env` and refuses to signal a process whose isolated group, start time, or exact command does not match its private state file.
+
+`db:up` waits for PostgreSQL's health check. PostgreSQL 16 data lives in the named `dupert_local_postgres_16_data` Docker volume, so it persists across `npm run db:down` and later `npm run db:up` runs. Each configured major gets a separate volume (`dupert_local_postgres_<major>_data`), preventing a PostgreSQL 16 data directory from being reused by PostgreSQL 17. `npm run dev` deliberately does not start Docker or rewrite `DATABASE_URL`; this keeps developers who have a custom external database URL in control.
+
+The container and default `DATABASE_URL` use `127.0.0.1`; PostgreSQL is not exposed on other host interfaces. The lifecycle script also refuses SSH and TCP Docker endpoints, including loopback TCP, and accepts only local `unix://` or `npipe://` endpoints. It accounts for Docker's precedence rule where `DOCKER_CONTEXT` overrides `DOCKER_HOST`. Its `dupert` / `dupert_local_dev_password` credentials are intentionally weak and must remain local-only—never copy them to Neon, Render, or any shared environment.
+
+| Command | What it does |
+|---|---|
+| `npm run db:up` | Start PostgreSQL and wait until healthy. |
+| `npm run db:down` | Stop PostgreSQL without deleting data. |
+| `npm run db:status` | Show the local container status. |
+| `npm run db:logs` | Follow local PostgreSQL logs. |
+| `npm run db:reset` | Interactively delete only Dupert's local database volume, then start a fresh database. |
+
+`db:reset` requires typing `RESET`. For intentional non-interactive use, run `npm run db:reset -- --force`; it verifies the selected major's volume before stopping Compose and again immediately before deletion. It deletes no other major's volume. If that volume does not exist, reset skips explicit teardown and deletion before starting a fresh database. On the next backend start, Flyway should reapply every migration and the local profile should create its usual seeded users. To reseed users without wiping other local data, use the `/api/dev/users/reseed` endpoint described in [Development Auth Testing](docs/development-testing.md).
+
+To use Neon or another external PostgreSQL database instead, replace `DATABASE_URL` in your untracked `backend/.env` with that URL (quote shell metacharacters). The database lifecycle commands never read or overwrite it. Production Neon and Render configuration are unchanged.
+
+The image major is configurable for deliberate compatibility testing (the default is `16`): `DUPERT_POSTGRES_MAJOR=17 npm run db:up`. Run the reset command with the same variable to reset that major's volume. To use another free local port, run `DUPERT_POSTGRES_PORT=5433 npm run db:up` and change the port in your local `DATABASE_URL` to `127.0.0.1:5433`. Major and port inputs are validated before Docker runs. If Docker or Compose is missing, Docker Desktop is not running, the Docker endpoint is not local, or Compose lacks `up --wait`, the command stops with corrective guidance. Use `npm run db:logs` after startup failures.
+
+The Docker-free contract tests verify configuration and destructive-operation guards, not actual PostgreSQL startup or migration compatibility. Verify the runtime on a Docker-equipped machine before relying on it:
+
+1. Run `npm run db:up`, then `npm run db:status`; PostgreSQL should report healthy.
+2. Run `npm run dev`; confirm the backend logs show Flyway completing and Spring Boot starting without schema-validation errors.
+3. Create `david@test.local` using the command in [Development Auth Testing](docs/development-testing.md), stop the app, run `npm run db:down`, then `npm run db:up` and `npm run dev`; `curl -s http://localhost:8000/api/dev/users` should still list David.
+4. Stop the app, run `npm run db:reset`, restart with `npm run dev`, and list users again; David should be absent and the four default users should exist.
 
 ## Run (development)
 
@@ -106,6 +144,7 @@ If Gradle complains about Java, export `JAVA_HOME` explicitly:
 export JAVA_HOME="<path-to-your-jdk-21>"
 ```
 
+Flyway will run all migrations against the database selected by `DATABASE_URL` on first boot.
 The backend starts even while Neon is unavailable. It runs Flyway asynchronously once
 database connectivity returns; local demo users are then seeded after that migration.
 
@@ -115,7 +154,14 @@ The frontend client defaults to the same-origin API root `/api`. In local develo
 
 `VITE_BACKEND_API_URL` is only needed when the browser must call a separate backend origin directly. Set it to the backend base URL only, such as `https://backend.example.com`; the frontend appends `/api` when building requests. Also set backend `ALLOWED_ORIGINS` to the exact frontend browser origin.
 
-`ALLOWED_ORIGINS` controls browser CORS. `APP_PUBLIC_FRONTEND_URL` is separate: the backend uses it to build email verification and password-reset links.
+`ALLOWED_ORIGINS` controls browser CORS. `NATIVE_ALLOWED_ORIGINS` is a separate
+exact allowlist for bundled Capacitor WebViews; use
+`capacitor://localhost,https://localhost` on the deployed staging and production
+backends, never a wildcard. `APP_PUBLIC_FRONTEND_URL` remains separate: the
+backend uses it to build email verification and password-reset links.
+
+For the explicit web/native profile matrix, public-configuration rules, and
+Capacitor/deployment setup, see [Web and native build profiles](docs/mobile/build-profiles.md).
 
 ## Other commands
 
@@ -136,10 +182,19 @@ The frontend client defaults to the same-origin API root `/api`. In local develo
 |---|---|
 | `npm run dev` | Vite dev server with HMR on port 3000 |
 | `npm run build` | Production build to `dist/` |
+| `npm run build:web:<development\|staging\|production>` | Explicit web profile build |
+| `npm run build:native:<development\|staging\|production>` | Explicit native profile build plus browser-only artifact inspection |
+| `npm run sync:native:<development\|staging\|production>` | Build that native profile, inspect it, then sync it into both Capacitor projects |
 | `npm run preview` | Serve the production build locally |
 | `npm run lint` | ESLint |
 | `npm run test` | Vitest unit/component tests |
 | `npm audit --omit=dev` | Audit production dependency tree |
+
+**Local database** (run from the repo root):
+
+| Command | What it does |
+|---|---|
+| `npm run test:local-db` | Run Docker-free lifecycle/configuration contract checks. |
 
 Before pushing a feature, run:
 
@@ -166,7 +221,8 @@ On pushes to `main`, pull requests, and manual dispatches CI runs:
 
 - backend tests on Java 21
 - backend OWASP Dependency-Check against the cached vulnerability database, with HTML/JSON reports uploaded as artifacts
-- frontend `npm ci`, lint, tests, production build, and production dependency audit
+- frontend `npm ci`, lint, tests, all six web/native profile builds, bundle-budget enforcement, and production dependency audit
+- a native staging build plus deterministic Capacitor sync using a non-secret CI URL; this does not compile or launch a simulator/emulator
 
 The CI workflow does not require app runtime secrets. Backend tests use the test profile and do not require a Neon URL, Google Maps key, or local `.env`. Dependency-Check scans do not call NVD during push or pull request CI; they restore `~/.gradle/dependency-check-data` from the latest successful data refresh. If that cache is missing, CI warns and skips the scan for that run.
 
@@ -189,7 +245,9 @@ dupert/
 │       ├── pages/   Top-level routes
 │       ├── components/  UI building blocks
 │       └── hooks/   Trip data, SSE stream, …
-│   └── .env.example Frontend config template — copy to frontend/.env
+│   ├── .env.example Frontend config template — copy to frontend/.env
+│   ├── ios/         Generated Capacitor iOS project
+│   └── android/     Generated Capacitor Android project
 ├── backend/.env.example Backend config template — copy to backend/.env
 └── README.md
 ```
@@ -198,7 +256,7 @@ dupert/
 
 | Variable | Used by | Description |
 |---|---|---|
-| `DATABASE_URL` | backend | Neon (or any Postgres) connection string |
+| `DATABASE_URL` | backend | Local Postgres by default; Neon or any PostgreSQL URL when intentionally overridden |
 | `DB_POOL_MAX_SIZE` | backend | Hikari maximum connections for one backend instance; default `4` |
 | `DB_POOL_MIN_IDLE` | backend | Hikari minimum idle connections; default `0` so Neon can sleep |
 | Database health timeout | backend | Hikari acquisition is fixed at `3000` ms and validation at `1000` ms so database health remains bounded |
@@ -207,6 +265,7 @@ dupert/
 | `JWT_SECRET` | backend | 32 random bytes (hex) for signing access tokens |
 | `LOG_EMAIL_PEPPER` | backend | 16 random bytes (hex) for hashing emails in logs |
 | `ALLOWED_ORIGINS` | backend | Exact frontend origins allowed by CORS, comma-separated (no `*`) |
+| `NATIVE_ALLOWED_ORIGINS` | backend | Exact bundled Capacitor origins allowed by CORS, comma-separated (normally `capacitor://localhost,https://localhost`; no `*`) |
 | `APP_PUBLIC_FRONTEND_URL` | backend | Public frontend origin used in password reset and email verification links |
 | `APP_TRUST_PROXY` | backend | Set `true` only behind a trusted platform proxy such as Render so rate limits use the real client IP |
 | `APP_COOKIES_SECURE` | backend | Set `true` in production so refresh and guest cookies are HTTPS-only |
@@ -232,11 +291,12 @@ Set these backend environment variables on Render for production:
 ```bash
 SPRING_PROFILES_ACTIVE=prod
 APP_TRUST_PROXY=true
-ALLOWED_ORIGINS=https://<frontend-origin>
+ALLOWED_ORIGINS=https://dupert.vercel.app
+NATIVE_ALLOWED_ORIGINS=capacitor://localhost,https://localhost
 APP_COOKIES_SECURE=true
 APP_COOKIES_SAME_SITE=None
 SECURE_HSTS_ENABLED=true
-APP_PUBLIC_FRONTEND_URL=https://<frontend-origin>
+APP_PUBLIC_FRONTEND_URL=https://dupert.vercel.app
 SIGNUP_ENABLED=false
 DB_POOL_MAX_SIZE=4
 DB_POOL_MIN_IDLE=0
@@ -245,7 +305,15 @@ DB_CHECK_INTERVAL_MS=5000
 
 `SPRING_PROFILES_ACTIVE=prod` loads `application-prod.yml`, which sets secure cookies, `SameSite=None`, and HSTS. Keep `APP_COOKIES_SECURE=true`, `APP_COOKIES_SAME_SITE=None` for split-origin deployments, and `SECURE_HSTS_ENABLED=true` explicit on Render as a deployment guard against missing or overridden profile config.
 
-`APP_TRUST_PROXY=true` is required on Render because the backend is behind Render's proxy and rate limiting must use the trusted forwarded client IP. `ALLOWED_ORIGINS` must be the exact frontend browser origin with no wildcard and no trailing slash. `APP_PUBLIC_FRONTEND_URL` must be the same frontend origin used for auth email and reset links.
+`APP_TRUST_PROXY=true` is required on Render because the backend is behind Render's proxy and rate limiting must use the trusted forwarded client IP. `ALLOWED_ORIGINS` must be the exact frontend browser origin with no wildcard and no trailing slash. `NATIVE_ALLOWED_ORIGINS` must contain only the exact observed Capacitor WebView origins; do not replace it with a wildcard. `APP_PUBLIC_FRONTEND_URL` must be the same frontend origin used for auth email and reset links.
+
+For staging, use the same exact `NATIVE_ALLOWED_ORIGINS` value with the staging
+backend `https://dupert-pm90.onrender.com`; set `ALLOWED_ORIGINS` and
+`APP_PUBLIC_FRONTEND_URL` to the actual staging browser origin rather than
+guessing a preview URL. Native staging and production frontend profiles already
+use their respective backend base URLs without `/api`. Before deployment or
+release, inspect packaged-app network requests to verify each platform's actual
+`Origin` header and update only the precise deployed allowlist if needed.
 
 Use Neon's direct database endpoint with this one Hikari pool; do not layer the
 Neon pooled endpoint over it for a single Render instance. Keep Render and Neon
@@ -336,8 +404,10 @@ If password reset or verification emails are not arriving in `dev`/`prod`, verif
 - Public auth/share endpoints and the database health probe are rate limited in memory. This is fine for a small deployment, but limits reset on backend restart and are weaker against distributed abuse.
 - `/api/dev/**` endpoints are registered only under `SPRING_PROFILES_ACTIVE=local` and operate only on `@test.local` accounts.
 - Share links store only a SHA-256 hash of the raw token and can be revoked by the trip owner.
+- Share acceptance tokens travel in request bodies; follow the [dual-route rollout and rollback procedure](docs/share-token-body-migration.md) before removing compatibility routes.
 - Anonymous guest writes require the guest cookie plus the `X-Dupert-Guest-Write: 1` header, and guest/share endpoints are rate limited.
 - SSE events on `/api/trips/{publicId}/stream` contain only pointers such as event type, trip id, activity id, or day date; clients refetch the real data through authenticated API calls.
+- Trip SSE connections receive a heartbeat every 15 seconds, are removed after 30 seconds without a successful write, and are renewed after 2 minutes by default (`SSE_HEARTBEAT_INTERVAL`, `SSE_STALE_AFTER`, `SSE_MAX_LIFETIME`). Mobile reconnects reuse an opaque `X-Dupert-Stream-Client` identity so the server replaces that actor/trip/client predecessor before enforcing hard actor, IP, trip, and process caps. Micrometer records active, stale, expired, replaced, rejected, and heartbeat counts with bounded reason/scope tags; logs never include actor keys, client identities, guest tokens, or client IPs.
 - The browser key is only for Maps JavaScript rendering and should be HTTP-referrer restricted. Expensive or cacheable Google web-service calls run through authenticated backend endpoints using `GOOGLE_MAPS_API_KEY`; do not expose the backend key to the frontend.
 - `VITE_APP_ACCESS_PASSWORD` is a lightweight first-screen wall only. Because Vite embeds `VITE_*` values in the browser bundle, it is not a replacement for backend access control.
 - Keep `backend/.env` and `frontend/.env` local-only. Commit changes to the matching `.env.example` file when configuration requirements change.

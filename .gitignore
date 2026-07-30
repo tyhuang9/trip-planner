@@ -29,6 +29,9 @@ Thumbs.db
 .agents/
 PROJECT.md
 
+# Worktree-local native, backend, and database shortcut runtime state and logs
+.dupert/
+
 # Graphify local analysis artifacts
 .graphify/
 .graphifyignore

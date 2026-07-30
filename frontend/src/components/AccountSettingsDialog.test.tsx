@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AuthContext, type AuthContextValue } from '../auth/authContextValue'
@@ -8,6 +8,7 @@ import { AccountSettingsDialog } from './AccountSettingsDialog'
 
 function makeAuth(): AuthContextValue {
   return {
+    authStatus: 'authenticated',
     user: {
       id: 1,
       email: 'alice@example.com',
@@ -16,6 +17,7 @@ function makeAuth(): AuthContextValue {
     },
     isAuthenticated: true,
     isInitializing: false,
+    retryAuthResolution: vi.fn(async () => {}),
     login: vi.fn(async () => ({
       id: 1,
       email: 'alice@example.com',
@@ -43,15 +45,17 @@ function makeAuth(): AuthContextValue {
 function renderDialog(options?: {
   auth?: AuthContextValue
   onClose?: () => void
+  onDeleted?: () => void
 }) {
   const auth = options?.auth ?? makeAuth()
   const onClose = options?.onClose ?? vi.fn()
+  const onDeleted = options?.onDeleted ?? vi.fn()
   const view = render(
     <AuthContext.Provider value={auth}>
       <ColorModeProvider>
         <AccountSettingsDialog
           onClose={onClose}
-          onDeleted={vi.fn()}
+          onDeleted={onDeleted}
           user={{
             id: 1,
             email: 'alice@example.com',
@@ -63,7 +67,7 @@ function renderDialog(options?: {
     </AuthContext.Provider>,
   )
 
-  return { auth, onClose, ...view }
+  return { auth, onClose, onDeleted, ...view }
 }
 
 beforeEach(() => {
@@ -122,6 +126,30 @@ describe('<AccountSettingsDialog>', () => {
     expect(await screen.findByRole('alert')).toBeInTheDocument()
     expect(screen.getByRole('dialog', { name: 'Account settings' })).toBeInTheDocument()
     expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('does not claim account deletion when the server does not confirm it', async () => {
+    const auth = makeAuth()
+    const onDeleted = vi.fn()
+    auth.deleteAccount = vi.fn(async () => {
+      throw new Error('offline')
+    })
+    renderDialog({ auth, onDeleted })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete account' }))
+    await userEvent.type(screen.getByLabelText('Confirmation'), 'delete')
+    const confirmation = screen.getByRole('alertdialog', {
+      name: 'Delete account?',
+    })
+    await userEvent.click(
+      within(confirmation).getByRole('button', { name: 'Delete account' }),
+    )
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    expect(onDeleted).not.toHaveBeenCalled()
+    expect(
+      screen.getByRole('dialog', { name: 'Account settings' }),
+    ).toBeInTheDocument()
   })
 
   it('applies and stores color mode choices immediately', async () => {
