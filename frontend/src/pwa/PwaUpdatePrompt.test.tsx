@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PwaUpdatePrompt } from './PwaUpdatePrompt'
 
@@ -52,6 +52,26 @@ describe('<PwaUpdatePrompt>', () => {
     expect(serviceWorkerState.updateServiceWorker).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Reload to update' }))
     expect(serviceWorkerState.updateServiceWorker).toHaveBeenCalledWith(true)
+  })
+
+  it('surfaces a rejected update and lets the user retry it', async () => {
+    serviceWorkerState.needRefresh = true
+    serviceWorkerState.updateServiceWorker
+      .mockRejectedValueOnce(new Error('update failed'))
+      .mockResolvedValueOnce(undefined)
+    render(<PwaUpdatePrompt />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload to update' }))
+
+    expect(await screen.findByText('Dupert could not install the update')).toBeInTheDocument()
+    expect(screen.getByText(/did not finish loading/i)).toBeInTheDocument()
+    expect(screen.queryByText('A Dupert update is ready')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Try update again' }))
+
+    await waitFor(() => expect(serviceWorkerState.updateServiceWorker).toHaveBeenCalledTimes(2))
+    expect(serviceWorkerState.updateServiceWorker).toHaveBeenLastCalledWith(true)
   })
 
   it('dismisses both service-worker notices without activating an update', () => {
