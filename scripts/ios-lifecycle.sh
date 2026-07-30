@@ -160,7 +160,9 @@ reserve_device() {
   if stored_state="$(read_state)"; then
     IFS=$'\t' read -r stored_root stored_udid stored_booted <<< "$stored_state"
   fi
-  [[ "$owner" == "$ROOT_DIR" && "$stored_root" == "$ROOT_DIR" && "$stored_udid" == "$udid" ]] || fail "Simulator $udid is reserved by another worktree."
+  [[ "$owner" == "$ROOT_DIR" ]] || fail "Simulator $udid is reserved by another worktree."
+  [[ "$stored_root" == "$ROOT_DIR" && "$stored_udid" == "$udid" ]] \
+    || fail "This worktree holds the reservation for $udid, but its local state is missing, invalid, or records a different simulator. After confirming Dupert is not running on that simulator, remove $reservation and run npm run startios again."
   RESERVATION_ALREADY_OWNED="true"
 }
 
