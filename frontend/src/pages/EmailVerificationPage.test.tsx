@@ -165,13 +165,54 @@ describe('<EmailVerificationPage>', () => {
     expect(verifyEmailMock).not.toHaveBeenCalled()
     expect(useAuthStore.getState().user?.email).toBe('existing@example.com')
     expect(screen.getByRole('alert')).toHaveTextContent(/may belong to a different account/i)
-    await userEvent.click(screen.getByRole('button', { name: /sign out and verify this email/i }))
-    expect(screen.getByRole('button', { name: /signing out/i })).toBeDisabled()
+    const signOut = screen.getByRole('button', { name: /sign out and verify this email/i })
+    const keepCurrentSession = screen.getByRole('button', { name: /keep current session/i })
+    signOut.focus()
+    await userEvent.click(signOut)
+    expect(signOut).toHaveFocus()
+    expect(signOut).not.toBeDisabled()
+    expect(signOut).toHaveAttribute('aria-disabled', 'true')
+    expect(signOut).toHaveAttribute('aria-busy', 'true')
+    expect(signOut.parentElement).toHaveAttribute('aria-busy', 'true')
+    expect(keepCurrentSession).toBeDisabled()
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Your current session is being ended. Please wait.',
+    )
+    expect(screen.getAllByRole('status')).toHaveLength(1)
+    await userEvent.click(signOut)
+    expect(order).toEqual(['logout'])
     expect(verifyEmailMock).not.toHaveBeenCalled()
     await act(async () => resolveLogout())
     await vi.waitFor(() => expect(verifyEmailMock).toHaveBeenCalledWith({ token: 'switch-token' }))
     expect(order).toEqual(['logout', 'verify'])
     expect(useAuthStore.getState().user?.email).toBe('verified@example.com')
+  })
+
+  it('keeps the sign-out action available and reports a failed identity switch', async () => {
+    const logout = vi.fn().mockRejectedValue(new Error('sign-out failed'))
+    useAuthStore.getState().setSession({
+      accessToken: 'existing-token',
+      expiresInSeconds: 900,
+      user: { ...AUTH_RESPONSE.user, email: 'existing@example.com' },
+    })
+
+    renderEmailVerification('/verify-email?token=switch-token', makeAuth({
+      authStatus: 'authenticated',
+      isAuthenticated: true,
+      user: { ...AUTH_RESPONSE.user, email: 'existing@example.com' },
+      logout,
+    }))
+
+    const signOut = screen.getByRole('button', { name: /sign out and verify this email/i })
+    signOut.focus()
+    await userEvent.click(signOut)
+
+    await vi.waitFor(() => expect(screen.getAllByRole('alert').some((alert) => (
+      alert.textContent?.includes('Could not sign out. Your current session was not changed.')
+    ))).toBe(true))
+    expect(signOut).toHaveFocus()
+    expect(signOut).not.toHaveAttribute('aria-disabled')
+    expect(logout).toHaveBeenCalledOnce()
   })
 
   it('keeps the authenticated session and releases the handoff when requested', async () => {
@@ -234,14 +275,18 @@ describe('<EmailVerificationPage>', () => {
   it('does not re-submit a consumed token when a session appears during verification', async () => {
     const verification = deferred<AuthResponse>()
     const logout = vi.fn()
+    let resolveLogout!: () => void
     verifyEmailMock.mockReturnValue(verification.promise)
 
     function AuthRaceHarness({ children }: { children: ReactNode }) {
       const [authenticated, setAuthenticated] = useState(false)
-      logout.mockImplementation(async () => {
-        useAuthStore.getState().clearSession()
-        setAuthenticated(false)
-      })
+      logout.mockImplementation(() => new Promise<void>((resolve) => {
+        resolveLogout = () => {
+          useAuthStore.getState().clearSession()
+          setAuthenticated(false)
+          resolve()
+        }
+      }))
       return (
         <>
           <button
@@ -274,9 +319,10 @@ describe('<EmailVerificationPage>', () => {
       <QueryClientProvider client={queryClient}>
         <AuthRaceHarness>
           <MemoryRouter initialEntries={['/verify-email?token=single-use-token']}>
+            <DeepLinkRouteFocus />
             <Routes>
               <Route path="/verify-email" element={<EmailVerificationPage />} />
-              <Route path="/login" element={<div>Sign in page</div>} />
+              <Route path="/login" element={<main id="main"><h1>Sign in to Dupert</h1></main>} />
             </Routes>
           </MemoryRouter>
         </AuthRaceHarness>
@@ -290,8 +336,22 @@ describe('<EmailVerificationPage>', () => {
     expect(useAuthStore.getState().user?.email).toBe('existing@example.com')
     expect(screen.getByRole('heading', { name: /email verified/i })).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent(/current signed-in session was not changed/i)
-    await userEvent.click(screen.getByRole('button', { name: /sign out and sign in with the verified account/i }))
-    expect(await screen.findByText('Sign in page')).toBeInTheDocument()
+    const signOut = screen.getByRole('button', { name: /sign out and sign in with the verified account/i })
+    const keepCurrentSession = screen.getByRole('button', { name: /keep current session/i })
+    signOut.focus()
+    await userEvent.click(signOut)
+    expect(signOut).toHaveFocus()
+    expect(signOut).not.toBeDisabled()
+    expect(signOut).toHaveAttribute('aria-disabled', 'true')
+    expect(signOut).toHaveAttribute('aria-busy', 'true')
+    expect(signOut.parentElement).toHaveAttribute('aria-busy', 'true')
+    expect(keepCurrentSession).toBeDisabled()
+    expect(screen.getAllByRole('status').find((status) => (
+      status.textContent?.includes('Your current session is being ended. Please wait.')
+    ))).toBeInTheDocument()
+    await act(async () => resolveLogout())
+    const loginHeading = await screen.findByRole('heading', { name: 'Sign in to Dupert' })
+    await vi.waitFor(() => expect(loginHeading).toHaveFocus())
     expect(logout).toHaveBeenCalledTimes(1)
     expect(verifyEmailMock).toHaveBeenCalledTimes(1)
   })

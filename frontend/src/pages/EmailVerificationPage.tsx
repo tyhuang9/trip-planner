@@ -160,6 +160,7 @@ export function EmailVerificationPage() {
   }
 
   const keepCurrentSession = () => {
+    if (isSwitchingIdentity) return
     consumeDeepLinkHandoff(handoffId)
     requestDeepLinkRouteFocus('/trips')
     navigate('/trips', { replace: true })
@@ -171,6 +172,7 @@ export function EmailVerificationPage() {
     setIdentitySwitchError(null)
     try {
       await logout()
+      requestDeepLinkRouteFocus('/login')
       navigate('/login', { replace: true })
     } catch {
       setIdentitySwitchError('Could not sign out. Your current session was not changed.')
@@ -221,31 +223,53 @@ export function EmailVerificationPage() {
               ? styles.banner
               : `${styles.bannerSuccess} ${styles.centeredNotice}`
           }
-          role={state === 'error' ? 'alert' : 'status'}
+          role={state === 'error' ? 'alert' : isSwitchingIdentity ? undefined : 'status'}
         >
           {message}
         </div>}
         {verificationFinishedWithCurrentSession ? (
-          <div className={styles.form}>
+          <div className={styles.form} aria-busy={isSwitchingIdentity ? 'true' : undefined}>
             {identitySwitchError ? (
               <div className={styles.banner} role="alert">{identitySwitchError}</div>
             ) : null}
-            <button className={styles.submit} type="button" disabled={isSwitchingIdentity} onClick={() => void signInWithVerifiedAccount()}>
+            <button
+              className={styles.submit}
+              type="button"
+              aria-busy={isSwitchingIdentity ? 'true' : undefined}
+              aria-disabled={isSwitchingIdentity ? 'true' : undefined}
+              onClick={() => void signInWithVerifiedAccount()}
+            >
               {isSwitchingIdentity ? 'Signing out...' : 'Sign out and sign in with the verified account'}
             </button>
             <button className={styles.textButton} type="button" disabled={isSwitchingIdentity} onClick={keepCurrentSession}>
               Keep current session
             </button>
+            {isSwitchingIdentity ? (
+              <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+                Your current session is being ended. Please wait.
+              </p>
+            ) : null}
           </div>
         ) : null}
         {needsIdentitySwitch ? (
-          <div className={styles.form}>
-            <button className={styles.submit} type="button" disabled={isSwitchingIdentity} onClick={() => void confirmIdentitySwitch()}>
+          <div className={styles.form} aria-busy={isSwitchingIdentity ? 'true' : undefined}>
+            <button
+              className={styles.submit}
+              type="button"
+              aria-busy={isSwitchingIdentity ? 'true' : undefined}
+              aria-disabled={isSwitchingIdentity ? 'true' : undefined}
+              onClick={() => void confirmIdentitySwitch()}
+            >
               {isSwitchingIdentity ? 'Signing out...' : 'Sign out and verify this email'}
             </button>
             <button className={styles.textButton} type="button" disabled={isSwitchingIdentity} onClick={keepCurrentSession}>
               Keep current session
             </button>
+            {isSwitchingIdentity ? (
+              <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+                Your current session is being ended. Please wait.
+              </p>
+            ) : null}
           </div>
         ) : null}
         {isAuthenticated && !needsIdentitySwitch && state === 'error' ? (
