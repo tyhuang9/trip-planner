@@ -25,7 +25,10 @@ describe('<TripMapSurface> native target', () => {
   it('fills the bounded mobile map panel and supports Android native transparency', () => {
     expect(mapSurfaceCss).toMatch(/height:\s*100%/)
     expect(mapSurfaceCss).toMatch(/min-height:\s*0/)
-    expect(mapSurfaceCss).toMatch(/var\(--mobile-bottom-nav-height,\s*64px\)/)
+    expect(mapSurfaceCss.match(
+      /var\(--mobile-bottom-nav-height,\s*calc\(56px \+ env\(safe-area-inset-bottom\)\)\)/g,
+    )).toHaveLength(2)
+    expect(mapSurfaceCss).not.toMatch(/var\(--mobile-bottom-nav-height,\s*64px\)/)
     expect(mapSurfaceCss).toMatch(/html\.native-map-active/)
   })
 })
