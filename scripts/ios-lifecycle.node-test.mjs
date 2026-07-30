@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict'
-import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const lifecycleScript = join(repositoryRoot, 'scripts/ios-lifecycle.sh')
 const simulatorUdid = '00000000-0000-0000-0000-000000000001'
+const secondSimulatorUdid = '00000000-0000-0000-0000-000000000002'
 const reservationName = `${simulatorUdid}--io.github.tyhuang9.dupert.lock`
 
 async function fixture({ devices, pendingReservation, reservationOwner, state } = {}) {
@@ -50,6 +51,7 @@ async function fixture({ devices, pendingReservation, reservationOwner, state } 
     uname: '#!/usr/bin/env bash\necho Darwin\n',
     'xcode-select': '#!/usr/bin/env bash\necho /Applications/Xcode.app\n',
     git: '#!/usr/bin/env bash\necho "$DUPERT_TEST_GIT_COMMON_DIR"\n',
+    lockf: '#!/usr/bin/env bash\nexit 0\n',
     npm: `#!/usr/bin/env bash\necho "npm $*" >> "$DUPERT_TEST_LOG"\n`,
     npx: `#!/usr/bin/env bash\necho "npx $*" >> "$DUPERT_TEST_LOG"\nexit "\${DUPERT_TEST_NPX_EXIT:-0}"\n`,
     ps: `#!/usr/bin/env bash
@@ -101,6 +103,116 @@ exit 0
 }
 
 const iphone = (state = 'Shutdown') => ({ udid: simulatorUdid, name: 'iPhone 17', state, isAvailable: true })
+const secondIphone = (state = 'Shutdown') => ({
+  udid: secondSimulatorUdid, name: 'iPhone 17 Pro', state, isAvailable: true,
+})
+
+function checkedSpawnSync(command, args, options = {}) {
+  const result = spawnSync(command, args, { encoding: 'utf8', ...options })
+  assert.equal(result.status, 0, `${command} ${args.join(' ')} failed:\n${result.stderr}`)
+  return result.stdout.trim()
+}
+
+function runAsync(script, cwd, env) {
+  const child = spawn('bash', [script, 'start'], {
+    cwd,
+    env: { ...process.env, ...env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let stdout = ''
+  let stderr = ''
+  child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk })
+  child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk })
+  const result = new Promise((resolveRun, rejectRun) => {
+    child.once('error', rejectRun)
+    child.once('close', (status, signal) => resolveRun({ status, signal, stdout, stderr }))
+  })
+  return { child, result }
+}
+
+async function sharedWorktreeFixture() {
+  const root = await mkdtemp(join(tmpdir(), 'dupert-ios-lifecycle-shared-'))
+  const repository = join(root, 'repository')
+  const firstRoot = join(root, 'worktree-a')
+  const secondRoot = join(root, 'worktree-b')
+  const bin = join(root, 'bin')
+  const sync = join(root, 'lock-sync')
+  const gates = [join(sync, 'gate-a'), join(sync, 'gate-b')]
+  const log = join(root, 'commands.log')
+  await Promise.all([mkdir(repository), mkdir(bin), mkdir(sync)])
+  for (const gate of gates) checkedSpawnSync('mkfifo', [gate])
+  checkedSpawnSync('git', ['init', '-q', '-b', 'main', repository])
+  checkedSpawnSync('git', ['-C', repository, 'config', 'user.email', 'ios-lifecycle@example.test'])
+  checkedSpawnSync('git', ['-C', repository, 'config', 'user.name', 'iOS Lifecycle Test'])
+  checkedSpawnSync('git', ['-C', repository, 'commit', '--allow-empty', '-qm', 'fixture'])
+  checkedSpawnSync('git', ['-C', repository, 'worktree', 'add', '-qb', 'fixture-a', firstRoot])
+  checkedSpawnSync('git', ['-C', repository, 'worktree', 'add', '-qb', 'fixture-b', secondRoot])
+
+  for (const worktree of [firstRoot, secondRoot]) {
+    await mkdir(join(worktree, 'scripts'), { recursive: true })
+    await mkdir(join(worktree, 'frontend/node_modules/.bin'), { recursive: true })
+    await cp(lifecycleScript, join(worktree, 'scripts/ios-lifecycle.sh'))
+    await writeFile(join(worktree, 'frontend/.env.native-development.local'), 'VITE_BACKEND_API_URL=http://localhost:8000\n')
+    await writeFile(join(worktree, 'frontend/node_modules/.bin/cap'), '')
+    await chmod(join(worktree, 'frontend/node_modules/.bin/cap'), 0o755)
+  }
+
+  const payload = JSON.stringify({ devices: { 'iOS 26.0': [iphone('Booted')] } })
+  const systemLockf = '/usr/bin/lockf'
+  await access(systemLockf)
+  const commands = {
+    uname: '#!/usr/bin/env bash\necho Darwin\n',
+    'xcode-select': '#!/usr/bin/env bash\necho /Applications/Xcode.app\n',
+    lockf: `#!/usr/bin/env bash
+read -r _ < "$DUPERT_TEST_LOCK_GATE"
+exec ${systemLockf} "$@"
+`,
+    npm: `#!/usr/bin/env bash\necho "npm $PWD $*" >> "$DUPERT_TEST_LOG"\n`,
+    npx: `#!/usr/bin/env bash\necho "npx $PWD $*" >> "$DUPERT_TEST_LOG"\n`,
+    ps: `#!/usr/bin/env bash
+pid=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "-p" ]]; then pid="$2"; break; fi
+  shift
+done
+if [[ "$pid" == "999999" ]]; then exit 1; fi
+echo test-current-process-start
+`,
+    xcrun: `#!/usr/bin/env bash
+echo "xcrun $PWD $*" >> "$DUPERT_TEST_LOG"
+if [[ "$1" == "--find" ]]; then echo /usr/bin/simctl; exit 0; fi
+if [[ "$1 $2 $3 $4" == "simctl list devices available" ]]; then echo '${payload}'; exit 0; fi
+exit 0
+`,
+  }
+  await Promise.all(Object.entries(commands).map(async ([name, contents]) => {
+    const path = join(bin, name)
+    await writeFile(path, contents)
+    await chmod(path, 0o755)
+  }))
+
+  const commonDirectory = checkedSpawnSync('git', ['-C', firstRoot, 'rev-parse', '--path-format=absolute', '--git-common-dir'])
+  const reservationsDirectory = join(commonDirectory, 'dupert-ios-shortcuts')
+  const reservation = join(reservationsDirectory, reservationName)
+  await mkdir(reservationsDirectory)
+  await writeFile(reservation, JSON.stringify({
+    phase: 'pending', repositoryRoot: '/abandoned/worktree', pid: 999999, processStart: 'dead-process-start',
+  }))
+
+  const env = {
+    DUPERT_TEST_LOG: log,
+    PATH: `${bin}:${process.env.PATH}`,
+  }
+  return {
+    roots: [firstRoot, secondRoot],
+    scripts: [join(firstRoot, 'scripts/ios-lifecycle.sh'), join(secondRoot, 'scripts/ios-lifecycle.sh')],
+    reservation,
+    gates,
+    log,
+    env,
+    cleanup: () => rm(root, { recursive: true, force: true }),
+  }
+}
 
 test('selects an explicit simulator name, boots it once, and records ownership', async (t) => {
   const subject = await fixture({ devices: [iphone()] })
@@ -202,6 +314,35 @@ test('recovers a pending reservation abandoned by an interrupted first start', a
   assert.equal(JSON.parse(await readFile(subject.reservation, 'utf8')).phase, 'owned')
 })
 
+test('allows exactly one stale-reservation takeover across worktrees sharing a Git common directory', {
+  skip: process.platform !== 'darwin' ? 'macOS lockf semantics are required' : false,
+}, async (t) => {
+  const subject = await sharedWorktreeFixture()
+  t.after(subject.cleanup)
+  const runs = subject.scripts.map((script, index) => runAsync(script, subject.roots[index], {
+    ...subject.env,
+    DUPERT_TEST_LOCK_GATE: subject.gates[index],
+  }))
+  t.after(() => runs.forEach(({ child }) => { if (child.exitCode === null) child.kill('SIGKILL') }))
+
+  await Promise.all(subject.gates.map((gate) => writeFile(gate, 'continue\n')))
+  const results = await Promise.all(runs.map(({ result }) => result))
+
+  const winners = results.flatMap((result, index) => result.status === 0 ? [{ result, index }] : [])
+  const losers = results.flatMap((result, index) => result.status !== 0 ? [{ result, index }] : [])
+  assert.equal(winners.length, 1, JSON.stringify(results, null, 2))
+  assert.equal(losers.length, 1, JSON.stringify(results, null, 2))
+  assert.match(losers[0].result.stderr, /start in progress|reserved by another worktree/)
+
+  const winnerRoot = subject.roots[winners[0].index]
+  assert.deepEqual(JSON.parse(await readFile(subject.reservation, 'utf8')), {
+    phase: 'owned', repositoryRoot: winnerRoot,
+  })
+  const commands = await readFile(subject.log, 'utf8')
+  assert.equal(commands.match(/npm .* run sync:native:development/g)?.length, 1, commands)
+  assert.equal(commands.match(/npx .* cap run ios/g)?.length, 1, commands)
+})
+
 test('serializes a same-worktree start while its pending owner is alive', async (t) => {
   const subject = await fixture({
     devices: [iphone('Booted')],
@@ -215,6 +356,55 @@ test('serializes a same-worktree start while its pending owner is alive', async 
   assert.match(result.stderr, /start in progress/)
   assert.doesNotMatch(await subject.commandsRun(), /npm |npx /)
   assert.equal(JSON.parse(await readFile(subject.reservation, 'utf8')).phase, 'pending')
+})
+
+test('does not let one worktree reserve a different simulator while it owns another', async (t) => {
+  const subject = await fixture({
+    devices: [iphone('Booted'), secondIphone('Booted')],
+    state: { simulatorUdid, bootedByShortcut: false },
+  })
+  t.after(subject.cleanup)
+
+  const result = subject.run('start', { DUPERT_IOS_SIMULATOR: secondSimulatorUdid })
+
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, new RegExp(`already owns simulator ${simulatorUdid}`))
+  assert.match(result.stderr, /run npm run stopios/)
+  assert.doesNotMatch(await subject.commandsRun(), /npm |npx |simctl boot /)
+  assert.deepEqual(JSON.parse(await readFile(subject.reservation, 'utf8')), {
+    phase: 'owned', repositoryRoot: subject.root,
+  })
+  await assert.rejects(readFile(join(
+    subject.root,
+    '.git/dupert-ios-shortcuts',
+    `${secondSimulatorUdid}--io.github.tyhuang9.dupert.lock`,
+  )))
+})
+
+test('treats valid local state as ownership when refusing a different simulator', async (t) => {
+  const subject = await fixture({
+    devices: [iphone('Booted'), secondIphone('Booted')],
+    state: { simulatorUdid, bootedByShortcut: false },
+  })
+  t.after(subject.cleanup)
+  await rm(subject.reservation)
+  const originalState = JSON.parse(await readFile(join(subject.root, '.dupert/ios-lifecycle.json'), 'utf8'))
+
+  const result = subject.run('start', { DUPERT_IOS_SIMULATOR: secondSimulatorUdid })
+
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, new RegExp(`already owns simulator ${simulatorUdid}`))
+  assert.match(result.stderr, /run npm run stopios/)
+  assert.doesNotMatch(await subject.commandsRun(), /npm |npx |simctl boot /)
+  assert.deepEqual(
+    JSON.parse(await readFile(join(subject.root, '.dupert/ios-lifecycle.json'), 'utf8')),
+    originalState,
+  )
+  await assert.rejects(readFile(join(
+    subject.root,
+    '.git/dupert-ios-shortcuts',
+    `${secondSimulatorUdid}--io.github.tyhuang9.dupert.lock`,
+  )))
 })
 
 test('rejects a concurrent start reserved by another worktree', async (t) => {
