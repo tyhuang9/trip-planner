@@ -6,6 +6,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
@@ -51,6 +54,88 @@ class SecurityDeploymentValidatorTest {
         validator.run(new DefaultApplicationArguments());
     }
 
+    @ParameterizedTest
+    @CsvSource({"false, true", "true, false"})
+    void nativeOnlyStagingDeploymentRequiresSecureCookiesAndHsts(
+            boolean secureCookies, boolean hstsEnabled) {
+        AppProperties app = nativeOnlyAppProperties(secureCookies);
+        app.setTrustProxy(true);
+        SecureProperties secure = secureProperties(hstsEnabled);
+        SecurityDeploymentValidator validator = new SecurityDeploymentValidator(
+            app, secure, new MockEnvironment().withProperty("spring.profiles.active", "staging"));
+
+        assertThat(validator.requiresTransportHardening()).isTrue();
+        assertThatThrownBy(() -> validator.run(new DefaultApplicationArguments()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("app.cookies.secure=true")
+            .hasMessageContaining("secure.hsts.enabled=true");
+    }
+
+    @Test
+    void nativeOnlyStagingDeploymentAllowsDirectExposureWithoutTrustProxy() {
+        AppProperties app = nativeOnlyAppProperties(true);
+        SecureProperties secure = secureProperties(true);
+        SecurityDeploymentValidator validator = new SecurityDeploymentValidator(
+            app, secure, new MockEnvironment().withProperty("spring.profiles.active", "staging"));
+
+        assertThat(validator.requiresTransportHardening()).isTrue();
+        assertThat(validator.requiresTrustedProxy()).isFalse();
+        validator.run(new DefaultApplicationArguments());
+    }
+
+    @Test
+    void hardenedNativeOnlyStagingDeploymentPassesValidation() {
+        AppProperties app = nativeOnlyAppProperties(true);
+        app.setTrustProxy(true);
+        SecureProperties secure = secureProperties(true);
+        SecurityDeploymentValidator validator = new SecurityDeploymentValidator(
+            app, secure, new MockEnvironment().withProperty("spring.profiles.active", "staging"));
+
+        assertThat(validator.requiresTransportHardening()).isTrue();
+        assertThat(validator.requiresTrustedProxy()).isFalse();
+        validator.run(new DefaultApplicationArguments());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"local", "test"})
+    void nativeOnlyLocalAndTestProfilesDoNotRequireTransportHardening(String profile) {
+        AppProperties app = nativeOnlyAppProperties(false);
+        SecureProperties secure = secureProperties(false);
+        SecurityDeploymentValidator validator = new SecurityDeploymentValidator(
+            app, secure, new MockEnvironment().withProperty("spring.profiles.active", profile));
+
+        assertThat(validator.requiresTransportHardening()).isFalse();
+        validator.run(new DefaultApplicationArguments());
+    }
+
+    @Test
+    void nativeOnlyMixedLocalAndStagingProfilesRequireTransportHardening() {
+        AppProperties app = nativeOnlyAppProperties(false);
+        app.setTrustProxy(true);
+        SecureProperties secure = secureProperties(false);
+        SecurityDeploymentValidator validator = new SecurityDeploymentValidator(
+            app, secure, new MockEnvironment().withProperty("spring.profiles.active", "local,staging"));
+
+        assertThat(validator.requiresTransportHardening()).isTrue();
+        assertThatThrownBy(() -> validator.run(new DefaultApplicationArguments()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("app.cookies.secure=true")
+            .hasMessageContaining("secure.hsts.enabled=true");
+    }
+
+    @Test
+    void productionProfileStillRequiresBrowserOriginForNativeOnlyDeployment() {
+        AppProperties app = nativeOnlyAppProperties(true);
+        app.setTrustProxy(true);
+        SecureProperties secure = secureProperties(true);
+        SecurityDeploymentValidator validator = new SecurityDeploymentValidator(
+            app, secure, new MockEnvironment().withProperty("spring.profiles.active", "prod"));
+
+        assertThatThrownBy(() -> validator.run(new DefaultApplicationArguments()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("Production deployments require ALLOWED_ORIGINS");
+    }
+
     @Test
     void productionProfileRequiresTrustProxy() {
         AppProperties app = appProperties("https://dupert.example", true);
@@ -58,6 +143,20 @@ class SecurityDeploymentValidatorTest {
         SecurityDeploymentValidator validator = new SecurityDeploymentValidator(
             app, secure, new MockEnvironment().withProperty("spring.profiles.active", "prod"));
 
+        assertThat(validator.requiresTrustedProxy()).isTrue();
+        assertThatThrownBy(() -> validator.run(new DefaultApplicationArguments()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("app.trust-proxy=true");
+    }
+
+    @Test
+    void publicFrontendStagingDeploymentRequiresTrustProxy() {
+        AppProperties app = appProperties("https://dupert.example", true);
+        SecureProperties secure = secureProperties(true);
+        SecurityDeploymentValidator validator = new SecurityDeploymentValidator(
+            app, secure, new MockEnvironment().withProperty("spring.profiles.active", "staging"));
+
+        assertThat(validator.requiresTrustedProxy()).isTrue();
         assertThatThrownBy(() -> validator.run(new DefaultApplicationArguments()))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("app.trust-proxy=true");
@@ -167,6 +266,13 @@ class SecurityDeploymentValidatorTest {
         app.setPublicFrontendUrl(frontendOrigin);
         app.getCookies().setSecure(secureCookies);
         app.setSignupEnabled(false);
+        return app;
+    }
+
+    private static AppProperties nativeOnlyAppProperties(boolean secureCookies) {
+        AppProperties app = appProperties("", secureCookies);
+        app.setNativeAllowedOrigins("capacitor://localhost");
+        app.setPublicFrontendUrl("https://dupert.example");
         return app;
     }
 

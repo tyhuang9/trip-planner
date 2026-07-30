@@ -48,16 +48,15 @@ public class SecurityDeploymentValidator implements ApplicationRunner {
         if (environment.acceptsProfiles(Profiles.of("prod"))) {
             return true;
         }
-        List<String> origins = configuredBrowserOrigins();
-        if (origins.isEmpty()) {
-            return false;
-        }
-        for (String origin : origins) {
+        for (String origin : configuredBrowserOrigins()) {
             if (!isLocalOrigin(origin)) {
                 return true;
             }
         }
-        return false;
+        // Bundled WebViews have localhost-like origins even when they call a public backend.
+        // Treat a native allowlist as a deployment signal unless this is explicitly local/test.
+        return !configuredNativeOrigins().isEmpty()
+            && !hasOnlyLocalOrTestProfiles();
     }
 
     private void validateTransportHardening() {
@@ -65,10 +64,17 @@ public class SecurityDeploymentValidator implements ApplicationRunner {
             throw new IllegalStateException(
                 "Production-like deployments require app.cookies.secure=true and secure.hsts.enabled=true");
         }
-        if (!appProperties.isTrustProxy()) {
+        if (requiresTrustedProxy() && !appProperties.isTrustProxy()) {
             throw new IllegalStateException(
                 "Production-like deployments require app.trust-proxy=true behind the platform proxy");
         }
+    }
+
+    boolean requiresTrustedProxy() {
+        if (environment.acceptsProfiles(Profiles.of("prod"))) {
+            return true;
+        }
+        return configuredBrowserOrigins().stream().anyMatch(origin -> !isLocalOrigin(origin));
     }
 
     private void validateCorsOrigins() {
@@ -108,6 +114,13 @@ public class SecurityDeploymentValidator implements ApplicationRunner {
             && !environment.acceptsProfiles(Profiles.of("local", "test"));
     }
 
+    private boolean hasOnlyLocalOrTestProfiles() {
+        String[] activeProfiles = environment.getActiveProfiles();
+        return activeProfiles.length > 0
+            && Arrays.stream(activeProfiles)
+                .allMatch(profile -> "local".equals(profile) || "test".equals(profile));
+    }
+
     private void validateEmailConfig() {
         if (appProperties.getPublicFrontendUrl().isBlank()) {
             throw new IllegalStateException(
@@ -125,9 +138,13 @@ public class SecurityDeploymentValidator implements ApplicationRunner {
         return configuredOrigins(appProperties.getFrontendOrigin());
     }
 
+    private List<String> configuredNativeOrigins() {
+        return configuredOrigins(appProperties.getNativeAllowedOrigins());
+    }
+
     private List<String> configuredCorsOrigins() {
         List<String> origins = new ArrayList<>(configuredBrowserOrigins());
-        origins.addAll(configuredOrigins(appProperties.getNativeAllowedOrigins()));
+        origins.addAll(configuredNativeOrigins());
         return List.copyOf(origins);
     }
 
