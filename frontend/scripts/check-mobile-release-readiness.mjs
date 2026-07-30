@@ -309,31 +309,86 @@ function inspectProductionBackend(environmentFile, violations) {
 }
 
 function normalizedText(value) { return (value ?? '').replace(/\s+/g, ' ').trim() }
-function elementIsHidden(element, window) {
-  for (let current = element; current; current = current.parentElement) {
-    const style = window.getComputedStyle(current)
-    if (current.hidden || current.getAttribute('aria-hidden')?.toLowerCase() === 'true' || style.display === 'none' || style.visibility === 'hidden' || (style.opacity !== '' && Number(style.opacity) === 0)) return true
-  }
-  return false
+function styleHidesElement(style) {
+  const display = style.getPropertyValue('display').trim().toLowerCase()
+  const visibility = style.getPropertyValue('visibility').trim().toLowerCase()
+  const opacity = style.getPropertyValue('opacity').trim()
+  return display === 'none' || visibility === 'hidden' || (opacity !== '' && Number(opacity) === 0)
 }
-function visibleElementText(element, window) {
+function createVisibilityInspector(document, window) {
+  const hidingSelectors = new Set()
+  let stylesheetsInspectable = true
+  const collectRules = (rules) => {
+    for (const rule of rules) {
+      if (typeof rule.selectorText === 'string' && styleHidesElement(rule.style)) {
+        hidingSelectors.add(rule.selectorText)
+      }
+      // A release-required control must remain available in every supported
+      // presentation, so conditional CSS rules are inspected conservatively.
+      if (rule.cssRules) collectRules(rule.cssRules)
+    }
+  }
+  for (const stylesheet of document.styleSheets) {
+    try {
+      collectRules(stylesheet.cssRules)
+    } catch {
+      stylesheetsInspectable = false
+    }
+  }
+
+  let selectorMatchingFailed = false
+  const matchesHidingSelector = (element) => {
+    for (const selector of hidingSelectors) {
+      try {
+        if (element.matches(selector)) return true
+      } catch {
+        selectorMatchingFailed = true
+        return true
+      }
+    }
+    return false
+  }
+  const hiddenCache = new WeakMap()
+  const elementIsHidden = (element) => {
+    if (!element) return false
+    const cached = hiddenCache.get(element)
+    if (cached !== undefined) return cached
+    let hidden = false
+    for (let current = element; current; current = current.parentElement) {
+      const style = window.getComputedStyle(current)
+      if (
+        current.hidden ||
+        current.getAttribute('aria-hidden')?.toLowerCase() === 'true' ||
+        styleHidesElement(style) ||
+        matchesHidingSelector(current)
+      ) {
+        hidden = true
+        break
+      }
+    }
+    hiddenCache.set(element, hidden)
+    return hidden
+  }
+  return { elementIsHidden, selectorMatchingFailed: () => selectorMatchingFailed, stylesheetsInspectable }
+}
+function visibleElementText(element, window, elementIsHidden) {
   const collect = (node) => {
     if (node.nodeType === window.Node.TEXT_NODE) return node.nodeValue
-    if (node.nodeType !== window.Node.ELEMENT_NODE || elementIsHidden(node, window)) return ''
+    if (node.nodeType !== window.Node.ELEMENT_NODE || elementIsHidden(node)) return ''
     return [...node.childNodes].map(collect).join(' ')
   }
   return normalizedText(collect(element))
 }
-function accessibleElementText(element, document, window) {
+function accessibleElementText(element, document, window, elementIsHidden) {
   if (element.hasAttribute('aria-label')) return normalizedText(element.getAttribute('aria-label'))
-  if (element.hasAttribute('aria-labelledby')) return normalizedText(element.getAttribute('aria-labelledby').split(/\s+/).map((id) => { const label = document.getElementById(id); return label && !elementIsHidden(label, window) ? visibleElementText(label, window) : '' }).join(' '))
-  return visibleElementText(element, window)
+  if (element.hasAttribute('aria-labelledby')) return normalizedText(element.getAttribute('aria-labelledby').split(/\s+/).map((id) => { const label = document.getElementById(id); return label && !elementIsHidden(label) ? visibleElementText(label, window, elementIsHidden) : '' }).join(' '))
+  return visibleElementText(element, window, elementIsHidden)
 }
-function inspectExactList(list, expected, label, window, violations) {
+function inspectExactList(list, expected, label, window, elementIsHidden, violations) {
   if (!list) return violations.push(`account-deletion resource ${label} list is missing`)
   const items = [...list.children]
   if (items.length !== expected.length || items.some((item) => item.tagName !== 'LI')) return violations.push(`account-deletion resource ${label} list must contain exactly ${expected.length} semantic items`)
-  for (const [index, text] of expected.entries()) if (visibleElementText(items[index], window) !== text) violations.push(`account-deletion resource ${label} item ${index + 1} must equal: ${text}`)
+  for (const [index, text] of expected.entries()) if (visibleElementText(items[index], window, elementIsHidden) !== text) violations.push(`account-deletion resource ${label} item ${index + 1} must equal: ${text}`)
 }
 
 function inspectAccountDeletionResource(sources, violations) {
@@ -346,6 +401,9 @@ function inspectAccountDeletionResource(sources, violations) {
 
   const dom = new JSDOM(source, { contentType: 'text/html' })
   const { document } = dom.window
+  const visibility = createVisibilityInspector(document, dom.window)
+  const { elementIsHidden } = visibility
+  if (!visibility.stylesheetsInspectable) violations.push('account-deletion resource stylesheet visibility cannot be safely inspected')
   if (document.documentElement.lang !== 'en') violations.push('account-deletion resource html lang must be en')
   if (document.title !== ACCOUNT_DELETION_TITLE) violations.push(`account-deletion resource title must be ${ACCOUNT_DELETION_TITLE}`)
   const descriptions = document.querySelectorAll('meta[name="description"]')
@@ -362,26 +420,27 @@ function inspectAccountDeletionResource(sources, violations) {
   if ([...document.querySelectorAll('[href]')].some((element) => !allowedHrefs.has(element.getAttribute('href')))) violations.push('account-deletion resource contains a non-allowlisted href')
 
   const mains = document.querySelectorAll('main')
-  if (mains.length !== 1 || elementIsHidden(mains[0], dom.window)) violations.push('account-deletion resource must contain exactly one visible main element')
+  if (mains.length !== 1 || elementIsHidden(mains[0])) violations.push('account-deletion resource must contain exactly one visible main element')
   const main = mains[0]
   const headings = document.querySelectorAll('h1')
-  if (headings.length !== 1 || !main?.contains(headings[0]) || elementIsHidden(headings[0], dom.window) || visibleElementText(headings[0], dom.window) !== ACCOUNT_DELETION_TITLE || accessibleElementText(headings[0], document, dom.window) !== ACCOUNT_DELETION_TITLE) violations.push(`account-deletion resource must contain exactly one visible h1 named ${ACCOUNT_DELETION_TITLE}`)
+  if (headings.length !== 1 || !main?.contains(headings[0]) || elementIsHidden(headings[0]) || visibleElementText(headings[0], dom.window, elementIsHidden) !== ACCOUNT_DELETION_TITLE || accessibleElementText(headings[0], document, dom.window, elementIsHidden) !== ACCOUNT_DELETION_TITLE) violations.push(`account-deletion resource must contain exactly one visible h1 named ${ACCOUNT_DELETION_TITLE}`)
 
   const ctas = document.querySelectorAll('a[href="/login"]')
   const cta = ctas[0]
-  if (ctas.length !== 1 || !cta || !main?.contains(cta) || elementIsHidden(cta, dom.window) || cta.tabIndex < 0 || visibleElementText(cta, dom.window) !== ACCOUNT_DELETION_CTA || accessibleElementText(cta, document, dom.window) !== ACCOUNT_DELETION_CTA) violations.push(`account-deletion resource must include one visible, focusable /login CTA named ${ACCOUNT_DELETION_CTA}`)
+  if (ctas.length !== 1 || !cta || !main?.contains(cta) || elementIsHidden(cta) || cta.tabIndex < 0 || visibleElementText(cta, dom.window, elementIsHidden) !== ACCOUNT_DELETION_CTA || accessibleElementText(cta, document, dom.window, elementIsHidden) !== ACCOUNT_DELETION_CTA) violations.push(`account-deletion resource must include one visible, focusable /login CTA named ${ACCOUNT_DELETION_CTA}`)
   const summary = document.querySelector('.deletion-summary')
-  if (!summary || !main?.contains(summary) || !summary.matches('section, aside') || elementIsHidden(summary, dom.window) || ACCOUNT_DELETION_SUMMARY.some((text) => !visibleElementText(summary, dom.window).includes(text)) || (cta && !(summary.compareDocumentPosition(cta) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING))) violations.push('account-deletion resource must show the irreversible and retained-content summary before the sign-in CTA')
+  if (!summary || !main?.contains(summary) || !summary.matches('section, aside') || elementIsHidden(summary) || ACCOUNT_DELETION_SUMMARY.some((text) => !visibleElementText(summary, dom.window, elementIsHidden).includes(text)) || (cta && !(summary.compareDocumentPosition(cta) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING))) violations.push('account-deletion resource must show the irreversible and retained-content summary before the sign-in CTA')
   const ctaNote = cta?.nextElementSibling
-  if (!ctaNote || !ctaNote.matches('p.cta-note#sign-in-note') || cta?.getAttribute('aria-describedby') !== 'sign-in-note' || elementIsHidden(ctaNote, dom.window) || visibleElementText(ctaNote, dom.window) !== 'Signing in does not delete your account. You will review and confirm deletion in Account settings.') violations.push('account-deletion resource must associate the sign-in CTA with its non-deletion explanation')
+  if (!ctaNote || !ctaNote.matches('p.cta-note#sign-in-note') || cta?.getAttribute('aria-describedby') !== 'sign-in-note' || elementIsHidden(ctaNote) || visibleElementText(ctaNote, dom.window, elementIsHidden) !== 'Signing in does not delete your account. You will review and confirm deletion in Account settings.') violations.push('account-deletion resource must associate the sign-in CTA with its non-deletion explanation')
   const recoveryLinks = document.querySelectorAll('a[href="/login?mode=password-reset"]')
   const recovery = recoveryLinks[0]
-  if (recoveryLinks.length !== 1 || !recovery || !main?.contains(recovery) || elementIsHidden(recovery, dom.window) || recovery.tabIndex < 0 || visibleElementText(recovery, dom.window) !== 'Reset your password' || accessibleElementText(recovery, document, dom.window) !== 'Reset your password') violations.push('account-deletion resource must include one visible, focusable Reset your password link')
+  if (recoveryLinks.length !== 1 || !recovery || !main?.contains(recovery) || elementIsHidden(recovery) || recovery.tabIndex < 0 || visibleElementText(recovery, dom.window, elementIsHidden) !== 'Reset your password' || accessibleElementText(recovery, document, dom.window, elementIsHidden) !== 'Reset your password') violations.push('account-deletion resource must include one visible, focusable Reset your password link')
 
   const stepSection = document.querySelector('section[aria-labelledby="deletion-steps"]')
-  inspectExactList(stepSection && main?.contains(stepSection) ? stepSection.querySelector(':scope > ol') : null, ACCOUNT_DELETION_STEPS, 'ordered steps', dom.window, violations)
+  inspectExactList(stepSection && main?.contains(stepSection) ? stepSection.querySelector(':scope > ol') : null, ACCOUNT_DELETION_STEPS, 'ordered steps', dom.window, elementIsHidden, violations)
   const consequenceSection = document.querySelector('section[aria-labelledby="deletion-results"]')
-  inspectExactList(consequenceSection && main?.contains(consequenceSection) ? consequenceSection.querySelector(':scope > ul') : null, ACCOUNT_DELETION_CONSEQUENCES, 'consequences', dom.window, violations)
+  inspectExactList(consequenceSection && main?.contains(consequenceSection) ? consequenceSection.querySelector(':scope > ul') : null, ACCOUNT_DELETION_CONSEQUENCES, 'consequences', dom.window, elementIsHidden, violations)
+  if (visibility.selectorMatchingFailed()) violations.push('account-deletion resource stylesheet visibility selector cannot be safely matched')
   dom.window.close()
 
   let config
