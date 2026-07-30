@@ -2,6 +2,10 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
+      "source": "/account-deletion",
+      "destination": "/account-deletion.html"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

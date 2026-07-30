@@ -9,8 +9,20 @@ import { assertMobileReleaseReadiness, inspectMobileReleaseReadiness, loadMobile
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const sources = () => loadMobileReleaseSources(root)
 const messages = (candidate) => inspectMobileReleaseReadiness(candidate).join('\n')
-const sourceFiles = ['docs/mobile/auth-session-device-evidence.catalog.json', 'docs/mobile/auth-session-device-evidence.template.json', 'docs/mobile/auth-session-device-spike.md', 'docs/mobile/auth-session-transport-adr-template.md']
+const sourceFiles = ['docs/mobile/auth-session-device-evidence.catalog.json', 'docs/mobile/auth-session-device-evidence.template.json', 'docs/mobile/auth-session-device-spike.md', 'docs/mobile/auth-session-transport-adr-template.md', 'frontend/public/account-deletion.html', 'frontend/vercel.json']
 const resultPath = 'docs/mobile/evidence/issue-64/2026-07-29/safe-run-1/results.json'
+
+function replaceAccountText(candidate, text, replacement = 'Removed text.') {
+  const pattern = text.trim().split(/\s+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+')
+  const updated = candidate.accountDeletionResource.replace(new RegExp(pattern), replacement)
+  assert.notEqual(updated, candidate.accountDeletionResource, `test fixture text not found: ${text}`)
+  candidate.accountDeletionResource = updated
+}
+function updateVercel(candidate, mutate) {
+  const config = JSON.parse(candidate.vercelConfig)
+  mutate(config.rewrites, config)
+  candidate.vercelConfig = JSON.stringify(config)
+}
 
 function completed() {
   const value = JSON.parse(sources().authSessionEvidenceTemplate)
@@ -56,6 +68,112 @@ function trackedAt(runId, result = completed(), date = '2026-07-29') {
 test('accepts source contract and safe completed result', () => {
   assert.deepEqual(inspectMobileReleaseReadiness(sources()), [])
   assert.deepEqual(inspectMobileReleaseReadiness(tracked()), [])
+})
+
+test('enforces the public account-deletion resource contract', async (t) => {
+  assert.deepEqual(inspectMobileReleaseReadiness(sources()), [])
+  const cases = [
+    ['missing marker', /account-deletion-resource marker must appear exactly once/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace(/<!-- account-deletion-resource[\s\S]*?-->\n/, '') }],
+    ['invalid marker', /account-deletion-resource marker contract_version/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('contract_version=1', 'contract_version=2') }],
+    ['invalid Vercel config', /frontend\/vercel\.json must be valid JSON/, (candidate) => { candidate.vercelConfig = '{' }],
+    ['missing Vercel config', /frontend\/vercel\.json must be valid JSON/, (candidate) => { candidate.vercelConfig = '' }],
+    ['missing Vercel rewrites', /frontend\/vercel\.json rewrites must be an array/, (candidate) => { candidate.vercelConfig = '{}' }],
+    ['unsupported redirects', /unsupported top-level key: redirects/, (candidate) => { updateVercel(candidate, (_, config) => { config.redirects = [] }) }],
+    ['unsupported routes', /unsupported top-level key: routes/, (candidate) => { updateVercel(candidate, (_, config) => { config.routes = [] }) }],
+    ['unsupported cleanUrls', /unsupported top-level key: cleanUrls/, (candidate) => { updateVercel(candidate, (_, config) => { config.cleanUrls = true }) }],
+    ['unsupported trailingSlash', /unsupported top-level key: trailingSlash/, (candidate) => { updateVercel(candidate, (_, config) => { config.trailingSlash = false }) }],
+    ['wrong outputDirectory', /outputDirectory must be dist/, (candidate) => { updateVercel(candidate, (_, config) => { config.outputDirectory = 'build' }) }],
+    ['absent rewrite', /account-deletion rewrite must appear exactly once/, (candidate) => { updateVercel(candidate, (rewrites) => rewrites.splice(rewrites.findIndex((rewrite) => rewrite.source === '/account-deletion'), 1)) }],
+    ['duplicate rewrite', /account-deletion rewrite must appear exactly once/, (candidate) => { updateVercel(candidate, (rewrites) => rewrites.unshift(structuredClone(rewrites.find((rewrite) => rewrite.source === '/account-deletion')))) }],
+    ['wrong rewrite destination', /account-deletion rewrite destination/, (candidate) => { updateVercel(candidate, (rewrites) => { rewrites.find((rewrite) => rewrite.source === '/account-deletion').destination = '/index.html' }) }],
+    ['unexpected account rewrite key', /account-deletion rewrite must contain exactly/, (candidate) => { updateVercel(candidate, (rewrites) => { rewrites.find((rewrite) => rewrite.source === '/account-deletion').extra = true }) }],
+    ['higher-priority dynamic rewrite', /account-deletion rewrite must be the first rewrite/, (candidate) => { updateVercel(candidate, (rewrites) => rewrites.unshift({ source: '/account-:path*', destination: '/index.html' })) }],
+    ['late rewrite', /account-deletion rewrite must be the first rewrite/, (candidate) => { updateVercel(candidate, (rewrites) => { const index = rewrites.findIndex((rewrite) => rewrite.source === '/account-deletion'); rewrites.push(...rewrites.splice(index, 1)) }) }],
+    ['missing SPA fallback', /SPA fallback rewrite must appear exactly once/, (candidate) => { updateVercel(candidate, (rewrites) => rewrites.splice(rewrites.findIndex((rewrite) => rewrite.source === '/(.*)'), 1)) }],
+    ['duplicate SPA fallback', /SPA fallback rewrite must appear exactly once/, (candidate) => { updateVercel(candidate, (rewrites) => rewrites.push(structuredClone(rewrites.find((rewrite) => rewrite.source === '/(.*)')))) }],
+    ['wrong SPA fallback destination', /SPA fallback rewrite destination/, (candidate) => { updateVercel(candidate, (rewrites) => { rewrites.find((rewrite) => rewrite.source === '/(.*)').destination = '/other.html' }) }],
+    ['unexpected SPA fallback key', /SPA fallback rewrite must contain exactly/, (candidate) => { updateVercel(candidate, (rewrites) => { rewrites.find((rewrite) => rewrite.source === '/(.*)').extra = true }) }],
+    ['missing html language', /html lang must be en/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<html lang="en">', '<html>') }],
+    ['missing main', /exactly one visible main/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<main>', '<div>').replace('</main>', '</div>') }],
+    ['duplicate main', /exactly one visible main/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('</body>', '<main></main></body>') }],
+    ['hidden main', /exactly one visible main/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<main>', '<main hidden>') }],
+    ['wrong h1 name', /exactly one visible h1 named/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<h1 id="page-title">Delete your Dupert account</h1>', '<h1 id="page-title">Account settings</h1>') }],
+    ['wrong h1 accessible name', /exactly one visible h1 named/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<h1 id="page-title"', '<h1 aria-label="Account settings" id="page-title"') }],
+    ['missing h1 semantics', /exactly one visible h1 named/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<h1 id="page-title">', '<div id="page-title">').replace('</h1>', '</div>') }],
+    ['duplicate h1', /exactly one visible h1 named/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('</h1>', '</h1><h1>Delete your Dupert account</h1>') }],
+    ['wrong title', /resource title must be/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<title>Delete your Dupert account</title>', '<title>Account settings</title>') }],
+    ['missing description', /description metadata is invalid/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace(/\s*<meta\s+name="description"[\s\S]*?\/>/, '') }],
+    ['wrong viewport', /viewport metadata is invalid/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('width=device-width, initial-scale=1.0', 'width=1024') }],
+    ['missing canonical link', /account-deletion resource canonical link/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace(/\s*<link rel="canonical"[^>]+>/, '') }],
+    ['missing sign-in CTA', /visible, focusable \/login CTA/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('href="/login"', 'href="/"') }],
+    ['wrong CTA text', /visible, focusable \/login CTA/, (candidate) => { replaceAccountText(candidate, 'Sign in to delete your account', 'Sign in') }],
+    ['wrong CTA accessible name', /visible, focusable \/login CTA/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<a class="cta"', '<a aria-label="Sign in" class="cta"') }],
+    ['hidden CTA', /visible, focusable \/login CTA/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<a class="cta"', '<a hidden class="cta"') }],
+    ['aria-hidden CTA', /visible, focusable \/login CTA/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<a class="cta"', '<a aria-hidden="true" class="cta"') }],
+    ['tabindex CTA', /visible, focusable \/login CTA/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<a class="cta"', '<a tabindex="-1" class="cta"') }],
+    ['display-none CTA', /visible, focusable \/login CTA/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<a class="cta"', '<a style="display: none" class="cta"') }],
+    ['visibility-hidden CTA', /visible, focusable \/login CTA/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<a class="cta"', '<a style="visibility: hidden" class="cta"') }],
+    ['transparent CTA', /visible, focusable \/login CTA/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<a class="cta"', '<a style="opacity: 0" class="cta"') }],
+    ['duplicate CTA', /one visible, focusable \/login CTA/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('</header>', '<a href="/login">Sign in to delete your account</a></header>') }],
+    ['hidden deletion summary', /irreversible and retained-content summary/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<section class="deletion-summary"', '<section hidden class="deletion-summary"') }],
+    ['non-semantic deletion summary', /irreversible and retained-content summary/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<section class="deletion-summary"', '<div class="deletion-summary"').replace('</section>', '</div>') }],
+    ['missing CTA microcopy', /associate the sign-in CTA/, (candidate) => { replaceAccountText(candidate, 'Signing in does not delete your account. You will review and confirm deletion in Account settings.') }],
+    ['missing CTA description association', /associate the sign-in CTA/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace(' aria-describedby="sign-in-note"', '') }],
+    ['missing recovery link', /Reset your password link/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('/login?mode=password-reset', '/login') }],
+    ['wrong recovery purpose', /Reset your password link/, (candidate) => { replaceAccountText(candidate, 'Reset your password', 'Recover access') }],
+    ['forbidden script', /must not contain scripts/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('</body>', '<script>globalThis.executed = true</script></body>') }],
+    ['forbidden form', /must not contain forms/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('</body>', '<form></form></body>') }],
+    ['forbidden external dependency', /must not contain an external dependency/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('</body>', '<img src="https://example.invalid/pixel.png" alt="" /></body>') }],
+    ['forbidden inline event handler', /must not contain inline event handlers/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<main>', '<main onpointerover="globalThis.executed = true">') }],
+    ['javascript href', /non-allowlisted href/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('href="/login?mode=password-reset"', 'href="javascript:alert(1)"') }],
+    ['additional href', /non-allowlisted href/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('</body>', '<a href="/privacy">Privacy</a></body>') }],
+    ['non-semantic steps list', /ordered steps list is missing/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<ol>', '<ul>').replace('</ol>', '</ul>') }],
+    ['non-semantic consequence list', /consequences list is missing/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<ul>', '<ol>').replace('</ul>', '</ol>') }],
+    ['hidden steps list', /ordered steps item/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<ol>', '<ol hidden>') }],
+    ['hidden consequences list', /consequences item/, (candidate) => { candidate.accountDeletionResource = candidate.accountDeletionResource.replace('<ul>', '<ul hidden>') }],
+    ['documentation URL drift', /release-readiness account-deletion URL/, (candidate) => { candidate.releaseDocument = candidate.releaseDocument.replaceAll('https://dupert.vercel.app/account-deletion', 'https://example.invalid/delete') }],
+    ['untracked resource', /public account-deletion resource must be tracked: frontend\/public\/account-deletion\.html/, (candidate) => { candidate.trackedFiles = sourceFiles.filter((path) => path !== 'frontend/public/account-deletion.html') }],
+    ['untracked Vercel config', /public account-deletion resource must be tracked: frontend\/vercel\.json/, (candidate) => { candidate.trackedFiles = sourceFiles.filter((path) => path !== 'frontend/vercel.json') }],
+    ['privacy gate changed', /Privacy and store metadata must remain BLOCKED/, (candidate) => { candidate.releaseDocument = candidate.releaseDocument.replace('| Privacy and store metadata | BLOCKED |', '| Privacy and store metadata | PASS |') }],
+  ]
+  for (const [name, value] of [['null', 'null'], ['false', 'false'], ['zero', '0'], ['empty string', '""'], ['array', '[]']]) cases.push([`${name} Vercel config`, /frontend\/vercel\.json must be an object/, (candidate) => { candidate.vercelConfig = value }])
+  for (const phrase of [
+    'Sign in to your Dupert account.',
+    'Open Trips.',
+    'Open Account. On small screens, open the account menu first, then choose Account.',
+    'Select Delete account.',
+    'Type the exact lowercase word delete.',
+    'Enter your current password.',
+    'Confirm Delete account.',
+  ]) cases.push([`missing step: ${phrase}`, /account-deletion resource ordered steps item/, (candidate) => { replaceAccountText(candidate, phrase) }])
+  for (const phrase of [
+    'Your account is permanently removed.',
+    'You are signed out on this device. Dupert cancels saved sign-ins, and other devices ask you to sign in again after their current access expires.',
+    'Trips you own with no other Dupert members are deleted.',
+    'Trips you own with other Dupert members are transferred to one of them.',
+    'Content in retained shared trips may remain.',
+    'Your signed-in Dupert name is removed from retained activity history, but a guest name you used before signing in may remain.',
+    'Share links you created and guest access that depends on them are removed.',
+  ]) cases.push([`missing consequence: ${phrase}`, /account-deletion resource consequences item/, (candidate) => { replaceAccountText(candidate, phrase) }])
+  cases.push(['hidden required step text', /account-deletion resource ordered steps item/, (candidate) => { replaceAccountText(candidate, 'Open Trips.', '<span hidden>Open Trips.</span>') }])
+  cases.push(['hidden required consequence text', /account-deletion resource consequences item/, (candidate) => { replaceAccountText(candidate, 'Content in retained shared trips may remain.', '<span aria-hidden="true">Content in retained shared trips may remain.</span>') }])
+
+  await t.test('allows a benign rewrite between deletion and SPA fallback', () => {
+    const benign = sources()
+    updateVercel(benign, (rewrites) => rewrites.splice(rewrites.findIndex((rewrite) => rewrite.source === '/(.*)'), 0, { source: '/privacy', destination: '/privacy.html' }))
+    assert.deepEqual(inspectMobileReleaseReadiness(benign), [])
+  })
+  await t.test('allows outputDirectory dist', () => {
+    const candidate = sources()
+    updateVercel(candidate, (_, config) => { config.outputDirectory = 'dist' })
+    assert.deepEqual(inspectMobileReleaseReadiness(candidate), [])
+  })
+
+  for (const [name, expected, mutate] of cases) await t.test(name, () => {
+    const candidate = sources()
+    mutate(candidate)
+    assert.match(messages(candidate), expected)
+  })
 })
 
 test('rejects native identifier and version drift', () => {
@@ -295,19 +413,23 @@ test('rejects X-API-Key headers without flagging safe policy prose', () => {
   assert.deepEqual(inspectMobileReleaseReadiness(sources()), []); const result = completed(); result.platforms[0].contexts[0].cases[0].actions = 'X-API-Key: raw-secret'; assert.match(messages(tracked(result)), /raw credential/)
 })
 
-test('rejects issue-64 approval claims outside the release gate table', async (t) => {
+test('rejects protected approval claims outside the release gate table', async (t) => {
   const claims = [
     ['colon', 'Authentication and guest sessions: PASS'],
     ['em dash', 'Authentication and guest sessions — PASS'],
     ['copula', 'Device install smoke is APPROVED'],
     ['Markdown row', '| Physical-device evidence | PASS |'],
+    ['privacy gate', 'Privacy and store metadata: PASS'],
+    ['security PoC', 'Privacy and store metadata has passed review and is ready for release.'],
+    ['soft-break PoC', 'Privacy and store\nmetadata has passed review and is ready for release.'],
+    ['must-PASS bypass', 'Privacy and store metadata must PASS and has passed review.'],
     ['three-line PoC', 'Authentication and guest sessions — PASS\nDevice install smoke is APPROVED\nPhysical-device evidence: PASS'],
   ]
   for (const [name, claim] of claims) await t.test(name, () => { const candidate = sources(); candidate.releaseDocument += `\n${claim}\n`; assert.match(messages(candidate), /outside the canonical gate table/) })
 })
 
 test('allows instructional must-PASS prose outside the release gate table', () => {
-  const candidate = sources(); candidate.releaseDocument += '\nAuthentication and guest sessions must PASS before review.\n'; assert.doesNotMatch(messages(candidate), /outside the canonical gate table/)
+  const candidate = sources(); candidate.releaseDocument += '\nAuthentication and guest sessions must PASS before review.\nPrivacy and store metadata must PASS before release.\n'; assert.doesNotMatch(messages(candidate), /outside the canonical gate table/)
 })
 
 test('rejects duplicate toolchain and release-gate blocks', () => {

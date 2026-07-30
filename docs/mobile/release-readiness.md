@@ -18,14 +18,27 @@ canonical contract catalog,
 [`auth-session-device-evidence.template.json`](auth-session-device-evidence.template.json)
 fixture, and [`auth-session-transport-adr-template.md`](auth-session-transport-adr-template.md).
 These are **TEMPLATE / NOT EVIDENCE** and deliberately contain no device execution
-or credential values; only a dated, validated `results.json` copy is claim-bearing. The Authentication and guest sessions and Device install
-smoke gates below remain `BLOCKED` until a reviewed, redaction-safe run proves them.
+or credential values; only a dated, validated `results.json` copy is claim-bearing. The
+two device-related gates below remain `BLOCKED` until a reviewed, redaction-safe run
+proves them.
 
 Run the secret-free preflight from `frontend/`:
 
 ```bash
 npm run check:mobile-release-readiness
 ```
+
+## Public account-deletion resource
+
+The repository source at
+[`frontend/public/account-deletion.html`](../../frontend/public/account-deletion.html)
+documents the existing authenticated self-service flow: sign in, open Trips, open
+Account, choose Delete account, type the exact lowercase confirmation, enter the
+current password, and confirm.
+Its canonical public URL is
+[https://dupert.vercel.app/account-deletion](https://dupert.vercel.app/account-deletion).
+Repository source and routing configuration are not evidence that the URL is deployed,
+reachable, or accepted in store metadata.
 
 ## Repository-backed toolchain contract
 
@@ -89,6 +102,12 @@ a real macOS builder produces reproducible evidence.
 | Backward compatibility and rollback | BLOCKED | Unassigned | Previous-version compatibility and rollback drill are not recorded |
 | Monitoring and ownership | BLOCKED | Unassigned | Release owners, monitoring links, escalation path, and go/no-go approver are not assigned |
 <!-- mobile-release-gates:end -->
+
+### Privacy and store evidence status
+
+This gate remains **BLOCKED**. The account-deletion page and Vercel rewrite are
+repository source evidence only; deployed reachability, store metadata, screenshots,
+and reviewer evidence are still not recorded.
 
 ## Controlled beta evidence checklist
 
