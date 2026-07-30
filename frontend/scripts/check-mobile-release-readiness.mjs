@@ -2,6 +2,7 @@ import { lstatSync, readFileSync, realpathSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { JSDOM } from 'jsdom'
 
 const REQUIRED_GATES = ['Repository contract', 'Artifact provenance', 'Signing and secrets', 'Identity and versioning', 'Production configuration', 'Authentication and guest sessions', 'Maps', 'Universal/App Links', 'Privacy and store metadata', 'Device install smoke', 'Backward compatibility and rollback', 'Monitoring and ownership']
 const ALLOWED_GATE_STATUSES = new Set(['PASS', 'BLOCKED', 'UNVERIFIED', 'FAIL'])
@@ -9,6 +10,14 @@ const FORBIDDEN_TRACKED_RELEASE_FILES = /(?:^|\/)(?:[^/]+\.(?:jks|keystore|p12|p
 const RESULT_PATH = /^docs\/mobile\/evidence\/issue-64\/(\d{4}-\d{2}-\d{2})\/([a-z0-9]+(?:-[a-z0-9]+)*)\/results\.json$/
 const RESULT_SHAPE = /^docs\/mobile\/evidence\/issue-64\/([^/]+)\/([^/]+)\/results\.json$/
 const REQUIRED_SOURCE_FILES = ['docs/mobile/auth-session-device-evidence.catalog.json', 'docs/mobile/auth-session-device-evidence.template.json', 'docs/mobile/auth-session-device-spike.md', 'docs/mobile/auth-session-transport-adr-template.md']
+const ACCOUNT_DELETION_FILES = ['frontend/public/account-deletion.html', 'frontend/vercel.json']
+const ACCOUNT_DELETION_URL = 'https://dupert.vercel.app/account-deletion'
+const ACCOUNT_DELETION_TITLE = 'Delete your Dupert account'
+const ACCOUNT_DELETION_DESCRIPTION = 'Learn how to permanently delete your Dupert account from the authenticated account settings.'
+const ACCOUNT_DELETION_CTA = 'Sign in to delete your account'
+const ACCOUNT_DELETION_STEPS = ['Sign in to your Dupert account.', 'Open Trips.', 'Open Account. On small screens, open the account menu first, then choose Account.', 'Select Delete account.', 'Type the exact lowercase word delete.', 'Confirm Delete account.']
+const ACCOUNT_DELETION_SUMMARY = ['Deletion is permanent and cannot be undone.', 'Some content in shared trips may remain, including a guest name you used before signing in.']
+const ACCOUNT_DELETION_CONSEQUENCES = ['Your account is permanently removed.', 'You are signed out on this device. Dupert cancels saved sign-ins, and other devices ask you to sign in again after their current access expires.', 'Trips you own with no other Dupert members are deleted.', 'Trips you own with other Dupert members are transferred to one of them.', 'Content in retained shared trips may remain.', 'Your signed-in Dupert name is removed from retained activity history, but a guest name you used before signing in may remain.', 'Share links you created and guest access that depends on them are removed.']
 const EVIDENCE_KEYS = ['safe_reference', 'observed_result', 'network_trace_reference', 'artifact_identity_checksum', 'redaction_notes']
 const CASE_KEYS = ['case_id', 'preconditions', 'actions', 'expected_outcome', 'cleanup', 'status', 'evidence']
 const RAW_SECRET = /(?:authorization\s*[:=]\s*(?:bearer|basic)|x[-_]api[-_]key\s*[:=]|\bbearer\s+[a-z0-9._-]{20,}|\bbasic\s+[a-z0-9+/=]{12,}|\beyJ[a-z0-9_-]{10,}\.[a-z0-9_-]+\.|(?:access|refresh|guest|reset)[_-]?token\s*[:=]|verification[-_]code\s*[:=]|api[-_]?key\s*[:=]|(?:set-)?cookie\s*[:=]|password\s*[:=]\s*[^\s"']+|https?:\/\/[^\s"']+\/(?:reset|verify|verification)[^\s"']*|[?&](?:token|secret|api[-_]?key|password|code|reset[-_]?token|verification[-_]?code)=)/i
@@ -266,8 +275,10 @@ function inspectGateTable(document, violations) {
   }
   for (const gate of gateNames) if (!REQUIRED_GATES.includes(gate)) violations.push(`release gate is unknown: ${gate}`)
   const outsideGateTable = document.replace(blocks[0][0], '')
-  const protectedSubject = /Authentication and guest sessions|Device install smoke|Physical-device evidence/i
-  if (outsideGateTable.split('\n').some((line) => protectedSubject.test(line) && /\b(?:PASS|APPROVED)\b/i.test(line.replace(/\bmust\s+PASS\b/ig, '')))) violations.push('release-readiness contains an issue #64 PASS or APPROVED claim outside the canonical gate table')
+  const protectedSubject = /Authentication and guest sessions|Privacy and store metadata|Device install smoke|Physical-device evidence/i
+  const protectedInstruction = new RegExp(`^\\s*(?:[-*]\\s*)?(?:${protectedSubject.source})\\s+must\\s+PASS(?:\\s+before\\s+(?:review|release))?\\.?\\s*$`, 'i')
+  const remainingOutsideText = outsideGateTable.split('\n').filter((line) => !protectedInstruction.test(line)).join(' ').replace(/\s+/g, ' ')
+  if (protectedSubject.test(remainingOutsideText)) violations.push('release-readiness contains protected status prose outside the canonical gate table')
   return rows
 }
 
@@ -295,6 +306,108 @@ function inspectProductionBackend(environmentFile, violations) {
   if (url.pathname !== '/' || /localhost|127\.0\.0\.1|\.test$|\.example$|invalid|placeholder|change-me/i.test(url.hostname)) {
     violations.push('native production backend URL must be a deployed non-placeholder origin')
   }
+}
+
+function normalizedText(value) { return (value ?? '').replace(/\s+/g, ' ').trim() }
+function elementIsHidden(element, window) {
+  for (let current = element; current; current = current.parentElement) {
+    const style = window.getComputedStyle(current)
+    if (current.hidden || current.getAttribute('aria-hidden')?.toLowerCase() === 'true' || style.display === 'none' || style.visibility === 'hidden' || (style.opacity !== '' && Number(style.opacity) === 0)) return true
+  }
+  return false
+}
+function visibleElementText(element, window) {
+  const collect = (node) => {
+    if (node.nodeType === window.Node.TEXT_NODE) return node.nodeValue
+    if (node.nodeType !== window.Node.ELEMENT_NODE || elementIsHidden(node, window)) return ''
+    return [...node.childNodes].map(collect).join(' ')
+  }
+  return normalizedText(collect(element))
+}
+function accessibleElementText(element, document, window) {
+  if (element.hasAttribute('aria-label')) return normalizedText(element.getAttribute('aria-label'))
+  if (element.hasAttribute('aria-labelledby')) return normalizedText(element.getAttribute('aria-labelledby').split(/\s+/).map((id) => { const label = document.getElementById(id); return label && !elementIsHidden(label, window) ? visibleElementText(label, window) : '' }).join(' '))
+  return visibleElementText(element, window)
+}
+function inspectExactList(list, expected, label, window, violations) {
+  if (!list) return violations.push(`account-deletion resource ${label} list is missing`)
+  const items = [...list.children]
+  if (items.length !== expected.length || items.some((item) => item.tagName !== 'LI')) return violations.push(`account-deletion resource ${label} list must contain exactly ${expected.length} semantic items`)
+  for (const [index, text] of expected.entries()) if (visibleElementText(items[index], window) !== text) violations.push(`account-deletion resource ${label} item ${index + 1} must equal: ${text}`)
+}
+
+function inspectAccountDeletionResource(sources, violations) {
+  const source = sources.accountDeletionResource ?? ''
+  marker(source, 'account-deletion-resource', {
+    contract_version: '1',
+    canonical_url: ACCOUNT_DELETION_URL,
+    entry_path: '/login',
+  }, violations)
+
+  const dom = new JSDOM(source, { contentType: 'text/html' })
+  const { document } = dom.window
+  if (document.documentElement.lang !== 'en') violations.push('account-deletion resource html lang must be en')
+  if (document.title !== ACCOUNT_DELETION_TITLE) violations.push(`account-deletion resource title must be ${ACCOUNT_DELETION_TITLE}`)
+  const descriptions = document.querySelectorAll('meta[name="description"]')
+  if (descriptions.length !== 1 || descriptions[0].getAttribute('content') !== ACCOUNT_DELETION_DESCRIPTION) violations.push('account-deletion resource description metadata is invalid')
+  const viewports = document.querySelectorAll('meta[name="viewport"]')
+  if (viewports.length !== 1 || viewports[0].getAttribute('content') !== 'width=device-width, initial-scale=1.0') violations.push('account-deletion resource viewport metadata is invalid')
+  const canonicals = document.querySelectorAll('link[rel~="canonical"]')
+  if (canonicals.length !== 1 || canonicals[0].getAttribute('href') !== ACCOUNT_DELETION_URL) violations.push(`account-deletion resource canonical link must be ${ACCOUNT_DELETION_URL}`)
+  if (document.querySelector('script')) violations.push('account-deletion resource must not contain scripts')
+  if (document.querySelector('form')) violations.push('account-deletion resource must not contain forms')
+  if (document.querySelector('base, iframe, object, embed, [src], link:not([rel~="canonical"]), meta[http-equiv="refresh"]') || /@import\s|url\s*\(/i.test(source)) violations.push('account-deletion resource must not contain an external dependency')
+  if ([...document.querySelectorAll('*')].some((element) => [...element.attributes].some((attribute) => /^on/i.test(attribute.name)))) violations.push('account-deletion resource must not contain inline event handlers')
+  const allowedHrefs = new Set([ACCOUNT_DELETION_URL, '/login', '/login?mode=password-reset'])
+  if ([...document.querySelectorAll('[href]')].some((element) => !allowedHrefs.has(element.getAttribute('href')))) violations.push('account-deletion resource contains a non-allowlisted href')
+
+  const mains = document.querySelectorAll('main')
+  if (mains.length !== 1 || elementIsHidden(mains[0], dom.window)) violations.push('account-deletion resource must contain exactly one visible main element')
+  const main = mains[0]
+  const headings = document.querySelectorAll('h1')
+  if (headings.length !== 1 || !main?.contains(headings[0]) || elementIsHidden(headings[0], dom.window) || visibleElementText(headings[0], dom.window) !== ACCOUNT_DELETION_TITLE || accessibleElementText(headings[0], document, dom.window) !== ACCOUNT_DELETION_TITLE) violations.push(`account-deletion resource must contain exactly one visible h1 named ${ACCOUNT_DELETION_TITLE}`)
+
+  const ctas = document.querySelectorAll('a[href="/login"]')
+  const cta = ctas[0]
+  if (ctas.length !== 1 || !cta || !main?.contains(cta) || elementIsHidden(cta, dom.window) || cta.tabIndex < 0 || visibleElementText(cta, dom.window) !== ACCOUNT_DELETION_CTA || accessibleElementText(cta, document, dom.window) !== ACCOUNT_DELETION_CTA) violations.push(`account-deletion resource must include one visible, focusable /login CTA named ${ACCOUNT_DELETION_CTA}`)
+  const summary = document.querySelector('.deletion-summary')
+  if (!summary || !main?.contains(summary) || !summary.matches('section, aside') || elementIsHidden(summary, dom.window) || ACCOUNT_DELETION_SUMMARY.some((text) => !visibleElementText(summary, dom.window).includes(text)) || (cta && !(summary.compareDocumentPosition(cta) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING))) violations.push('account-deletion resource must show the irreversible and retained-content summary before the sign-in CTA')
+  const ctaNote = cta?.nextElementSibling
+  if (!ctaNote || !ctaNote.matches('p.cta-note#sign-in-note') || cta?.getAttribute('aria-describedby') !== 'sign-in-note' || elementIsHidden(ctaNote, dom.window) || visibleElementText(ctaNote, dom.window) !== 'Signing in does not delete your account. You will review and confirm deletion in Account settings.') violations.push('account-deletion resource must associate the sign-in CTA with its non-deletion explanation')
+  const recoveryLinks = document.querySelectorAll('a[href="/login?mode=password-reset"]')
+  const recovery = recoveryLinks[0]
+  if (recoveryLinks.length !== 1 || !recovery || !main?.contains(recovery) || elementIsHidden(recovery, dom.window) || recovery.tabIndex < 0 || visibleElementText(recovery, dom.window) !== 'Reset your password' || accessibleElementText(recovery, document, dom.window) !== 'Reset your password') violations.push('account-deletion resource must include one visible, focusable Reset your password link')
+
+  const stepSection = document.querySelector('section[aria-labelledby="deletion-steps"]')
+  inspectExactList(stepSection && main?.contains(stepSection) ? stepSection.querySelector(':scope > ol') : null, ACCOUNT_DELETION_STEPS, 'ordered steps', dom.window, violations)
+  const consequenceSection = document.querySelector('section[aria-labelledby="deletion-results"]')
+  inspectExactList(consequenceSection && main?.contains(consequenceSection) ? consequenceSection.querySelector(':scope > ul') : null, ACCOUNT_DELETION_CONSEQUENCES, 'consequences', dom.window, violations)
+  dom.window.close()
+
+  let config
+  let configParsed = true
+  try { config = JSON.parse(sources.vercelConfig) } catch { configParsed = false; violations.push('frontend/vercel.json must be valid JSON') }
+  if (configParsed && requireObject(config, 'frontend/vercel.json', violations)) {
+    for (const key of Object.keys(config)) if (!['rewrites', 'outputDirectory'].includes(key)) violations.push(`frontend/vercel.json contains unsupported top-level key: ${key}`)
+    if ('outputDirectory' in config && config.outputDirectory !== 'dist') violations.push('frontend/vercel.json outputDirectory must be dist')
+    if (!Array.isArray(config.rewrites)) {
+      violations.push('frontend/vercel.json rewrites must be an array')
+    } else {
+      for (const [index, rewrite] of config.rewrites.entries()) if (requireExactKeys(rewrite, ['source', 'destination'], `Vercel rewrite ${index + 1}`, violations) && (typeof rewrite.source !== 'string' || !rewrite.source.startsWith('/') || typeof rewrite.destination !== 'string' || !rewrite.destination.startsWith('/'))) violations.push(`Vercel rewrite ${index + 1} source and destination must be absolute paths`)
+      const deletionRewrites = config.rewrites.filter((rewrite) => rewrite?.source === '/account-deletion')
+      const fallbackRewrites = config.rewrites.filter((rewrite) => rewrite?.source === '/(.*)')
+      if (deletionRewrites.length !== 1) violations.push('Vercel account-deletion rewrite must appear exactly once')
+      if (fallbackRewrites.length !== 1) violations.push('Vercel SPA fallback rewrite must appear exactly once')
+      const deletionRewrite = deletionRewrites[0]
+      const fallbackRewrite = fallbackRewrites[0]
+      if (deletionRewrite && (!requireExactKeys(deletionRewrite, ['source', 'destination'], 'Vercel account-deletion rewrite', violations) || deletionRewrite.destination !== '/account-deletion.html')) violations.push('Vercel account-deletion rewrite destination must be /account-deletion.html')
+      if (fallbackRewrite && (!requireExactKeys(fallbackRewrite, ['source', 'destination'], 'Vercel SPA fallback rewrite', violations) || fallbackRewrite.destination !== '/index.html')) violations.push('Vercel SPA fallback rewrite destination must be /index.html')
+      if (deletionRewrite && config.rewrites.indexOf(deletionRewrite) !== 0) violations.push('Vercel account-deletion rewrite must be the first rewrite')
+    }
+  }
+
+  if (!sources.releaseDocument.includes(ACCOUNT_DELETION_URL)) violations.push(`release-readiness account-deletion URL must be ${ACCOUNT_DELETION_URL}`)
+  if ((sources.trackedFiles ?? []).length) for (const path of ACCOUNT_DELETION_FILES) if (!sources.trackedFiles.includes(path)) violations.push(`public account-deletion resource must be tracked: ${path}`)
 }
 
 export function loadTrackedResultCopies(repositoryRoot, trackedFiles = []) {
@@ -333,6 +446,8 @@ export function loadMobileReleaseSources(repositoryRoot, trackedFiles = []) {
     nativeProductionEnvironment: read('frontend/.env.native-production'),
     workflow: read('.github/workflows/ci.yml'),
     releaseDocument: read('docs/mobile/release-readiness.md'),
+    accountDeletionResource: read('frontend/public/account-deletion.html'),
+    vercelConfig: read('frontend/vercel.json'),
     authSessionEvidenceCatalog: read('docs/mobile/auth-session-device-evidence.catalog.json'),
     authSessionEvidenceTemplate: read('docs/mobile/auth-session-device-evidence.template.json'),
     authSessionDeviceSpike: read('docs/mobile/auth-session-device-spike.md'),
@@ -441,6 +556,9 @@ export function inspectMobileReleaseReadiness(sources) {
     const row = gateRows.find(([gate]) => gate === requiredBlockedGate)
     if (row && row[1] !== 'BLOCKED') violations.push(`${requiredBlockedGate} must remain BLOCKED until physical-device evidence is reviewed`)
   }
+  const privacyGate = gateRows.find(([gate]) => gate === 'Privacy and store metadata')
+  if (privacyGate && privacyGate[1] !== 'BLOCKED') violations.push('Privacy and store metadata must remain BLOCKED until deployed and store-review evidence is recorded')
+  inspectAccountDeletionResource(sources, violations)
   inspectDeviceEvidenceContract(sources, violations)
 
   for (const path of sources.trackedFiles ?? []) {
