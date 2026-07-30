@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -11,8 +11,10 @@ const mapSurfaceCss = readFileSync(join(currentDir, 'TripMapSurface.native.modul
 const mapSurfaceSource = readFileSync(join(currentDir, 'TripMapSurface.native.tsx'), 'utf8')
 
 describe('<TripMapSurface> native target', () => {
-  it('renders the native map host without importing the browser renderer', () => {
-    render(<TripMapSurface {...({ activities: [], destination: null } as TripMapProps)} />)
+  it('renders the native map host without importing the browser renderer', async () => {
+    await act(async () => {
+      render(<TripMapSurface {...({ activities: [], destination: null } as TripMapProps)} />)
+    })
 
     expect(screen.getByTestId('native-google-map')).toBeInTheDocument()
     expect(screen.getByTestId('native-map-runtime-notice'))
