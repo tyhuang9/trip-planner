@@ -5,11 +5,13 @@ on:
     paths:
       - 'frontend/**'
       - '.github/workflows/android-unsigned-artifact.yml'
+      - 'docs/mobile/android-unsigned-aab-evidence.md'
       - 'docs/mobile/build-profiles.md'
   pull_request:
     paths:
       - 'frontend/**'
       - '.github/workflows/android-unsigned-artifact.yml'
+      - 'docs/mobile/android-unsigned-aab-evidence.md'
       - 'docs/mobile/build-profiles.md'
   workflow_dispatch:
 
@@ -22,12 +24,14 @@ concurrency:
 
 jobs:
   unsigned-apk:
-    name: Build and inspect unsigned Android APK
+    name: Build and inspect unsigned Android APK and AAB
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       ANDROID_BUILD_TOOLS_VERSION: '36.0.0'
       ANDROID_NDK_VERSION: '28.2.13676358'
+      BUNDLETOOL_SHA256: a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29
+      BUNDLETOOL_VERSION: '1.18.3'
 
     steps:
       - name: Checkout
@@ -63,6 +67,35 @@ jobs:
             echo "::error title=Missing Android NDK::llvm-objdump is unavailable in NDK $ANDROID_NDK_VERSION"
             exit 1
           }
+          for tool in java jarsigner; do
+            test -x "$JAVA_HOME/bin/$tool" || {
+              echo "::error title=Missing Java tool::$tool is unavailable under JAVA_HOME"
+              exit 1
+            }
+          done
+          for tool in /usr/bin/curl /usr/bin/cut /usr/bin/install /usr/bin/sha256sum /usr/bin/unzip; do
+            test -x "$tool" || {
+              echo "::error title=Missing hosted tool::$tool is unavailable"
+              exit 1
+            }
+          done
+
+      - name: Download and verify bundletool
+        shell: bash
+        env:
+          BUNDLETOOL_JAR_PATH: ${{ runner.temp }}/bundletool-all-1.18.3.jar
+        run: |
+          /usr/bin/curl \
+            --fail \
+            --location \
+            --proto '=https' \
+            --show-error \
+            --silent \
+            --tlsv1.2 \
+            "https://github.com/google/bundletool/releases/download/${BUNDLETOOL_VERSION}/bundletool-all-${BUNDLETOOL_VERSION}.jar" \
+            --output "$BUNDLETOOL_JAR_PATH"
+          printf '%s  %s\n' "$BUNDLETOOL_SHA256" "$BUNDLETOOL_JAR_PATH" \
+            | /usr/bin/sha256sum --check --strict
 
       - name: Install frontend dependencies
         working-directory: frontend
@@ -90,3 +123,58 @@ jobs:
       - name: Inspect ephemeral unsigned Android APK
         working-directory: frontend
         run: node scripts/check-android-unsigned-artifact.mjs android/app/build/outputs/apk/release/app-release-unsigned.apk
+
+      - name: Build unsigned Android release App Bundle
+        working-directory: frontend/android
+        run: ./gradlew :app:bundleRelease --no-daemon
+
+      - name: Inspect unsigned Android App Bundle
+        working-directory: frontend
+        env:
+          BUNDLETOOL_JAR_PATH: ${{ runner.temp }}/bundletool-all-1.18.3.jar
+        run: npm run check:android-unsigned-bundle -- android/app/build/outputs/bundle/release/app-release.aab
+
+      - name: Prepare explicitly non-release AAB evidence
+        shell: bash
+        env:
+          AAB_PATH: frontend/android/app/build/outputs/bundle/release/app-release.aab
+          CHECKOUT_SHA: ${{ github.sha }}
+          EVIDENCE_DIR: ${{ runner.temp }}/dupert-unsigned-aab-evidence
+          SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          evidence_name='Dupert-UNSIGNED-NOT-INSTALLABLE.aab'
+          /usr/bin/install -d -m 0755 "$EVIDENCE_DIR"
+          /usr/bin/install -m 0644 "$AAB_PATH" "$EVIDENCE_DIR/$evidence_name"
+          aab_sha256="$(/usr/bin/sha256sum "$EVIDENCE_DIR/$evidence_name" | /usr/bin/cut -d ' ' -f 1)"
+          printf '%s  %s\n' "$aab_sha256" "$evidence_name" \
+            > "$EVIDENCE_DIR/$evidence_name.sha256"
+          printf '%s\n' \
+            'WARNING=UNSIGNED-NOT-INSTALLABLE' \
+            'evidence_scope=Cooperative CI build evidence only; not release provenance or attestation' \
+            "source_head_sha=$SOURCE_HEAD_SHA" \
+            "checkout_sha=$CHECKOUT_SHA" \
+            "workflow_run=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            "bundletool_version=$BUNDLETOOL_VERSION" \
+            "bundletool_sha256=$BUNDLETOOL_SHA256" \
+            "aab_sha256=$aab_sha256" \
+            "runner_os=$RUNNER_OS" \
+            "runner_arch=$RUNNER_ARCH" \
+            > "$EVIDENCE_DIR/BUILD-CONTEXT-NOT-ATTESTATION.txt"
+          {
+            printf '## Unsigned Android App Bundle evidence\n\n'
+            printf '**UNSIGNED — NOT INSTALLABLE — NOT A RELEASE — NOT AN ATTESTATION**\n\n'
+            printf -- '- AAB SHA-256: `%s`\n' "$aab_sha256"
+            printf -- '- Retention: 7 days\n'
+            printf -- '- No signing credential, Play upload, device install, or release claim was used.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload short-lived unsigned AAB evidence
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dupert-UNSIGNED-NOT-INSTALLABLE-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/dupert-unsigned-aab-evidence
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          include-hidden-files: false
