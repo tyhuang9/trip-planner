@@ -27,6 +27,8 @@ import com.trip.config.AppProperties;
 import com.trip.config.RateLimitFilter;
 import com.trip.config.RateLimitRegistry;
 import com.trip.domain.User;
+import com.trip.observability.AccountDeletionMetrics;
+import com.trip.observability.AccountDeletionMetrics.Outcome;
 import com.trip.repo.UserRepository;
 import com.trip.service.auth.AccountService;
 import com.trip.service.auth.AccountService.DeleteAccountResult;
@@ -103,6 +105,7 @@ public class AuthController {
     private final RefreshCookie refreshCookie;
     private final AuthTokenService authTokenService;
     private final AccountService accountService;
+    private final AccountDeletionMetrics accountDeletionMetrics;
     private final PasswordResetService passwordResetService;
     private final EmailVerificationOperations emailVerificationService;
     private final RateLimitRegistry rateLimitRegistry;
@@ -117,6 +120,7 @@ public class AuthController {
                           RefreshCookie refreshCookie,
                           AuthTokenService authTokenService,
                           AccountService accountService,
+                          AccountDeletionMetrics accountDeletionMetrics,
                           PasswordResetService passwordResetService,
                           EmailVerificationOperations emailVerificationService,
                           RateLimitRegistry rateLimitRegistry,
@@ -129,6 +133,7 @@ public class AuthController {
         this.refreshCookie = refreshCookie;
         this.authTokenService = authTokenService;
         this.accountService = accountService;
+        this.accountDeletionMetrics = accountDeletionMetrics;
         this.passwordResetService = passwordResetService;
         this.emailVerificationService = emailVerificationService;
         this.rateLimitRegistry = rateLimitRegistry;
@@ -410,18 +415,32 @@ public class AuthController {
 
         ResponseEntity<?> limited = enforceAccountDeleteLimit(userId);
         if (limited != null) {
+            accountDeletionMetrics.record(Outcome.USER_THROTTLED);
             return limited;
         }
 
-        DeleteAccountResult result = accountService.deleteAccount(userId, body.currentPassword());
+        DeleteAccountResult result;
+        try {
+            result = accountService.deleteAccount(userId, body.currentPassword());
+        } catch (RuntimeException exception) {
+            accountDeletionMetrics.record(Outcome.TRANSACTION_FAILED);
+            throw exception;
+        }
         return switch (result) {
             case DELETED -> {
+                accountDeletionMetrics.record(Outcome.SUCCESS);
                 refreshCookie.clearOnResponse(response);
                 yield ResponseEntity.noContent().build();
             }
-            case USER_NOT_FOUND -> unauthenticated();
-            case REAUTHENTICATION_FAILED -> ResponseEntity.status(HttpStatus.FORBIDDEN)
-                .body(Map.of("error", "reauthentication_failed"));
+            case USER_NOT_FOUND -> {
+                accountDeletionMetrics.record(Outcome.USER_MISSING);
+                yield unauthenticated();
+            }
+            case REAUTHENTICATION_FAILED -> {
+                accountDeletionMetrics.record(Outcome.FRESH_AUTH_REJECTED);
+                yield ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("error", "reauthentication_failed"));
+            }
         };
     }
 

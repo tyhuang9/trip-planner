@@ -11,6 +11,9 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import com.trip.observability.AccountDeletionMetrics;
+import com.trip.observability.AccountDeletionMetrics.Outcome;
+
 import io.github.bucket4j.Bucket;
 import io.github.bucket4j.ConsumptionProbe;
 import jakarta.servlet.FilterChain;
@@ -80,10 +83,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
     public static final String RATE_LIMITED_BODY = "{\"error\":\"rate_limited\"}";
 
     private final RateLimitRegistry registry;
+    private final AccountDeletionMetrics accountDeletionMetrics;
     private final boolean trustProxy;
 
-    public RateLimitFilter(RateLimitRegistry registry, AppProperties appProperties) {
+    public RateLimitFilter(RateLimitRegistry registry,
+                           AppProperties appProperties,
+                           AccountDeletionMetrics accountDeletionMetrics) {
         this.registry = registry;
+        this.accountDeletionMetrics = accountDeletionMetrics;
         this.trustProxy = appProperties.isTrustProxy();
     }
 
@@ -154,6 +161,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         } else if ("DELETE".equalsIgnoreCase(request.getMethod())
             && ACCOUNT_DELETE_PATH.equals(path)) {
             if (!tryConsume(response, RateLimitRegistry.Named.AUTH_ACCOUNT_DELETE, clientIp)) {
+                accountDeletionMetrics.record(Outcome.IP_THROTTLED);
                 return;
             }
         }

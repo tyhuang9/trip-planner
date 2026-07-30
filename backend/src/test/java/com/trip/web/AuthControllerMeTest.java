@@ -1,7 +1,10 @@
 package com.trip.web;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -29,6 +32,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -52,6 +57,9 @@ import com.trip.service.auth.RefreshTokenService.IssuedRefreshToken;
 import com.trip.web.auth.AuthCookieAction;
 import com.trip.web.auth.GuestSessionCookie;
 import com.trip.web.auth.RefreshCookie;
+import com.trip.web.dto.DeleteAccountRequest;
+
+import io.micrometer.core.instrument.MeterRegistry;
 
 /**
  * MockMvc tests for the chunk-2c auth endpoints: {@code GET/DELETE /api/auth/me},
@@ -67,6 +75,9 @@ import com.trip.web.auth.RefreshCookie;
 @ActiveProfiles("test")
 class AuthControllerMeTest {
 
+    private static final String ACCOUNT_DELETION_COUNTER =
+        "dupert.auth.account.deletion.attempts";
+
     @Autowired
     MockMvc mvc;
 
@@ -75,6 +86,12 @@ class AuthControllerMeTest {
 
     @Autowired
     JwtService realJwtService;
+
+    @Autowired
+    AuthController authController;
+
+    @Autowired
+    MeterRegistry meterRegistry;
 
     @MockitoBean
     UserRepository userRepository;
@@ -364,6 +381,8 @@ class AuthControllerMeTest {
 
     @Test
     void deleteMeHappyPathRevokesTokensDeletesUserAndClearsCookie() throws Exception {
+        double outcomeBefore = accountDeletionCount("success");
+        double totalBefore = totalAccountDeletionCount();
         User user = userWith(42L, "alice@example.com", "Alice");
         when(userRepository.findPasswordHashById(42L))
             .thenReturn(Optional.of("ignored-hash"));
@@ -382,6 +401,7 @@ class AuthControllerMeTest {
         verify(passwordEncoder).matches("current-secret", "ignored-hash");
         verify(refreshTokenService, times(1)).revokeAllForUser(42L);
         verify(userRepository, times(1)).delete(user);
+        assertThatSingleOutcomeIncreased("success", outcomeBefore, totalBefore);
     }
 
     @Test
@@ -410,6 +430,8 @@ class AuthControllerMeTest {
 
     @Test
     void deleteMeWhenUserAlreadyGoneReturns401WithoutClearingCookie() throws Exception {
+        double outcomeBefore = accountDeletionCount("user_missing");
+        double totalBefore = totalAccountDeletionCount();
         when(userRepository.findPasswordHashById(42L)).thenReturn(Optional.empty());
         String token = realJwtService.issueAccessToken(42L);
 
@@ -426,10 +448,13 @@ class AuthControllerMeTest {
         verify(passwordEncoder, never()).matches(anyString(), anyString());
         verify(refreshTokenService, never()).revokeAllForUser(any());
         verify(userRepository, never()).delete(any(User.class));
+        assertThatSingleOutcomeIncreased("user_missing", outcomeBefore, totalBefore);
     }
 
     @Test
     void deleteMeWithWrongPasswordReturns403AndPreservesAccountAndSession() throws Exception {
+        double outcomeBefore = accountDeletionCount("fresh_auth_rejected");
+        double totalBefore = totalAccountDeletionCount();
         when(userRepository.findPasswordHashById(43L))
             .thenReturn(Optional.of("ignored-hash"));
         when(passwordEncoder.matches("incorrect-secret", "ignored-hash")).thenReturn(false);
@@ -448,6 +473,7 @@ class AuthControllerMeTest {
         verify(refreshTokenService, never()).revokeAllForUser(any());
         verify(tripRepository, never()).findAllByOwnerId(any());
         verify(userRepository, never()).delete(any(User.class));
+        assertThatSingleOutcomeIncreased("fresh_auth_rejected", outcomeBefore, totalBefore);
     }
 
     @Test
@@ -483,6 +509,9 @@ class AuthControllerMeTest {
 
     @Test
     void deleteMeRateLimitsPerUserBeforeAdditionalPasswordVerification() throws Exception {
+        double rejectedBefore = accountDeletionCount("fresh_auth_rejected");
+        double throttledBefore = accountDeletionCount("user_throttled");
+        double totalBefore = totalAccountDeletionCount();
         when(userRepository.findPasswordHashById(88L))
             .thenReturn(Optional.of("ignored-hash"));
         when(passwordEncoder.matches(anyString(), anyString())).thenReturn(false);
@@ -511,11 +540,60 @@ class AuthControllerMeTest {
         verify(passwordEncoder, times(5)).matches("incorrect-secret", "ignored-hash");
         verify(refreshTokenService, never()).revokeAllForUser(any());
         verify(userRepository, never()).delete(any(User.class));
+        assertThat(accountDeletionCount("fresh_auth_rejected"))
+            .isEqualTo(rejectedBefore + 5.0);
+        assertThat(accountDeletionCount("user_throttled"))
+            .isEqualTo(throttledBefore + 1.0);
+        assertThat(totalAccountDeletionCount())
+            .isEqualTo(totalBefore + 6.0);
+    }
+
+    @Test
+    void deleteMeRecordsTransactionFailureAndRethrowsTheSameException() {
+        double outcomeBefore = accountDeletionCount("transaction_failed");
+        double totalBefore = totalAccountDeletionCount();
+        IllegalStateException failure = new IllegalStateException("simulated transaction failure");
+        when(userRepository.findPasswordHashById(46L)).thenThrow(failure);
+        Authentication authentication = mock(Authentication.class);
+        when(authentication.isAuthenticated()).thenReturn(true);
+        when(authentication.getPrincipal()).thenReturn(46L);
+
+        assertThatThrownBy(() -> authController.deleteMe(
+            new DeleteAccountRequest("current-secret"),
+            authentication,
+            new MockHttpServletResponse()))
+            .isSameAs(failure);
+
+        assertThatSingleOutcomeIncreased("transaction_failed", outcomeBefore, totalBefore);
     }
 
     // ------------------------------------------------------------------
     // helpers
     // ------------------------------------------------------------------
+
+    private double accountDeletionCount(String outcome) {
+        return meterRegistry.get(ACCOUNT_DELETION_COUNTER)
+            .tag("outcome", outcome)
+            .counter()
+            .count();
+    }
+
+    private double totalAccountDeletionCount() {
+        return meterRegistry.get(ACCOUNT_DELETION_COUNTER)
+            .counters()
+            .stream()
+            .mapToDouble(counter -> counter.count())
+            .sum();
+    }
+
+    private void assertThatSingleOutcomeIncreased(String outcome,
+                                                   double outcomeBefore,
+                                                   double totalBefore) {
+        assertThat(accountDeletionCount(outcome))
+            .isEqualTo(outcomeBefore + 1.0);
+        assertThat(totalAccountDeletionCount())
+            .isEqualTo(totalBefore + 1.0);
+    }
 
     private static User userWith(long id, String email, String displayName) {
         User u = new User(email, "ignored-hash", displayName);
