@@ -475,69 +475,85 @@ export function TripMapSurface({
     let disposed = false
     let createdMap: NativeGoogleMap | null = null
 
-    void NativeGoogleMap.create({
-      apiKey: iosApiKey,
-      config: initialCamera(baseStops),
-      element: elementRef.current,
-      id: nativeMapId,
-      onReady: () => {
-        if (!disposed) markPerformance('map-ready')
-      },
-    }).then(async (nextMap) => {
-      createdMap = nextMap
-      if (disposed) {
-        await nextMap.destroy()
-        return
+    void (async () => {
+      try {
+        const nextMap = await NativeGoogleMap.create({
+          apiKey: iosApiKey,
+          config: initialCamera(baseStops),
+          element: elementRef.current!,
+          id: nativeMapId,
+          onReady: () => {
+            if (!disposed) markPerformance('map-ready')
+          },
+        })
+        createdMap = nextMap
+        if (disposed) {
+          await nextMap.destroy()
+          return
+        }
+        const registrations = await Promise.allSettled([
+          nextMap.setOnMarkerClickListener(({ markerId }) => markerActionsRef.current.get(markerId)?.()),
+          nextMap.setOnMapClickListener(({ latitude, longitude }) => {
+            const location = coordinateFromNativeEvent({ latitude, longitude })
+            if (!location) return
+            const clickedAtMs = placeDetailsNowMs()
+            const clickedAtIso = new Date().toISOString()
+            const traceId = createPlaceDetailsTraceId()
+            logPlaceDetailsTiming('frontend_map_click', {
+              clickedAtIso,
+              clickedAtMs,
+              hasLocation: true,
+              hasPlaceId: false,
+              placeId: null,
+              traceId,
+            })
+            callbacksRef.current.onMapPlaceClick?.({
+              clickedAtIso,
+              clickedAtMs,
+              location,
+              placeId: null,
+              traceId,
+            })
+          }),
+          nextMap.setOnCameraIdleListener(({ bounds, latitude, longitude, zoom }) => {
+            const center = coordinateFromNativeEvent({ latitude, longitude })
+            if (!center) return
+            callbacksRef.current.onViewportContextChange?.({
+              bounds: {
+                east: bounds.northeast.lng,
+                north: bounds.northeast.lat,
+                south: bounds.southwest.lat,
+                west: bounds.southwest.lng,
+              },
+              center,
+              zoom,
+            })
+          }),
+        ])
+        const registrationErrors = registrations
+          .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+          .map((result) => result.reason)
+        if (registrationErrors.length > 0) {
+          throw new AggregateError(
+            registrationErrors,
+            'Failed to register native map listeners',
+            { cause: registrationErrors[0] },
+          )
+        }
+        if (disposed) {
+          await nextMap.destroy()
+          return
+        }
+        mapRef.current = nextMap
+        setMap(nextMap)
+        setMapError(null)
+      } catch {
+        if (createdMap) {
+          await createdMap.destroy().catch(() => undefined)
+        }
+        if (!disposed) setMapError('Native Google Maps could not start. Check the iOS or Android Maps SDK key configuration.')
       }
-      await Promise.all([
-        nextMap.setOnMarkerClickListener(({ markerId }) => markerActionsRef.current.get(markerId)?.()),
-        nextMap.setOnMapClickListener(({ latitude, longitude }) => {
-          const location = coordinateFromNativeEvent({ latitude, longitude })
-          if (!location) return
-          const clickedAtMs = placeDetailsNowMs()
-          const clickedAtIso = new Date().toISOString()
-          const traceId = createPlaceDetailsTraceId()
-          logPlaceDetailsTiming('frontend_map_click', {
-            clickedAtIso,
-            clickedAtMs,
-            hasLocation: true,
-            hasPlaceId: false,
-            placeId: null,
-            traceId,
-          })
-          callbacksRef.current.onMapPlaceClick?.({
-            clickedAtIso,
-            clickedAtMs,
-            location,
-            placeId: null,
-            traceId,
-          })
-        }),
-        nextMap.setOnCameraIdleListener(({ bounds, latitude, longitude, zoom }) => {
-          const center = coordinateFromNativeEvent({ latitude, longitude })
-          if (!center) return
-          callbacksRef.current.onViewportContextChange?.({
-            bounds: {
-              east: bounds.northeast.lng,
-              north: bounds.northeast.lat,
-              south: bounds.southwest.lat,
-              west: bounds.southwest.lng,
-            },
-            center,
-            zoom,
-          })
-        }),
-      ])
-      if (disposed) {
-        await nextMap.destroy()
-        return
-      }
-      mapRef.current = nextMap
-      setMap(nextMap)
-      setMapError(null)
-    }).catch(() => {
-      if (!disposed) setMapError('Native Google Maps could not start. Check the iOS or Android Maps SDK key configuration.')
-    })
+    })()
 
     return () => {
       disposed = true
