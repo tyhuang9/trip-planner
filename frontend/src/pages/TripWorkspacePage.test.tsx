@@ -556,7 +556,11 @@ function renderWorkspace(path: string) {
   function LocationProbe() {
     const location = useLocation()
     return (
-      <div data-testid="current-location" data-location-key={location.key}>
+      <div
+        data-testid="current-location"
+        data-location-hash={location.hash}
+        data-location-key={location.key}
+      >
         {location.pathname}{location.search}
       </div>
     )
@@ -570,6 +574,7 @@ function renderWorkspace(path: string) {
           <Route path="/trips/:publicId" element={<TripWorkspacePage />} />
           <Route path="/trips/:publicId/d/:day" element={<TripWorkspacePage />} />
           <Route path="/trips/:publicId/members" element={<TripWorkspacePage />} />
+          <Route path="/trips/:publicId/archive/members" element={<TripWorkspacePage />} />
         </Routes>
       </MemoryRouter>
     </Providers>,
@@ -1113,7 +1118,7 @@ describe('<TripWorkspacePage>', () => {
 
     expect(await screen.findByRole('heading', { level: 1, name: /tokyo 2026/i })).toBeInTheDocument()
     const membersDialog = await screen.findByRole('dialog', { name: /^members$/i })
-    expect(within(membersDialog).getByText('Alice')).toBeInTheDocument()
+    expect(await within(membersDialog).findByText('Alice')).toBeInTheDocument()
     expect(within(membersDialog).getByRole('button', { name: 'Remove Bob' })).toBeInTheDocument()
     expect(within(membersDialog).queryByRole('button', { name: 'Remove Alice' })).not.toBeInTheDocument()
     expect(apiMock.history.get.map(({ url }) => url)).not.toContain('/trips/abc234def567/share-links')
@@ -1123,6 +1128,56 @@ describe('<TripWorkspacePage>', () => {
       expect(screen.getByTestId('current-location')).toHaveTextContent('/trips/abc234def567')
       expect(screen.queryByRole('dialog', { name: /^members$/i })).not.toBeInTheDocument()
     })
+  })
+
+  it('treats the trailing-slash Members route as canonical with query and hash state', async () => {
+    authenticateUser()
+    mockWorkspace([], { ...SAMPLE_TRIP, role: 'VIEWER' })
+    apiMock.onGet('/trips/abc234def567/members').reply(200, [
+      {
+        userId: 42,
+        email: 'alice@example.com',
+        displayName: 'Alice',
+        role: 'OWNER',
+      },
+      {
+        userId: 84,
+        email: 'bob@example.com',
+        displayName: 'Bob',
+        role: 'EDITOR',
+      },
+    ])
+
+    renderWorkspace('/trips/abc234def567/members/?tab=people#members')
+
+    const membersDialog = await screen.findByRole('dialog', { name: /^members$/i })
+    expect(screen.getByTestId('current-location')).toHaveTextContent(
+      '/trips/abc234def567/members/?tab=people',
+    )
+    expect(screen.getByTestId('current-location')).toHaveAttribute('data-location-hash', '#members')
+    expect(await within(membersDialog).findByText('Alice')).toBeInTheDocument()
+    expect(within(membersDialog).queryByRole('button', { name: 'Remove Bob' })).not.toBeInTheDocument()
+
+    await userEvent.click(within(membersDialog).getByRole('button', { name: /close members/i }))
+    await waitFor(() => {
+      expect(screen.getByTestId('current-location')).toHaveTextContent('/trips/abc234def567')
+      expect(screen.queryByRole('dialog', { name: /^members$/i })).not.toBeInTheDocument()
+    })
+  })
+
+  it('does not classify another nested path ending in members as the Members overlay', async () => {
+    authenticateUser()
+    mockWorkspace()
+
+    renderWorkspace('/trips/abc234def567/archive/members')
+
+    await screen.findByRole('heading', { level: 1, name: /tokyo 2026/i })
+    await waitFor(() => {
+      expect(screen.getByTestId('current-location')).toHaveTextContent(
+        '/trips/abc234def567/d/2026-05-01',
+      )
+    })
+    expect(screen.queryByRole('dialog', { name: /^members$/i })).not.toBeInTheDocument()
   })
 
   it('keeps the members retry state inside the workspace overlay', async () => {

@@ -1,5 +1,5 @@
 import { useCallback, useContext, useState } from 'react'
-import { Outlet, useLocation, useParams, useSearchParams } from 'react-router'
+import { matchPath, Outlet, useLocation, useParams, useSearchParams } from 'react-router'
 import { AuthContext } from '../auth/authContextValue'
 import { AuthBootstrapShell } from '../auth/AuthBootstrapShell'
 import { useIsAuthenticated } from '../auth/authStore'
@@ -18,7 +18,8 @@ export function TripRealtimeBoundary() {
   const isAuthenticated = useIsAuthenticated()
   const isInitializing = useContext(AuthContext)?.isInitializing ?? false
   const [bufferActivityEvents, setBufferActivityEvents] = useState(false)
-  const isProtectedMembersRoute = location.pathname.endsWith('/members')
+  const isProtectedMembersRoute =
+    matchPath('/trips/:publicId/members', location.pathname) !== null
   const shouldClaimGuestSession =
     isAuthenticated && searchParams.get('claimGuest') === '1'
   const mayResolveTrip =
