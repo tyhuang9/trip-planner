@@ -68,6 +68,16 @@ public class RateLimitRegistry {
             .addLimit(Bandwidth.builder().capacity(5).refillGreedy(5, Duration.ofMinutes(15)).build())
             .build()),
 
+        /** 10 account deletion attempts per 15 minutes per IP, before body parsing. */
+        AUTH_ACCOUNT_DELETE(() -> Bucket.builder()
+            .addLimit(Bandwidth.builder().capacity(10).refillGreedy(10, Duration.ofMinutes(15)).build())
+            .build()),
+
+        /** 5 account deletion attempts per 15 minutes per authenticated user. */
+        AUTH_ACCOUNT_DELETE_PER_USER(() -> Bucket.builder()
+            .addLimit(Bandwidth.builder().capacity(5).refillGreedy(5, Duration.ofMinutes(15)).build())
+            .build()),
+
         /** 10 registrations per hour per IP. */
         AUTH_REGISTER(() -> Bucket.builder()
             .addLimit(Bandwidth.builder().capacity(10).refillGreedy(10, Duration.ofHours(1)).build())

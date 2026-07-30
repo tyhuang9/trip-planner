@@ -7,6 +7,7 @@ import {
 } from 'react'
 import * as authApi from '../api/auth'
 import {
+  beginTerminalAuthMutation,
   isConfirmedUnauthenticated,
   refreshSession,
   waitForRefreshToSettle,
@@ -17,6 +18,7 @@ import { useAuthStore, useIsAuthenticated, useUser } from './authStore'
 import { AuthContext, type AuthContextValue } from './authContextValue'
 import { markPerformance } from '../performance/timing'
 import type {
+  DeleteAccountRequest,
   EmailVerificationResendRequest,
   LoginRequest,
   RegisterRequest,
@@ -348,9 +350,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
     [],
   )
 
-  const deleteAccount = useCallback(async () => {
-    await authApi.deleteMe()
-    clearSession('clearing-session')
+  const deleteAccount = useCallback(async (body: DeleteAccountRequest) => {
+    const releaseTerminalMutation = beginTerminalAuthMutation()
+    try {
+      await waitForRefreshToSettle()
+      await withAuthSessionLock(() => authApi.deleteMe(body))
+      clearSession('clearing-session')
+    } finally {
+      releaseTerminalMutation()
+    }
   }, [clearSession])
 
   const value = useMemo<AuthContextValue>(

@@ -11,6 +11,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
+import com.trip.observability.AccountDeletionMetrics;
+
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
 
@@ -70,7 +73,7 @@ class RateLimitFilterTest {
     @Test
     void newAndLegacyShareRoutesUseOnePerIpBucket() throws Exception {
         RateLimitRegistry registry = new RateLimitRegistry();
-        RateLimitFilter filter = new RateLimitFilter(registry, new AppProperties());
+        RateLimitFilter filter = newFilter(registry);
         AtomicInteger passed = new AtomicInteger();
         FilterChain chain = (_request, _response) -> passed.incrementAndGet();
         String token = "abcdefghijklmnopqrstuvwxyz123456";
@@ -104,7 +107,7 @@ class RateLimitFilterTest {
     @Test
     void shareRateLimitIgnoresNearMissRoutes() throws Exception {
         RateLimitRegistry registry = new RateLimitRegistry();
-        RateLimitFilter filter = new RateLimitFilter(registry, new AppProperties());
+        RateLimitFilter filter = newFilter(registry);
         AtomicInteger passed = new AtomicInteger();
         FilterChain chain = (_request, _response) -> passed.incrementAndGet();
         String validToken = "abcdefghijklmnopqrstuvwxyz123456";
@@ -126,7 +129,7 @@ class RateLimitFilterTest {
 
     @Test
     void shareRateLimitDoesNotConsumeRequestBody() throws Exception {
-        RateLimitFilter filter = new RateLimitFilter(new RateLimitRegistry(), new AppProperties());
+        RateLimitFilter filter = newFilter(new RateLimitRegistry());
         MockHttpServletRequest request = request("POST", "/api/share/accept");
         request.setContent("{\"token\":\"abcdefghijklmnopqrstuvwxyz123456\"}"
             .getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -144,7 +147,7 @@ class RateLimitFilterTest {
     @Test
     void googleMapsProxyPathsShareRateLimitBucketPerClientIp() throws Exception {
         RateLimitRegistry registry = new RateLimitRegistry();
-        RateLimitFilter filter = new RateLimitFilter(registry, new AppProperties());
+        RateLimitFilter filter = newFilter(registry);
         AtomicInteger passed = new AtomicInteger();
         FilterChain chain = (_request, _response) -> passed.incrementAndGet();
 
@@ -200,6 +203,37 @@ class RateLimitFilterTest {
     }
 
     @Test
+    void authAccountDeletePathIsRateLimitedByClientIp() throws Exception {
+        RateLimitRegistry rateLimitRegistry = new RateLimitRegistry();
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        RateLimitFilter filter = new RateLimitFilter(
+            rateLimitRegistry,
+            new AppProperties(),
+            new AccountDeletionMetrics(meterRegistry));
+        AtomicInteger passed = new AtomicInteger();
+        FilterChain chain = (_request, _response) -> passed.incrementAndGet();
+
+        for (int attempt = 0; attempt < 10; attempt++) {
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            filter.doFilter(request("DELETE", "/api/auth/me"), response, chain);
+            assertThat(response.getStatus()).isEqualTo(200);
+        }
+
+        MockHttpServletResponse limited = new MockHttpServletResponse();
+        filter.doFilter(request("DELETE", "/api/auth/me"), limited, chain);
+
+        assertThat(passed.get()).isEqualTo(10);
+        assertThat(limited.getStatus()).isEqualTo(429);
+        assertThat(limited.getContentAsString()).isEqualTo(RateLimitFilter.RATE_LIMITED_BODY);
+        assertThat(meterRegistry.get("dupert.auth.account.deletion.attempts")
+                .tag("outcome", "ip_throttled").counter().count())
+            .isEqualTo(1.0);
+        assertThat(meterRegistry.get("dupert.auth.account.deletion.attempts")
+                .counters().stream().mapToDouble(counter -> counter.count()).sum())
+            .isEqualTo(1.0);
+    }
+
+    @Test
     void localDevLoginAsPathIsRateLimitedByClientIp() throws Exception {
         assertPostPathLimited("/api/dev/auth/login-as", 60);
     }
@@ -217,7 +251,7 @@ class RateLimitFilterTest {
     @Test
     void authRateLimitDoesNotCatchOtherAuthPaths() throws Exception {
         RateLimitRegistry registry = new RateLimitRegistry();
-        RateLimitFilter filter = new RateLimitFilter(registry, new AppProperties());
+        RateLimitFilter filter = newFilter(registry);
         AtomicInteger passed = new AtomicInteger();
         FilterChain chain = (_request, _response) -> passed.incrementAndGet();
         MockHttpServletResponse response = new MockHttpServletResponse();
@@ -232,7 +266,7 @@ class RateLimitFilterTest {
     @Test
     void everyDatabaseBearingHealthGetSharesOneRateLimitBucketPerClientIp() throws Exception {
         RateLimitRegistry registry = new RateLimitRegistry();
-        RateLimitFilter filter = new RateLimitFilter(registry, new AppProperties());
+        RateLimitFilter filter = newFilter(registry);
         AtomicInteger passed = new AtomicInteger();
         FilterChain chain = (_request, _response) -> passed.incrementAndGet();
         String[] paths = {
@@ -261,7 +295,7 @@ class RateLimitFilterTest {
     @Test
     void livenessAndDatabaseHealthOptionsAreNotRateLimited() throws Exception {
         RateLimitRegistry registry = new RateLimitRegistry();
-        RateLimitFilter filter = new RateLimitFilter(registry, new AppProperties());
+        RateLimitFilter filter = newFilter(registry);
         AtomicInteger passed = new AtomicInteger();
         FilterChain chain = (_request, _response) -> passed.incrementAndGet();
 
@@ -279,21 +313,32 @@ class RateLimitFilterTest {
     }
 
     private static void assertPostPathLimited(String path, int capacity) throws Exception {
+        assertPathLimited("POST", path, capacity);
+    }
+
+    private static RateLimitFilter newFilter(RateLimitRegistry registry) {
+        return new RateLimitFilter(
+            registry,
+            new AppProperties(),
+            new AccountDeletionMetrics(new SimpleMeterRegistry()));
+    }
+
+    private static void assertPathLimited(String method, String path, int capacity) throws Exception {
         RateLimitRegistry registry = new RateLimitRegistry();
-        RateLimitFilter filter = new RateLimitFilter(registry, new AppProperties());
+        RateLimitFilter filter = newFilter(registry);
         AtomicInteger passed = new AtomicInteger();
         FilterChain chain = (_request, _response) -> passed.incrementAndGet();
 
         for (int i = 0; i < capacity; i++) {
             MockHttpServletResponse response = new MockHttpServletResponse();
-            filter.doFilter(request("POST", path), response, chain);
+            filter.doFilter(request(method, path), response, chain);
             assertThat(response.getStatus()).isEqualTo(200);
         }
 
         assertThat(registry.size()).isEqualTo(1);
 
         MockHttpServletResponse limited = new MockHttpServletResponse();
-        filter.doFilter(request("POST", path), limited, chain);
+        filter.doFilter(request(method, path), limited, chain);
 
         assertThat(passed.get()).isEqualTo(capacity);
         assertThat(limited.getStatus()).isEqualTo(429);

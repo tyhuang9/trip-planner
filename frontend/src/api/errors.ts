@@ -36,6 +36,7 @@ interface BackendErrorBody {
 
 const TOP_MESSAGE_BY_CODE: Record<string, string | null> = {
   invalid_credentials: 'Email or password is incorrect.',
+  reauthentication_failed: 'The password you entered is incorrect.',
   email_unverified: 'Check your email to verify your account before signing in.',
   rate_limited: 'Too many attempts. Try again in a few minutes.',
   email_taken: null,

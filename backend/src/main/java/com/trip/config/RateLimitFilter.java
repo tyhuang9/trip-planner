@@ -11,6 +11,9 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import com.trip.observability.AccountDeletionMetrics;
+import com.trip.observability.AccountDeletionMetrics.Outcome;
+
 import io.github.bucket4j.Bucket;
 import io.github.bucket4j.ConsumptionProbe;
 import jakarta.servlet.FilterChain;
@@ -30,6 +33,8 @@ import jakarta.servlet.http.HttpServletResponse;
  *       outer cap here defeats email-rotation attacks where an attacker churns through
  *       random emails to evade the per-identity cap.</li>
  *   <li>{@code POST /api/auth/register} — 10 per hour per remote IP.</li>
+ *   <li>{@code DELETE /api/auth/me} — 10 attempts per 15 minutes per remote IP.
+ *       The controller adds an inner 5-per-15-minute authenticated-user limit.</li>
  * </ul>
  *
  * <p>On exhaustion the response is {@code 429 Too Many Requests} with body
@@ -58,6 +63,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private static final String EMAIL_VERIFICATION_RESEND_PATH = "/api/auth/email/resend";
     private static final String REFRESH_PATH = "/api/auth/refresh";
     private static final String LOGOUT_PATH = "/api/auth/logout";
+    private static final String ACCOUNT_DELETE_PATH = "/api/auth/me";
     private static final String DEV_LOGIN_AS_PATH = "/api/dev/auth/login-as";
     private static final String DEV_USERS_PATH = "/api/dev/users";
     private static final String DEV_USERS_RESEED_PATH = "/api/dev/users/reseed";
@@ -77,10 +83,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
     public static final String RATE_LIMITED_BODY = "{\"error\":\"rate_limited\"}";
 
     private final RateLimitRegistry registry;
+    private final AccountDeletionMetrics accountDeletionMetrics;
     private final boolean trustProxy;
 
-    public RateLimitFilter(RateLimitRegistry registry, AppProperties appProperties) {
+    public RateLimitFilter(RateLimitRegistry registry,
+                           AppProperties appProperties,
+                           AccountDeletionMetrics accountDeletionMetrics) {
         this.registry = registry;
+        this.accountDeletionMetrics = accountDeletionMetrics;
         this.trustProxy = appProperties.isTrustProxy();
     }
 
@@ -147,6 +157,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 if (!tryConsume(response, RateLimitRegistry.Named.SHARE_ACCEPT, clientIp)) {
                     return;
                 }
+            }
+        } else if ("DELETE".equalsIgnoreCase(request.getMethod())
+            && ACCOUNT_DELETE_PATH.equals(path)) {
+            if (!tryConsume(response, RateLimitRegistry.Named.AUTH_ACCOUNT_DELETE, clientIp)) {
+                accountDeletionMetrics.record(Outcome.IP_THROTTLED);
+                return;
             }
         }
         chain.doFilter(request, response);

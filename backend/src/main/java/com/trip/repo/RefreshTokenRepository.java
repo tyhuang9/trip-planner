@@ -23,7 +23,17 @@ import com.trip.domain.RefreshToken;
  */
 public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long> {
 
+    interface TokenObservation {
+        Long getId();
+
+        Long getUserId();
+    }
+
     Optional<RefreshToken> findByTokenHash(String tokenHash);
+
+    @Query("SELECT rt.id AS id, rt.userId AS userId FROM RefreshToken rt "
+        + "WHERE rt.tokenHash = :tokenHash")
+    Optional<TokenObservation> findObservationByTokenHash(@Param("tokenHash") String tokenHash);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT rt FROM RefreshToken rt WHERE rt.tokenHash = :tokenHash")

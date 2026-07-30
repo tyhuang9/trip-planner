@@ -4,8 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -24,6 +25,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -76,6 +78,7 @@ class PasswordResetServiceTest {
         User user = userWith(42L, "alice@example.com", "Alice");
         when(userRepository.findByEmailIgnoreCase("alice@example.com"))
             .thenReturn(Optional.of(user));
+        when(userRepository.findByIdForUpdate(42L)).thenReturn(Optional.of(user));
         when(passwordResetTokenRepository.findByTokenHash(anyString())).thenReturn(Optional.empty());
         when(passwordResetTokenRepository.save(any(PasswordResetToken.class)))
             .thenAnswer(invocation -> invocation.getArgument(0));
@@ -99,6 +102,9 @@ class PasswordResetServiceTest {
         assertThat(saved.getTokenHash()).doesNotContain(email.token());
         assertThat(email.toString()).doesNotContain(email.token());
         verify(passwordResetTokenRepository).revokeActiveForUser(any(), any());
+        InOrder lockOrder = inOrder(userRepository, passwordResetTokenRepository);
+        lockOrder.verify(userRepository).findByIdForUpdate(42L);
+        lockOrder.verify(passwordResetTokenRepository).revokeActiveForUser(any(), any());
     }
 
     @Test
@@ -118,6 +124,7 @@ class PasswordResetServiceTest {
         User user = userWith(42L, "alice@example.com", "Alice");
         when(userRepository.findByEmailIgnoreCase("alice@example.com"))
             .thenReturn(Optional.of(user));
+        when(userRepository.findByIdForUpdate(42L)).thenReturn(Optional.of(user));
         when(passwordResetTokenRepository.findByTokenHash(anyString())).thenReturn(Optional.empty());
         when(passwordResetTokenRepository.save(any(PasswordResetToken.class)))
             .thenAnswer(invocation -> invocation.getArgument(0));
@@ -142,6 +149,7 @@ class PasswordResetServiceTest {
         User user = userWith(42L, "alice@example.com", "Alice");
         when(userRepository.findByEmailIgnoreCase("alice@example.com"))
             .thenReturn(Optional.of(user));
+        when(userRepository.findByIdForUpdate(42L)).thenReturn(Optional.of(user));
         when(passwordResetTokenRepository.findByTokenHash(anyString())).thenReturn(Optional.empty());
         when(passwordResetTokenRepository.save(any(PasswordResetToken.class)))
             .thenAnswer(invocation -> invocation.getArgument(0));
@@ -163,6 +171,7 @@ class PasswordResetServiceTest {
         User user = userWith(42L, "alice@example.com", "Alice");
         when(userRepository.findByEmailIgnoreCase("alice@example.com"))
             .thenReturn(Optional.of(user));
+        when(userRepository.findByIdForUpdate(42L)).thenReturn(Optional.of(user));
         when(passwordResetTokenRepository.findByTokenHash(anyString())).thenReturn(Optional.empty());
         when(passwordResetTokenRepository.save(any(PasswordResetToken.class)))
             .thenAnswer(invocation -> invocation.getArgument(0));
@@ -186,6 +195,7 @@ class PasswordResetServiceTest {
         User user = userWith(42L, "alice@example.com", "Alice");
         when(userRepository.findByEmailIgnoreCase("alice@example.com"))
             .thenReturn(Optional.of(user));
+        when(userRepository.findByIdForUpdate(42L)).thenReturn(Optional.of(user));
         when(passwordResetTokenRepository.findByTokenHash(anyString())).thenReturn(Optional.empty());
         when(passwordResetTokenRepository.save(any(PasswordResetToken.class)))
             .thenAnswer(invocation -> invocation.getArgument(0));
@@ -206,9 +216,11 @@ class PasswordResetServiceTest {
             42L, sha256Hex(RAW_TOKEN), OffsetDateTime.now().plusMinutes(30));
         User user = userWith(42L, "alice@example.com", "Alice");
         user.setPasswordHash("old-hash");
+        when(passwordResetTokenRepository.findByTokenHash(sha256Hex(RAW_TOKEN)))
+            .thenReturn(Optional.of(resetToken));
         when(passwordResetTokenRepository.findByTokenHashForUpdate(sha256Hex(RAW_TOKEN)))
             .thenReturn(Optional.of(resetToken));
-        when(userRepository.findById(42L)).thenReturn(Optional.of(user));
+        when(userRepository.findByIdForUpdate(42L)).thenReturn(Optional.of(user));
         when(passwordEncoder.encode("new-password-123")).thenReturn("new-hash");
 
         service.confirmReset(RAW_TOKEN, "new-password-123");
@@ -218,20 +230,25 @@ class PasswordResetServiceTest {
         verify(userRepository).save(user);
         verify(refreshTokenService).revokeAllForUser(42L);
         verify(passwordResetTokenRepository).save(resetToken);
+        InOrder lockOrder = inOrder(userRepository, passwordResetTokenRepository);
+        lockOrder.verify(userRepository).findByIdForUpdate(42L);
+        lockOrder.verify(passwordResetTokenRepository)
+            .findByTokenHashForUpdate(sha256Hex(RAW_TOKEN));
     }
 
     @Test
     void confirmResetRejectsExpiredTokenWithoutChangingPassword() {
         PasswordResetToken resetToken = new PasswordResetToken(
             42L, sha256Hex(RAW_TOKEN), OffsetDateTime.now().minusMinutes(1));
-        when(passwordResetTokenRepository.findByTokenHashForUpdate(sha256Hex(RAW_TOKEN)))
+        when(passwordResetTokenRepository.findByTokenHash(sha256Hex(RAW_TOKEN)))
             .thenReturn(Optional.of(resetToken));
 
         assertThatThrownBy(() -> service.confirmReset(RAW_TOKEN, "new-password-123"))
             .isInstanceOfSatisfying(ValidationException.class,
                 ex -> assertThat(ex.slug()).isEqualTo("invalid_reset_token"));
 
-        verify(userRepository, never()).findById(any());
+        verify(userRepository, never()).findByIdForUpdate(any());
+        verify(passwordResetTokenRepository, never()).findByTokenHashForUpdate(anyString());
         verify(userRepository, never()).save(any());
         verify(refreshTokenService, never()).revokeAllForUser(any());
         assertThat(resetToken.getConsumedAt()).isNull();

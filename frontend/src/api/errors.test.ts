@@ -45,6 +45,14 @@ describe('parseApiError', () => {
     expect(result.fieldErrors).toEqual({})
   })
 
+  it('maps reauthentication_failed (403) to a password-specific banner', () => {
+    const result = parseApiError(
+      makeAxiosError(403, { error: 'reauthentication_failed' }),
+    )
+    expect(result.topMessage).toBe('The password you entered is incorrect.')
+    expect(result.code).toBe('reauthentication_failed')
+  })
+
   it('maps email_taken (409) to a field error on email with no banner', () => {
     const result = parseApiError(makeAxiosError(409, { error: 'email_taken' }))
     expect(result.topMessage).toBeNull()

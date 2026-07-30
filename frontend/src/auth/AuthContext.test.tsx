@@ -61,6 +61,25 @@ function Probe() {
   )
 }
 
+function DeleteAccountProbe() {
+  const { authStatus, deleteAccount } = useAuth()
+  return (
+    <div>
+      <span data-testid="delete-status">{authStatus}</span>
+      <button
+        type="button"
+        onClick={() => {
+          void deleteAccount({ currentPassword: 'current-secret' }).catch(
+            () => undefined,
+          )
+        }}
+      >
+        Delete account
+      </button>
+    </div>
+  )
+}
+
 function GuestQueryProbe({ queryFn }: { queryFn: () => Promise<string> }) {
   const { authStatus } = useAuth()
   const query = useQuery({
@@ -528,5 +547,193 @@ describe('<AuthProvider> silent refresh on mount', () => {
     expect(useAuthStore.getState().accessToken).toBeNull()
     expect(hasPendingLogoutIntent()).toBe(false)
     expect(apiMock.history.post).toHaveLength(1)
+  })
+
+  it('does not let a refresh started before deletion restore the deleted session', async () => {
+    useAuthStore.getState().setSession({
+      accessToken: 'member-token',
+      expiresInSeconds: 900,
+      user: SAMPLE_USER,
+    })
+    let resolveRefresh:
+      | ((value: [number, Record<string, unknown>]) => void)
+      | undefined
+    refreshMock.onPost('/api/auth/refresh').reply(
+      () =>
+        new Promise((resolve) => {
+          resolveRefresh = resolve
+        }),
+    )
+    apiMock.onDelete('/auth/me').reply(204)
+
+    render(
+      <AuthProvider>
+        <DeleteAccountProbe />
+      </AuthProvider>,
+    )
+    const refreshResult = refreshSession().then(
+      () => 'resolved' as const,
+      () => 'rejected' as const,
+    )
+    await waitFor(() => expect(refreshMock.history.post).toHaveLength(1))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete account' }))
+    expect(apiMock.history.delete).toHaveLength(0)
+
+    await act(async () => {
+      resolveRefresh?.([
+        200,
+        {
+          accessToken: 'stale-restored-token',
+          tokenType: 'Bearer',
+          expiresInSeconds: 900,
+          user: SAMPLE_USER,
+        },
+      ])
+    })
+
+    await expect(refreshResult).resolves.toBe('rejected')
+    await waitFor(() => {
+      expect(screen.getByTestId('delete-status')).toHaveTextContent(
+        'unauthenticated',
+      )
+    })
+    expect(apiMock.history.delete).toHaveLength(1)
+    expect(useAuthStore.getState().accessToken).toBeNull()
+  })
+
+  it('restores refresh after a guarded deletion fails', async () => {
+    useAuthStore.getState().setSession({
+      accessToken: 'member-token',
+      expiresInSeconds: 900,
+      user: SAMPLE_USER,
+    })
+    let resolveRefresh:
+      | ((value: [number, Record<string, unknown>]) => void)
+      | undefined
+    refreshMock.onPost('/api/auth/refresh').replyOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRefresh = resolve
+        }),
+    )
+    refreshMock.onPost('/api/auth/refresh').reply(200, {
+      accessToken: 'refresh-after-failure',
+      tokenType: 'Bearer',
+      expiresInSeconds: 900,
+      user: SAMPLE_USER,
+    })
+    apiMock
+      .onDelete('/auth/me')
+      .reply(403, { error: 'reauthentication_failed' })
+
+    render(
+      <AuthProvider>
+        <DeleteAccountProbe />
+      </AuthProvider>,
+    )
+    const refreshResult = refreshSession().then(
+      () => 'resolved' as const,
+      () => 'rejected' as const,
+    )
+    await waitFor(() => expect(refreshMock.history.post).toHaveLength(1))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete account' }))
+    await act(async () => {
+      resolveRefresh?.([
+        200,
+        {
+          accessToken: 'stale-restored-token',
+          tokenType: 'Bearer',
+          expiresInSeconds: 900,
+          user: SAMPLE_USER,
+        },
+      ])
+    })
+
+    await expect(refreshResult).resolves.toBe('rejected')
+    await waitFor(() => expect(apiMock.history.delete).toHaveLength(1))
+    expect(screen.getByTestId('delete-status')).toHaveTextContent(
+      'authenticated',
+    )
+    expect(useAuthStore.getState().accessToken).toBe('member-token')
+
+    await expect(refreshSession()).resolves.toMatchObject({
+      accessToken: 'refresh-after-failure',
+    })
+    expect(useAuthStore.getState().accessToken).toBe('refresh-after-failure')
+  })
+
+  it('sends fresh-auth deletion data and clears the session after 204', async () => {
+    useAuthStore.getState().setSession({
+      accessToken: 'member-token',
+      expiresInSeconds: 900,
+      user: SAMPLE_USER,
+    })
+    apiMock.onDelete('/auth/me').reply(204)
+
+    render(
+      <AuthProvider>
+        <DeleteAccountProbe />
+      </AuthProvider>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Delete account' }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('delete-status')).toHaveTextContent(
+        'unauthenticated',
+      )
+    })
+    expect(apiMock.history.delete).toHaveLength(1)
+    expect(JSON.parse(String(apiMock.history.delete[0].data))).toEqual({
+      currentPassword: 'current-secret',
+    })
+    expect(useAuthStore.getState().accessToken).toBeNull()
+  })
+
+  it('keeps the session when fresh-auth deletion is rejected', async () => {
+    useAuthStore.getState().setSession({
+      accessToken: 'member-token',
+      expiresInSeconds: 900,
+      user: SAMPLE_USER,
+    })
+    apiMock
+      .onDelete('/auth/me')
+      .reply(403, { error: 'reauthentication_failed' })
+
+    render(
+      <AuthProvider>
+        <DeleteAccountProbe />
+      </AuthProvider>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Delete account' }))
+
+    await waitFor(() => expect(apiMock.history.delete).toHaveLength(1))
+    expect(screen.getByTestId('delete-status')).toHaveTextContent(
+      'authenticated',
+    )
+    expect(useAuthStore.getState().accessToken).toBe('member-token')
+  })
+
+  it('keeps the session when deletion returns an unexpected success status', async () => {
+    useAuthStore.getState().setSession({
+      accessToken: 'member-token',
+      expiresInSeconds: 900,
+      user: SAMPLE_USER,
+    })
+    apiMock.onDelete('/auth/me').reply(200, {})
+
+    render(
+      <AuthProvider>
+        <DeleteAccountProbe />
+      </AuthProvider>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Delete account' }))
+
+    await waitFor(() => expect(apiMock.history.delete).toHaveLength(1))
+    expect(screen.getByTestId('delete-status')).toHaveTextContent(
+      'authenticated',
+    )
+    expect(useAuthStore.getState().accessToken).toBe('member-token')
   })
 })

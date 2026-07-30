@@ -111,7 +111,9 @@ public class PasswordResetService {
     }
 
     private PreparedPasswordReset createResetToken(String normalizedEmail, String recipientDomain) {
-        Optional<User> maybeUser = userRepository.findByEmailIgnoreCase(normalizedEmail);
+        // Account deletion uses this same user → token row order before cascading deletes.
+        Optional<User> maybeUser = userRepository.findByEmailIgnoreCase(normalizedEmail)
+            .flatMap(user -> userRepository.findByIdForUpdate(user.getId()));
         if (maybeUser.isEmpty()) {
             log.info("Password reset request completed without email recipientDomain={} matched=false",
                 recipientDomain);
@@ -161,18 +163,25 @@ public class PasswordResetService {
 
     @Transactional
     public void confirmReset(String rawToken, String password) {
-        OffsetDateTime now = OffsetDateTime.now();
         String hash = sha256Hex(rawToken);
-        PasswordResetToken resetToken = passwordResetTokenRepository.findByTokenHashForUpdate(hash)
+        PasswordResetToken observedToken = passwordResetTokenRepository.findByTokenHash(hash)
             .orElseThrow(PasswordResetService::invalidToken);
+        if (!observedToken.isUsableAt(OffsetDateTime.now())) {
+            throw invalidToken();
+        }
+
+        String passwordHash = passwordEncoder.encode(password);
+        User user = userRepository.findByIdForUpdate(observedToken.getUserId())
+            .orElseThrow(PasswordResetService::invalidToken);
+        PasswordResetToken resetToken = passwordResetTokenRepository.findByTokenHashForUpdate(hash)
+            .filter(token -> token.getUserId().equals(user.getId()))
+            .orElseThrow(PasswordResetService::invalidToken);
+        OffsetDateTime now = OffsetDateTime.now();
         if (!resetToken.isUsableAt(now)) {
             throw invalidToken();
         }
 
-        User user = userRepository.findById(resetToken.getUserId())
-            .orElseThrow(PasswordResetService::invalidToken);
-
-        user.setPasswordHash(passwordEncoder.encode(password));
+        user.setPasswordHash(passwordHash);
         userRepository.save(user);
         refreshTokenService.revokeAllForUser(user.getId());
         resetToken.consume(now);
