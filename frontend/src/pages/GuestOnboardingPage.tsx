@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams } from 'react-router'
 import { parseApiError } from '../api/errors'
 import { useAcceptGuestShareLink } from '../hooks/useShareLinks'
 import { usePageTitle } from '../utils/usePageTitle'
-import { consumeDeepLinkHandoff, getDeepLinkHandoff } from '../deep-links/vault'
+import { consumeDeepLinkHandoff } from '../deep-links/vault'
+import { useDeepLinkHandoffSnapshot } from '../deep-links/useDeepLinkHandoffSnapshot'
 import { requestDeepLinkRouteFocus } from '../deep-links/routeFocusRequest'
 import styles from './SharePages.module.css'
 
@@ -11,7 +12,7 @@ export default function GuestOnboardingPage() {
   usePageTitle('Guest access – Dupert')
 
   const { token: routeToken, handoffId } = useParams()
-  const handoff = getDeepLinkHandoff(handoffId)
+  const handoff = useDeepLinkHandoffSnapshot(handoffId)
   const token = handoff?.kind === 'share' || handoff?.kind === 'share-guest'
     ? handoff.token
     : routeToken
