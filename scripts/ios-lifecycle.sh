@@ -9,6 +9,7 @@ APP_ID="io.github.tyhuang9.dupert"
 GIT_COMMON_DIR="$(git -C "$ROOT_DIR" rev-parse --git-common-dir)"
 [[ "$GIT_COMMON_DIR" == /* ]] || GIT_COMMON_DIR="$ROOT_DIR/$GIT_COMMON_DIR"
 RESERVATIONS_DIR="$GIT_COMMON_DIR/dupert-ios-shortcuts"
+RESERVATIONS_LOCK="$RESERVATIONS_DIR/.mutation.lock"
 PENDING_RESERVATION=""
 PENDING_STATE="false"
 CURRENT_PROCESS_START=""
@@ -25,6 +26,7 @@ require_start_dependencies() {
   xcode-select -p >/dev/null 2>&1 || fail "Select Xcode first with: sudo xcode-select --switch /Applications/Xcode.app"
   command -v xcrun >/dev/null 2>&1 || fail "xcrun is unavailable; install Xcode and its command-line tools."
   xcrun --find simctl >/dev/null 2>&1 || fail "Xcode Simulator tools are unavailable."
+  command -v lockf >/dev/null 2>&1 || fail "lockf is unavailable; install the macOS command-line tools."
   [[ -f "$FRONTEND_DIR/.env.native-development.local" ]] || fail "Missing frontend/.env.native-development.local; copy frontend/.env.native-development.example first."
   [[ -x "$FRONTEND_DIR/node_modules/.bin/cap" ]] || fail "Missing frontend dependencies; run npm install in frontend/."
 }
@@ -131,6 +133,34 @@ create_pending_reservation() {
   return 1
 }
 
+lock_reservations() {
+  [[ ! -L "$RESERVATIONS_LOCK" ]] || fail "Refusing to lock simulator reservations through a symbolic link."
+  exec 9>>"$RESERVATIONS_LOCK"
+  lockf -s 9 || fail "Could not lock simulator reservations."
+}
+
+unlock_reservations() {
+  exec 9>&-
+}
+
+refuse_different_worktree_reservation() {
+  local requested_udid="$1" existing existing_udid record phase owner pid owner_process_start
+  for existing in "$RESERVATIONS_DIR/"*"--$APP_ID.lock"; do
+    [[ -e "$existing" || -L "$existing" ]] || continue
+    [[ "$existing" != "$(reservation_path "$requested_udid")" ]] || continue
+    existing_udid="${existing##*/}"
+    existing_udid="${existing_udid%--$APP_ID.lock}"
+    [[ "$existing_udid" =~ ^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$ ]] || continue
+    record="$(reservation_record "$existing")" || continue
+    IFS=$'\t' read -r phase owner pid owner_process_start <<< "$record"
+    [[ "$owner" == "$ROOT_DIR" ]] || continue
+    if [[ "$phase" == "pending" ]]; then
+      fail "This worktree already has a start in progress for simulator $existing_udid; it cannot reserve $requested_udid."
+    fi
+    fail "This worktree already owns simulator $existing_udid; run npm run stopios before reserving $requested_udid."
+  done
+}
+
 reserve_device() {
   local udid="$1" reservation record="" phase="" owner="" pid="" owner_process_start=""
   local stored_state="" stored_root="" stored_udid="" stored_booted=""
@@ -141,8 +171,11 @@ reserve_device() {
   chmod 700 "$RESERVATIONS_DIR"
   CURRENT_PROCESS_START="$(process_start "$$")"
   [[ -n "$CURRENT_PROCESS_START" ]] || fail "Could not verify the current process identity for simulator ownership."
+  lock_reservations
+  refuse_different_worktree_reservation "$udid"
 
   if create_pending_reservation "$reservation"; then
+    unlock_reservations
     return
   fi
 
@@ -154,6 +187,7 @@ reserve_device() {
     fi
     rm -f "$reservation"
     create_pending_reservation "$reservation" || fail "Simulator $udid was reclaimed by another start."
+    unlock_reservations
     return
   fi
 
@@ -164,6 +198,7 @@ reserve_device() {
   [[ "$stored_root" == "$ROOT_DIR" && "$stored_udid" == "$udid" ]] \
     || fail "This worktree holds the reservation for $udid, but its local state is missing, invalid, or records a different simulator. After confirming Dupert is not running on that simulator, remove $reservation and run npm run startios again."
   RESERVATION_ALREADY_OWNED="true"
+  unlock_reservations
 }
 
 finalize_reservation() {
