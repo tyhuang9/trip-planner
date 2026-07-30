@@ -63,6 +63,34 @@ class GuestAuthenticationFilterRateLimitTest {
         assertThat(registry.size()).isZero();
     }
 
+    @Test
+    void memberShareAcceptPathsDoNotInstallGuestPrincipalFromCookie() throws Exception {
+        GuestAuthenticationFilter filter = new GuestAuthenticationFilter(
+            new RateLimitRegistry(), new AppProperties());
+        AtomicInteger passed = new AtomicInteger();
+        FilterChain chain = (_request, _response) -> {
+            assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+            passed.incrementAndGet();
+        };
+
+        for (String path : new String[] {"/api/share/accept", "/api/share/opaque-token/accept"}) {
+            SecurityContextHolder.clearContext();
+            MockHttpServletRequest request = new MockHttpServletRequest("POST", path);
+            request.setCookies(new Cookie(GuestSessionCookie.COOKIE_NAME, "stale-guest-token"));
+            MockHttpServletResponse response = new MockHttpServletResponse();
+
+            try {
+                filter.doFilter(request, response, chain);
+            } finally {
+                SecurityContextHolder.clearContext();
+            }
+
+            assertThat(response.getStatus()).isEqualTo(200);
+        }
+
+        assertThat(passed.get()).isEqualTo(2);
+    }
+
     private static MockHttpServletResponse doGuestWrite(GuestAuthenticationFilter filter,
                                                         FilterChain chain,
                                                         String guestToken) throws Exception {
