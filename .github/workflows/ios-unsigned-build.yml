@@ -77,7 +77,7 @@ jobs:
             exit 1
           fi
 
-      - name: Build unsigned Release app
+      - name: Archive unsigned Release app
         env:
           BASH_ENV: /dev/null
           DEVELOPER_DIR: /Applications/Xcode_26.4.1.app/Contents/Developer
@@ -86,18 +86,20 @@ jobs:
         run: |
           test "$(/usr/bin/xcodebuild -version)" = $'Xcode 26.4.1\nBuild version 17E202'
 
+          archive_path="${RUNNER_TEMP}/Dupert-unsigned.xcarchive"
           /usr/bin/xcodebuild \
             -project ios/App/App.xcodeproj \
             -scheme App \
             -configuration Release \
             -destination 'generic/platform=iOS' \
+            -archivePath "$archive_path" \
             -derivedDataPath "${RUNNER_TEMP}/dupert-ios-derived-data" \
             -clonedSourcePackagesDirPath "${RUNNER_TEMP}/dupert-ios-source-packages" \
             -disableAutomaticPackageResolution \
             -onlyUsePackageVersionsFromResolvedFile \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            build \
+            archive \
             -quiet
 
       - name: Inspect unsigned Release app
@@ -107,9 +109,15 @@ jobs:
           ENV: /dev/null
           PATH: /Applications/Xcode_26.4.1.app/Contents/Developer/usr/bin:/Applications/Xcode_26.4.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin
         run: |
-          app_path="${RUNNER_TEMP}/dupert-ios-derived-data/Build/Products/Release-iphoneos/App.app"
+          archive_path="${RUNNER_TEMP}/Dupert-unsigned.xcarchive"
+          archive_info_plist="${archive_path}/Info.plist"
+          app_path="${archive_path}/Products/Applications/App.app"
           info_plist="${app_path}/Info.plist"
 
+          test -d "$archive_path"
+          test -f "$archive_info_plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :ArchiveVersion' "$archive_info_plist")" = '2'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:ApplicationPath' "$archive_info_plist")" = 'Applications/App.app'
           test -d "$app_path"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info_plist")" = 'io.github.tyhuang9.dupert'
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info_plist")" = '1.0'
