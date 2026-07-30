@@ -25,6 +25,20 @@ function notifyChanged(): void {
   }
 }
 
+export function subscribePendingLogoutIntent(listener: () => void): () => void {
+  if (typeof window === 'undefined') return () => undefined
+
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key === PENDING_LOGOUT_STORAGE_KEY) listener()
+  }
+  window.addEventListener(PENDING_LOGOUT_CHANGED_EVENT, listener)
+  window.addEventListener('storage', handleStorage)
+  return () => {
+    window.removeEventListener(PENDING_LOGOUT_CHANGED_EVENT, listener)
+    window.removeEventListener('storage', handleStorage)
+  }
+}
+
 /**
  * Reads only logout intent metadata. Unknown or malformed stored values are
  * treated conservatively as pending so a corrupted marker cannot restore a
@@ -105,18 +119,25 @@ export function getPendingLogoutPersistence(): PendingLogoutPersistence | null {
 }
 
 export function clearPendingLogoutIntent(): boolean {
+  const hadMemoryFallback = memoryFallback !== null
+  const wasMemoryOnly = memoryFallbackIsOnlyCopy
   let removed: boolean
   try {
     const storage = getStorage()
-    storage?.removeItem(PENDING_LOGOUT_STORAGE_KEY)
-    removed = storage === null || storage.getItem(PENDING_LOGOUT_STORAGE_KEY) === null
+    if (storage === null) {
+      removed = !hadMemoryFallback || wasMemoryOnly
+    } else {
+      storage.removeItem(PENDING_LOGOUT_STORAGE_KEY)
+      removed = storage.getItem(PENDING_LOGOUT_STORAGE_KEY) === null
+      if (!removed) memoryFallbackIsOnlyCopy = false
+    }
   } catch {
     removed = false
   }
   memoryFallback = removed
     ? null
     : memoryFallback ?? { version: 1, createdAt: 0 }
-  memoryFallbackIsOnlyCopy = !removed
-  if (removed) notifyChanged()
+  if (removed) memoryFallbackIsOnlyCopy = false
+  notifyChanged()
   return removed
 }

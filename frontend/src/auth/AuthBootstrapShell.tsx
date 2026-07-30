@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { useAuth } from './useAuth'
 import {
   getPendingLogoutPersistence,
-  hasPendingLogoutIntent,
+  subscribePendingLogoutIntent,
 } from './logoutIntent'
 import styles from './AuthBootstrapShell.module.css'
 
 const SLOW_SERVER_MESSAGE_DELAY_MS = 2_500
+const getServerPendingLogoutPersistence = () => null
 
 /**
  * Keeps an app-shaped surface visible while the refresh-cookie probe settles.
@@ -15,10 +16,16 @@ const SLOW_SERVER_MESSAGE_DELAY_MS = 2_500
 export function AuthBootstrapShell() {
   const { authStatus, retryAuthResolution } = useAuth()
   const [isSlow, setIsSlow] = useState(false)
+  const pendingLogoutPersistence = useSyncExternalStore(
+    subscribePendingLogoutIntent,
+    getPendingLogoutPersistence,
+    getServerPendingLogoutPersistence,
+  )
   const isOfflineUnknown = authStatus === 'offline-unknown'
-  const isPendingLogout = isOfflineUnknown && hasPendingLogoutIntent()
+  const isPendingLogout =
+    isOfflineUnknown && pendingLogoutPersistence !== null
   const isMemoryOnlyLogout =
-    isPendingLogout && getPendingLogoutPersistence() === 'memory-only'
+    isPendingLogout && pendingLogoutPersistence === 'memory-only'
 
   useEffect(() => {
     if (isOfflineUnknown) return undefined

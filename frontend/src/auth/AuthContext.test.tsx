@@ -24,6 +24,7 @@ import {
 } from '../api/client'
 import {
   clearPendingLogoutIntent,
+  getPendingLogoutPersistence,
   hasPendingLogoutIntent,
   PENDING_LOGOUT_STORAGE_KEY,
   persistPendingLogoutIntent,
@@ -137,6 +138,7 @@ beforeEach(() => {
 afterEach(() => {
   refreshMock.restore()
   apiMock.restore()
+  vi.restoreAllMocks()
   clearPendingLogoutIntent()
   vi.useRealTimers()
 })
@@ -464,6 +466,43 @@ describe('<AuthProvider> silent refresh on mount', () => {
       expect(screen.getByTestId('status').textContent).toBe('unauthenticated')
     })
     expect(apiMock.history.post).toHaveLength(2)
+  })
+
+  it('keeps failed durable cleanup pending and retries without refresh', async () => {
+    persistPendingLogoutIntent()
+    apiMock.onPost('/auth/logout').reply(204)
+    const storagePrototype = Object.getPrototypeOf(localStorage) as Storage
+    const originalRemoveItem = storagePrototype.removeItem
+    vi.spyOn(storagePrototype, 'removeItem')
+      .mockImplementationOnce(() => {
+        throw new DOMException('Storage blocked', 'SecurityError')
+      })
+      .mockImplementation(function (this: Storage, key: string) {
+        originalRemoveItem.call(this, key)
+      })
+
+    render(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.history.post).toHaveLength(1)
+      expect(screen.getByTestId('status').textContent).toBe('offline-unknown')
+    })
+    expect(hasPendingLogoutIntent()).toBe(true)
+    expect(getPendingLogoutPersistence()).toBe('durable')
+    expect(refreshMock.history.post).toHaveLength(0)
+
+    window.dispatchEvent(new Event('online'))
+
+    await waitFor(() => {
+      expect(apiMock.history.post).toHaveLength(2)
+      expect(hasPendingLogoutIntent()).toBe(false)
+      expect(screen.getByTestId('status').textContent).toBe('unauthenticated')
+    })
+    expect(refreshMock.history.post).toHaveLength(0)
   })
 
   it('clears a pending logout when the server confirms no valid session', async () => {

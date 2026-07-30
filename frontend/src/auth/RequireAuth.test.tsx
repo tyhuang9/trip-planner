@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { RequireAuth } from './RequireAuth'
 import { AuthContext, type AuthContextValue } from './authContextValue'
@@ -148,6 +148,31 @@ describe('<RequireAuth>', () => {
       /signed out on this device/i,
     )
     expect(screen.queryByTestId('protected')).toBeNull()
+  })
+
+  it('reacts to same-context pending logout changes while auth stays unresolved', () => {
+    renderWithAuth(
+      '/protected',
+      makeAuth({ authStatus: 'offline-unknown', isInitializing: true }),
+    )
+    expect(
+      screen.getByRole('heading', { name: /could not confirm your session/i }),
+    ).toBeInTheDocument()
+
+    act(() => persistPendingLogoutIntent())
+    expect(
+      screen.getByRole('heading', { name: /finishing sign out/i }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /signed out on this device/i,
+    )
+
+    act(() => {
+      expect(clearPendingLogoutIntent()).toBe(true)
+    })
+    expect(
+      screen.getByRole('heading', { name: /could not confirm your session/i }),
+    ).toBeInTheDocument()
   })
 
   it('warns the user to keep the app open when logout intent is memory-only', () => {
