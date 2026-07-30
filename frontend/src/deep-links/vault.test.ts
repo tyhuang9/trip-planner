@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { __resetDeepLinkVaultForTests, clearDeepLinkHandoff, consumeDeepLinkHandoff, findDeepLinkHandoff, getDeepLinkHandoff, putDeepLinkHandoff, subscribeToDeepLinkVault, wasDeepLinkRecentlyConsumed } from './vault'
 
 beforeEach(() => __resetDeepLinkVaultForTests())
+afterEach(() => vi.useRealTimers())
 
 describe('deep-link vault', () => {
   it('deduplicates secret links without exposing a token in the handoff id', () => {
@@ -22,7 +23,6 @@ describe('deep-link vault', () => {
     const renewed = putDeepLinkHandoff({ kind: 'share', token: 'secret-16' })
     expect(renewed).not.toBe(ids[16])
     expect(getDeepLinkHandoff(renewed)).toEqual({ kind: 'share', token: 'secret-16' })
-    vi.useRealTimers()
   })
 
   it('notifies subscribers for clears and expiry, and honors unsubscribe', () => {
@@ -39,7 +39,6 @@ describe('deep-link vault', () => {
     unsubscribe()
     putDeepLinkHandoff({ kind: 'share', token: 'after-unsubscribe' })
     expect(listener).toHaveBeenCalledTimes(4)
-    vi.useRealTimers()
   })
 
   it('tracks successful consumption without blocking a direct web handoff', () => {
@@ -54,7 +53,6 @@ describe('deep-link vault', () => {
     expect(getDeepLinkHandoff(direct)).toEqual(link)
     vi.advanceTimersByTime(5_001)
     expect(wasDeepLinkRecentlyConsumed(link)).toBe(false)
-    vi.useRealTimers()
   })
 
   it('does not tombstone an ordinary clear used after a retryable failure', () => {
