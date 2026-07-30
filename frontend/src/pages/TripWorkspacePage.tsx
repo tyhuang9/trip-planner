@@ -1511,7 +1511,10 @@ function useModalFocus(onClose: () => void) {
     const previouslyFocused = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null
-    const focusCloseButton = () => closeButtonRef.current?.focus()
+    const focusCloseButton = () => {
+      if (dialogRef.current?.contains(document.activeElement)) return
+      closeButtonRef.current?.focus()
+    }
     const getFocusableElements = (activeElement: Element | null) => {
       const focusBranch = activeElement?.closest('[data-modal-focus-branch="true"]')
       if (focusBranch) {

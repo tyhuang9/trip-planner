@@ -4161,6 +4161,45 @@ describe('<TripWorkspacePage>', () => {
     expect(await screen.findByRole('heading', { level: 2, name: /sunday, may 3/i })).toBeInTheDocument()
   })
 
+  it('keeps a trip settings field focused when its initial dialog focus frame runs late', async () => {
+    const queuedFrames = new Map<number, FrameRequestCallback>()
+    let nextFrameId = 0
+    const requestAnimationFrameSpy = vi.spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        nextFrameId += 1
+        queuedFrames.set(nextFrameId, callback)
+        return nextFrameId
+      })
+
+    try {
+      mockWorkspace()
+      renderWorkspace('/trips/abc234def567')
+
+      await screen.findByRole('heading', { level: 1, name: /tokyo 2026/i })
+      const framesBeforeOpeningSettings = new Set(queuedFrames.keys())
+      await userEvent.click(screen.getByRole('button', { name: /^settings$/i }))
+
+      const nameInput = screen.getByLabelText(/trip name/i)
+      await userEvent.clear(nameInput)
+      const focusFrames = [...queuedFrames.entries()]
+        .filter(([frameId]) => !framesBeforeOpeningSettings.has(frameId))
+        .map(([, callback]) => callback)
+      expect(focusFrames).not.toHaveLength(0)
+
+      act(() => {
+        focusFrames.forEach((callback) => callback(0))
+      })
+      await userEvent.type(nameInput, 'Keep my draft', { skipClick: true })
+
+      expect(nameInput).toHaveFocus()
+      expect(nameInput).toHaveValue('Keep my draft')
+      expect(screen.getByRole('dialog', { name: /trip settings/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument()
+    } finally {
+      requestAnimationFrameSpy.mockRestore()
+    }
+  })
+
   it('keeps the settings draft and reloads the trip after an edit conflict', async () => {
     const latestTrip = { ...SAMPLE_TRIP, name: 'Edited elsewhere', version: 1 }
     apiMock.onGet('/trips/abc234def567').replyOnce(200, SAMPLE_TRIP)

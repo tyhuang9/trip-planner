@@ -1345,6 +1345,11 @@ describe('<TripMap>', () => {
   })
 
   it('schedules the destination geocode stale timer at exactly 24 days', async () => {
+    // React Query derives this delay from dataUpdatedAt and Date.now(); keep
+    // those values aligned so wall-clock progress cannot shave off 1 ms.
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(
+      Date.parse('2026-05-01T12:00:00Z'),
+    )
     const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
     const expectedStaleTimerMs = 24 * 24 * 60 * 60 * 1000
     const legacyStaleTimerMs = 30 * 24 * 60 * 60 * 1000 + 1
@@ -1368,6 +1373,7 @@ describe('<TripMap>', () => {
       expect(Math.max(...scheduledDelays)).toBe(expectedStaleTimerMs)
       expect(scheduledDelays).not.toContain(legacyStaleTimerMs)
     } finally {
+      nowSpy.mockRestore()
       setTimeoutSpy.mockRestore()
     }
   })
