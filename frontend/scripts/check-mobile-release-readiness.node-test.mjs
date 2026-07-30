@@ -143,6 +143,7 @@ test('enforces the public account-deletion resource contract', async (t) => {
     'Open Account. On small screens, open the account menu first, then choose Account.',
     'Select Delete account.',
     'Type the exact lowercase word delete.',
+    'Enter your current password.',
     'Confirm Delete account.',
   ]) cases.push([`missing step: ${phrase}`, /account-deletion resource ordered steps item/, (candidate) => { replaceAccountText(candidate, phrase) }])
   for (const phrase of [

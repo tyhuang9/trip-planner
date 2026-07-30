@@ -33,7 +33,8 @@ npm run check:mobile-release-readiness
 The repository source at
 [`frontend/public/account-deletion.html`](../../frontend/public/account-deletion.html)
 documents the existing authenticated self-service flow: sign in, open Trips, open
-Account, choose Delete account, type the exact lowercase confirmation, and confirm.
+Account, choose Delete account, type the exact lowercase confirmation, enter the
+current password, and confirm.
 Its canonical public URL is
 [https://dupert.vercel.app/account-deletion](https://dupert.vercel.app/account-deletion).
 Repository source and routing configuration are not evidence that the URL is deployed,
