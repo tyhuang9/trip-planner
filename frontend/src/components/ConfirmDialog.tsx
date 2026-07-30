@@ -98,7 +98,6 @@ export function ConfirmDialog({
         className={styles.dialog}
         role="alertdialog"
         aria-modal="true"
-        aria-busy={confirming ? 'true' : undefined}
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
         tabIndex={-1}
@@ -115,7 +114,7 @@ export function ConfirmDialog({
             {confirming ? `${confirmingLabel} Please wait.` : ''}
           </p>
         </div>
-        <div className={styles.actions}>
+        <div className={styles.actions} aria-busy={confirming ? 'true' : undefined}>
           <button
             ref={cancelButtonRef}
             type="button"

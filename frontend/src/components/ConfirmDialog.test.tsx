@@ -31,7 +31,11 @@ describe('<ConfirmDialog>', () => {
 
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Deleting...' })).toBeDisabled()
-    expect(dialog).toHaveAttribute('aria-busy', 'true')
+    expect(dialog).not.toHaveAttribute('aria-busy')
+    expect(screen.getByRole('button', { name: 'Cancel' }).parentElement).toHaveAttribute(
+      'aria-busy',
+      'true',
+    )
     expect(screen.getByRole('status')).toHaveTextContent('Deleting... Please wait.')
     await waitFor(() => expect(dialog).toHaveFocus())
 
