@@ -105,9 +105,16 @@ interface NativeMapElementBounds {
   y: number
 }
 
+type NativeMapBoundsUpdateMethod = 'onDisplay' | 'onResize' | 'onScroll'
+
+interface NativeMapBoundsUpdate {
+  mapBounds: NativeMapElementBounds
+  method: NativeMapBoundsUpdateMethod
+}
+
 const capacitorGoogleMaps = registerPlugin<NativeGoogleMapsPlugin>('CapacitorGoogleMaps')
 
-let focusListenerRegistered = false
+let focusListenerRegistration: Promise<void> | null = null
 
 function ensureMapElementDefinition() {
   if (customElements.get('capacitor-google-map')) return
@@ -141,28 +148,48 @@ function mapElementBounds(element: HTMLElement): NativeMapElementBounds {
   }
 }
 
-function registerFocusListener() {
-  if (focusListenerRegistered) return
-  focusListenerRegistered = true
+function registerFocusListener(): Promise<void> {
+  if (focusListenerRegistration) return focusListenerRegistration
 
-  void capacitorGoogleMaps.addListener('isMapInFocus', (event) => {
+  const registration = capacitorGoogleMaps.addListener('isMapInFocus', (event) => {
     const { mapId, x, y } = event as unknown as MapFocusEvent
     const target = document.elementFromPoint(x, y) as HTMLElement | null
     const mapElement = target?.closest('capacitor-google-map') as HTMLElement | null
     void capacitorGoogleMaps.dispatchMapEvent({
       focus: mapElement?.dataset.internalId === mapId,
       id: mapId,
+    }).catch(() => undefined)
+  }).then(() => undefined)
+  focusListenerRegistration = registration
+  void registration.then(
+    () => undefined,
+    () => {
+      if (focusListenerRegistration === registration) {
+        focusListenerRegistration = null
+      }
     })
-  })
+  return registration
 }
 
 export class NativeGoogleMap {
   private readonly id: string
   private readonly element: HTMLElement
   private readonly listenerHandles = new Map<string, PluginListenerHandle>()
+  private readonly pendingListenerRegistrations = new Set<Promise<void>>()
   private readonly handleScroll = () => {
-    void this.updateMapBounds('onScroll')
+    this.queueMapBoundsUpdate('onScroll')
   }
+  private readonly handleResize = () => {
+    this.queueMapBoundsUpdate('onResize')
+  }
+  private boundsAnimationFrame: number | null = null
+  private boundsUpdateInFlight = false
+  private boundsUpdatePromise: Promise<void> | null = null
+  private destroyCompleted = false
+  private destroyPromise: Promise<void> | null = null
+  private destroyRequested = false
+  private nativeMapDestroyed = false
+  private pendingBoundsUpdate: NativeMapBoundsUpdate | null = null
   private resizeObserver: ResizeObserver | null = null
 
   private constructor(id: string, element: HTMLElement) {
@@ -178,7 +205,7 @@ export class NativeGoogleMap {
     onReady?: () => void
   }): Promise<NativeGoogleMap> {
     ensureMapElementDefinition()
-    registerFocusListener()
+    await registerFocusListener()
 
     const map = new NativeGoogleMap(options.id, options.element)
     map.element.dataset.internalId = options.id
@@ -233,7 +260,29 @@ export class NativeGoogleMap {
     return result.ids
   }
 
-  async destroy() {
+  destroy(): Promise<void> {
+    if (this.destroyCompleted) return Promise.resolve()
+    if (this.destroyPromise) return this.destroyPromise
+
+    const attempt = this.destroyInternal()
+    this.destroyPromise = attempt
+    void attempt.then(
+      () => {
+        this.destroyCompleted = true
+        if (this.destroyPromise === attempt) this.destroyPromise = null
+      },
+      () => {
+        if (this.destroyPromise === attempt) this.destroyPromise = null
+      },
+    )
+    return attempt
+  }
+
+  private async destroyInternal() {
+    this.destroyRequested = true
+    this.stopObservingBounds()
+    await this.waitForPendingListenerRegistrations()
+
     let cleanupError: unknown
     let cleanupFailed = false
     try {
@@ -243,17 +292,20 @@ export class NativeGoogleMap {
       cleanupFailed = true
     }
 
-    try {
-      await capacitorGoogleMaps.destroy({ id: this.id })
-    } catch (destroyError) {
-      if (cleanupFailed) {
-        throw new AggregateError(
-          [cleanupError, destroyError],
-          'Failed to destroy native map after bridge cleanup failed',
-          { cause: destroyError },
-        )
+    if (!this.nativeMapDestroyed) {
+      try {
+        await capacitorGoogleMaps.destroy({ id: this.id })
+        this.nativeMapDestroyed = true
+      } catch (destroyError) {
+        if (cleanupFailed) {
+          throw new AggregateError(
+            [cleanupError, destroyError],
+            'Failed to destroy native map after bridge cleanup failed',
+            { cause: destroyError },
+          )
+        }
+        throw destroyError
       }
-      throw destroyError
     }
 
     if (cleanupFailed) throw cleanupError
@@ -296,34 +348,56 @@ export class NativeGoogleMap {
   }
 
   private observeBounds() {
-    let wasHidden = false
+    const platform = Capacitor.getPlatform()
+    if ((platform !== 'ios' && platform !== 'android') || this.destroyRequested) return
+
     let previous = mapElementBounds(this.element)
+    let wasHidden = previous.width === 0 || previous.height === 0
     this.resizeObserver = new ResizeObserver(() => {
       const bounds = mapElementBounds(this.element)
       const isHidden = bounds.width === 0 || bounds.height === 0
       if (!isHidden && wasHidden && Capacitor.getPlatform() === 'ios') {
-        void this.updateMapBounds('onDisplay', bounds)
-      } else if (!isHidden && (previous.width !== bounds.width || previous.height !== bounds.height)) {
-        void this.updateMapBounds('onResize', bounds)
+        this.queueMapBoundsUpdate('onDisplay', bounds)
+      } else if (!isHidden && !this.boundsMatch(previous, bounds)) {
+        this.queueMapBoundsUpdate('onResize', bounds)
       }
       previous = bounds
       wasHidden = isHidden
     })
     this.resizeObserver.observe(this.element)
-    window.addEventListener('scroll', this.handleScroll)
-    window.addEventListener('resize', this.handleScroll)
+    if (platform === 'android') {
+      window.addEventListener('scroll', this.handleScroll)
+    }
+    window.addEventListener('resize', this.handleResize)
   }
 
-  private async setListener<T extends { mapId: string }>(
+  private setListener<T extends { mapId: string }>(
+    eventName: string,
+    callback?: (event: T) => void,
+  ): Promise<void> {
+    if (this.destroyRequested) return Promise.resolve()
+
+    const registration = this.setListenerInternal(eventName, callback)
+    this.pendingListenerRegistrations.add(registration)
+    void registration.then(
+      () => this.pendingListenerRegistrations.delete(registration),
+      () => this.pendingListenerRegistrations.delete(registration),
+    )
+    return registration
+  }
+
+  private async setListenerInternal<T extends { mapId: string }>(
     eventName: string,
     callback?: (event: T) => void,
   ) {
     const existing = this.listenerHandles.get(eventName)
     if (existing) {
       await existing.remove()
-      this.listenerHandles.delete(eventName)
+      if (this.listenerHandles.get(eventName) === existing) {
+        this.listenerHandles.delete(eventName)
+      }
     }
-    if (!callback) return
+    if (!callback || this.destroyRequested) return
 
     const handle = await capacitorGoogleMaps.addListener(eventName, (event) => {
       const mapEvent = event as unknown as T
@@ -333,30 +407,109 @@ export class NativeGoogleMap {
   }
 
   private async removeBridgeListeners() {
-    this.resizeObserver?.disconnect()
-    this.resizeObserver = null
-    window.removeEventListener('scroll', this.handleScroll)
-    window.removeEventListener('resize', this.handleScroll)
+    this.stopObservingBounds()
+    const listenerEntries = Array.from(this.listenerHandles.entries())
     const removals = await Promise.allSettled(
-      Array.from(this.listenerHandles.values(), (handle) => handle.remove()),
+      listenerEntries.map(([, handle]) => handle.remove()),
     )
-    this.listenerHandles.clear()
     const errors = removals
       .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
       .map((result) => result.reason)
+    listenerEntries.forEach(([eventName, handle], index) => {
+      if (removals[index]?.status === 'fulfilled' && this.listenerHandles.get(eventName) === handle) {
+        this.listenerHandles.delete(eventName)
+      }
+    })
     if (errors.length > 0) {
       const noun = errors.length === 1 ? 'listener' : 'listeners'
       throw new AggregateError(errors, `Failed to remove ${errors.length} native map bridge ${noun}`)
     }
   }
 
-  private updateMapBounds(
-    method: 'onDisplay' | 'onResize' | 'onScroll',
+  private boundsMatch(left: NativeMapElementBounds, right: NativeMapElementBounds) {
+    return left.height === right.height
+      && left.width === right.width
+      && left.x === right.x
+      && left.y === right.y
+  }
+
+  private cancelPendingBoundsUpdate() {
+    if (this.boundsAnimationFrame !== null) {
+      window.cancelAnimationFrame(this.boundsAnimationFrame)
+      this.boundsAnimationFrame = null
+    }
+    this.pendingBoundsUpdate = null
+  }
+
+  private queueMapBoundsUpdate(
+    method: NativeMapBoundsUpdateMethod,
     mapBounds = mapElementBounds(this.element),
   ) {
-    return capacitorGoogleMaps[method]({
-      id: this.id,
+    const platform = Capacitor.getPlatform()
+    const isSupported = method === 'onResize'
+      ? platform === 'ios' || platform === 'android'
+      : method === 'onDisplay'
+        ? platform === 'ios'
+        : platform === 'android'
+    if (this.destroyRequested || !isSupported) return
+
+    this.pendingBoundsUpdate = {
       mapBounds,
+      method: this.pendingBoundsUpdate?.method === 'onDisplay' ? 'onDisplay' : method,
+    }
+    this.scheduleBoundsUpdate()
+  }
+
+  private scheduleBoundsUpdate() {
+    if (
+      this.destroyRequested
+      || this.boundsAnimationFrame !== null
+      || this.boundsUpdateInFlight
+      || !this.pendingBoundsUpdate
+    ) return
+
+    this.boundsAnimationFrame = window.requestAnimationFrame(() => {
+      this.boundsAnimationFrame = null
+      this.flushBoundsUpdate()
+    })
+  }
+
+  private flushBoundsUpdate() {
+    if (this.destroyRequested || this.boundsUpdateInFlight) return
+
+    const update = this.pendingBoundsUpdate
+    this.pendingBoundsUpdate = null
+    if (!update) return
+
+    this.boundsUpdateInFlight = true
+    const updatePromise = capacitorGoogleMaps[update.method]({
+      id: this.id,
+      mapBounds: update.mapBounds,
     }).catch(() => undefined)
+    this.boundsUpdatePromise = updatePromise
+    void updatePromise.then(() => {
+      if (this.boundsUpdatePromise !== updatePromise) return
+      this.boundsUpdatePromise = null
+      this.boundsUpdateInFlight = false
+      this.scheduleBoundsUpdate()
+    })
+  }
+
+  private stopObservingBounds() {
+    this.resizeObserver?.disconnect()
+    this.resizeObserver = null
+    window.removeEventListener('scroll', this.handleScroll)
+    window.removeEventListener('resize', this.handleResize)
+    this.cancelPendingBoundsUpdate()
+  }
+
+  private async waitForPendingListenerRegistrations() {
+    while (this.pendingListenerRegistrations.size > 0) {
+      await Promise.allSettled(this.pendingListenerRegistrations)
+    }
+
+    if (this.boundsUpdatePromise) {
+      await this.boundsUpdatePromise
+    }
   }
 }
