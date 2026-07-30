@@ -119,7 +119,17 @@ public class TripEventBroker {
                 normalizedClientIp,
                 replacement == null ? null : replacement.subscription());
             if (replacement != null) {
-                removeLocked(tripId, replacement.subscription());
+                boolean removed = replacement.reason() == ReplacementReason.STALE_CAPACITY
+                    ? removeIfStaleLocked(tripId, replacement.subscription(), now)
+                    : removeLocked(tripId, replacement.subscription());
+                if (!removed) {
+                    replacement = null;
+                    assertCapacity(
+                        subscriptions,
+                        normalizedActorKey,
+                        normalizedClientIp,
+                        null);
+                }
             }
             subscriptions.add(subscription);
             subscriptionsByTrip.putIfAbsent(tripId, subscriptions);
@@ -136,14 +146,16 @@ public class TripEventBroker {
             replacement.subscription().emitter().complete();
         }
 
+        if (!subscription.beginWrite()) {
+            return emitter;
+        }
         try {
             emitter.send(SseEmitter.event()
                 .name("connected")
                 .data(Map.of("type", "connected")));
-            subscription.markWriteSucceeded(clock.instant());
+            subscription.finishWriteSucceeded(clock.instant());
         } catch (IOException | IllegalStateException ex) {
-            remove(tripId, subscription);
-            emitter.completeWithError(ex);
+            removeFailedSubscription(tripId, subscription, ex);
         }
 
         return emitter;
@@ -156,11 +168,14 @@ public class TripEventBroker {
         }
 
         for (Subscription subscription : subscriptions) {
+            if (!subscription.beginWrite()) {
+                continue;
+            }
             try {
                 subscription.emitter().send(SseEmitter.event()
                     .name("trip-event")
                     .data(event));
-                subscription.markWriteSucceeded(clock.instant());
+                subscription.finishWriteSucceeded(clock.instant());
             } catch (IOException | IllegalStateException ex) {
                 removeFailedSubscription(tripId, subscription, ex);
             }
@@ -191,7 +206,7 @@ public class TripEventBroker {
                     continue;
                 }
                 if (isStale(subscription, now)) {
-                    if (remove(tripId, subscription)) {
+                    if (removeIfStale(tripId, subscription, now)) {
                         staleCounter.increment();
                         log.warn("Removed stale realtime subscription (active={})", activeCount());
                         subscription.emitter().complete();
@@ -199,8 +214,11 @@ public class TripEventBroker {
                     continue;
                 }
                 try {
+                    if (!subscription.beginWrite()) {
+                        continue;
+                    }
                     subscription.emitter().send(SseEmitter.event().comment("keepalive"));
-                    subscription.markWriteSucceeded(now);
+                    subscription.finishWriteSucceeded(now);
                     heartbeatCounter.increment();
                 } catch (IOException | IllegalStateException ex) {
                     removeFailedSubscription(tripId, subscription, ex);
@@ -212,10 +230,12 @@ public class TripEventBroker {
     public void disconnect(Long tripId) {
         List<Subscription> subscriptions;
         synchronized (this) {
-            subscriptions = subscriptionsByTrip.remove(tripId);
+            subscriptions = subscriptionsByTrip.get(tripId);
             if (subscriptions == null || subscriptions.isEmpty()) {
                 return;
             }
+            subscriptions.forEach(Subscription::deactivate);
+            subscriptionsByTrip.remove(tripId);
             globalSubscriberCount = Math.max(0, globalSubscriberCount - subscriptions.size());
         }
         for (Subscription subscription : subscriptions) {
@@ -257,7 +277,7 @@ public class TripEventBroker {
         }
         return subscriptions.stream()
             .filter(existing -> existing.actorKey().equals(candidate.actorKey()))
-            .filter(existing -> isStale(existing, now))
+            .filter(existing -> existing.canRemoveAsStale(now, staleAfter))
             .min(Comparator.comparing(Subscription::createdAt))
             .map(existing -> new Replacement(existing, ReplacementReason.STALE_CAPACITY))
             .orElse(null);
@@ -308,7 +328,27 @@ public class TripEventBroker {
         }
     }
 
+    private boolean removeIfStale(Long tripId, Subscription subscription, Instant now) {
+        synchronized (this) {
+            return removeIfStaleLocked(tripId, subscription, now);
+        }
+    }
+
+    private boolean removeIfStaleLocked(Long tripId, Subscription subscription, Instant now) {
+        // Nested lifecycle locking always follows broker -> subscription. Write
+        // paths take only the subscription lock and never hold it during emitter I/O.
+        if (!subscription.deactivateIfStale(now, staleAfter)) {
+            return false;
+        }
+        return removeDeactivatedLocked(tripId, subscription);
+    }
+
     private boolean removeLocked(Long tripId, Subscription subscription) {
+        subscription.deactivate();
+        return removeDeactivatedLocked(tripId, subscription);
+    }
+
+    private boolean removeDeactivatedLocked(Long tripId, Subscription subscription) {
         CopyOnWriteArrayList<Subscription> subscriptions = subscriptionsByTrip.get(tripId);
         if (subscriptions == null || !subscriptions.remove(subscription)) {
             return false;
@@ -321,7 +361,12 @@ public class TripEventBroker {
     }
 
     private void removeFailedSubscription(Long tripId, Subscription subscription, Exception ex) {
-        if (remove(tripId, subscription)) {
+        subscription.finishWriteFailedAndDeactivate();
+        boolean removed;
+        synchronized (this) {
+            removed = removeDeactivatedLocked(tripId, subscription);
+        }
+        if (removed) {
             staleCounter.increment();
             log.warn("Removed realtime subscription after failed write (active={})", activeCount());
         }
@@ -343,7 +388,7 @@ public class TripEventBroker {
     }
 
     private boolean isStale(Subscription subscription, Instant now) {
-        return ageAtLeast(subscription.lastSuccessfulWriteAt(), now, staleAfter);
+        return subscription.isStaleAt(now, staleAfter);
     }
 
     private static boolean ageAtLeast(Instant start, Instant now, Duration threshold) {
@@ -379,7 +424,9 @@ public class TripEventBroker {
         private final String clientIp;
         private final String streamClientId;
         private final Instant createdAt;
-        private volatile Instant lastSuccessfulWriteAt;
+        private Instant lastSuccessfulWriteAt;
+        private boolean active = true;
+        private int writesInFlight;
 
         private Subscription(SseEmitter emitter,
                              String actorKey,
@@ -414,12 +461,50 @@ public class TripEventBroker {
             return createdAt;
         }
 
-        Instant lastSuccessfulWriteAt() {
+        synchronized Instant lastSuccessfulWriteAt() {
             return lastSuccessfulWriteAt;
         }
 
-        void markWriteSucceeded(Instant at) {
-            lastSuccessfulWriteAt = at;
+        synchronized boolean beginWrite() {
+            if (!active) {
+                return false;
+            }
+            writesInFlight++;
+            return true;
+        }
+
+        synchronized boolean isStaleAt(Instant now, Duration staleAfter) {
+            return ageAtLeast(lastSuccessfulWriteAt, now, staleAfter);
+        }
+
+        synchronized boolean canRemoveAsStale(Instant now, Duration staleAfter) {
+            return active
+                && writesInFlight == 0
+                && ageAtLeast(lastSuccessfulWriteAt, now, staleAfter);
+        }
+
+        synchronized boolean deactivateIfStale(Instant now, Duration staleAfter) {
+            if (!canRemoveAsStale(now, staleAfter)) {
+                return false;
+            }
+            active = false;
+            return true;
+        }
+
+        synchronized void finishWriteSucceeded(Instant at) {
+            if (at.isAfter(lastSuccessfulWriteAt)) {
+                lastSuccessfulWriteAt = at;
+            }
+            writesInFlight--;
+        }
+
+        synchronized void finishWriteFailedAndDeactivate() {
+            writesInFlight--;
+            active = false;
+        }
+
+        synchronized void deactivate() {
+            active = false;
         }
     }
 
