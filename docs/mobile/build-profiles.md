@@ -122,6 +122,21 @@ The platform facade owns foreground/background lifecycle subscription. Native
 builds subscribe through the Capacitor App plugin; callers must use this facade
 rather than adding direct Capacitor globals.
 
+## Android data exposure boundary
+
+The committed main Android manifest sets `android:allowBackup="false"`, variant
+manifests cannot override it, and no source set contains a `FileProvider`.
+`npm run check:android-data-exposure` fails if that backup setting is missing,
+unsafe, duplicated, or overridden; if a `FileProvider` or
+`file_paths.xml` returns; or if a broad `external-path` or `cache-path` is
+introduced. This is a source policy, not device evidence: Android 12+ device-
+to-device transfer behavior can vary by OEM, so `allowBackup="false"` is not a
+universal D2D-prevention claim.
+
+Any future file sharing must use a narrowly scoped provider in a separate
+reviewed change that updates this policy and verifies the resulting native
+behavior. Do not restore the old broad root paths.
+
 ## Deferred native qualification
 
 This issue deliberately does not add Apple Team/distribution signing, Android
