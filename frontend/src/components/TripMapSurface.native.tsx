@@ -305,6 +305,7 @@ export function TripMapSurface({
   const routeRenderRef = useRef(0)
   const lastFitKeyRef = useRef<string | null>(null)
   const activeRouteRequestRef = useRef<{ controller: AbortController; key: string } | null>(null)
+  const lastSuccessfulRouteGroupKeyRef = useRef<string | null>(null)
   const nativeMapId = `trip-map-native-${useId()}`
 
   const [map, setMap] = useState<NativeGoogleMap | null>(null)
@@ -415,8 +416,10 @@ export function TripMapSurface({
   useEffect(() => {
     const activeRequest = activeRouteRequestRef.current
     if (activeRequest?.key === routeGroupKey) return
+    if (lastSuccessfulRouteGroupKeyRef.current === routeGroupKey) return
 
     activeRequest?.controller.abort()
+    lastSuccessfulRouteGroupKeyRef.current = null
     if (routeGroups.length === 0) {
       activeRouteRequestRef.current = null
       queueMicrotask(() => {
@@ -440,16 +443,23 @@ export function TripMapSurface({
         if (controller.signal.aborted) return
         setLoadedRoutes(routes.flatMap((entry) => entry.route ? [{ dayDate: entry.dayDate, route: entry.route }] : []))
         if (routes.some((entry) => entry.route === null)) {
+          lastSuccessfulRouteGroupKeyRef.current = null
           setRouteError('Some selected-day routes are unavailable.')
+          return
         }
+        lastSuccessfulRouteGroupKeyRef.current = routeGroupKey
       })
       .catch(() => {
         if (!controller.signal.aborted) {
+          lastSuccessfulRouteGroupKeyRef.current = null
           setLoadedRoutes([])
           setRouteError('Routes could not be calculated. Try again shortly.')
         }
       })
       .finally(() => {
+        if (activeRouteRequestRef.current?.controller === controller) {
+          activeRouteRequestRef.current = null
+        }
         if (!controller.signal.aborted) setRouteLoading(false)
       })
   }, [routeGroupKey, routeGroups])
@@ -457,6 +467,7 @@ export function TripMapSurface({
   useEffect(() => () => {
     activeRouteRequestRef.current?.controller.abort()
     activeRouteRequestRef.current = null
+    lastSuccessfulRouteGroupKeyRef.current = null
   }, [])
 
   useEffect(() => {
