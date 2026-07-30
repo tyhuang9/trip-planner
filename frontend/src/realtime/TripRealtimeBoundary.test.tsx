@@ -2,12 +2,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { useEffect, type PropsWithChildren } from 'react'
 import { MemoryRouter, Route, Routes } from 'react-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useTripStream } from '../hooks/useTripStream'
 import { useTrip } from '../hooks/useTrips'
 import { TripRealtimeBoundary } from './TripRealtimeBoundary'
 import { useTripRealtimeActivityBuffer } from './tripRealtimeActivityBuffer'
 import { AuthContext, type AuthContextValue } from '../auth/authContextValue'
+import { useAuthStore } from '../auth/authStore'
 
 vi.mock('../hooks/useTripStream', () => ({
   useTripStream: vi.fn(),
@@ -64,14 +65,17 @@ function BufferingChild({ buffering }: { buffering: boolean }) {
 function boundaryTree(
   buffering = false,
   auth = makeAuth(),
+  initialPath = '/trips/abc234def567',
 ) {
   return (
     <Providers>
       <AuthContext.Provider value={auth}>
-        <MemoryRouter initialEntries={['/trips/abc234def567']}>
+        <MemoryRouter initialEntries={[initialPath]}>
           <Routes>
             <Route path="/trips/:publicId" element={<TripRealtimeBoundary />}>
               <Route index element={<BufferingChild buffering={buffering} />} />
+              <Route path="members" element={<BufferingChild buffering={buffering} />} />
+              <Route path="archive/members" element={<BufferingChild buffering={buffering} />} />
             </Route>
           </Routes>
         </MemoryRouter>
@@ -83,16 +87,35 @@ function boundaryTree(
 function renderBoundary(
   buffering = false,
   auth = makeAuth(),
+  initialPath = '/trips/abc234def567',
 ) {
-  return render(boundaryTree(buffering, auth))
+  return render(boundaryTree(buffering, auth, initialPath))
+}
+
+function authenticateUser() {
+  useAuthStore.getState().setSession({
+    accessToken: 'jwt-access-token',
+    expiresInSeconds: 900,
+    user: {
+      id: 200,
+      email: 'bob@example.com',
+      displayName: 'Bob',
+      emailVerified: true,
+    },
+  })
 }
 
 beforeEach(() => {
+  useAuthStore.getState().clearSession()
   queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   useTripMock.mockReturnValue({ isSuccess: true } as ReturnType<typeof useTrip>)
   bufferingChildMounted.mockReset()
+})
+
+afterEach(() => {
+  useAuthStore.getState().clearSession()
 })
 
 describe('<TripRealtimeBoundary>', () => {
@@ -132,6 +155,45 @@ describe('<TripRealtimeBoundary>', () => {
     expect(useTripStreamMock).toHaveBeenLastCalledWith('abc234def567', {
       bufferActivityEvents: false,
       enabled: false,
+    })
+  })
+
+  it.each([
+    ['canonical', '/trips/abc234def567/members?tab=people#members'],
+    ['trailing-slash', '/trips/abc234def567/members/?tab=people#members'],
+  ])('withholds trip data and realtime for an unauthenticated %s Members route', (_kind, path) => {
+    renderBoundary(false, makeAuth(), path)
+
+    expect(useTripMock).toHaveBeenLastCalledWith(undefined, { enabled: false })
+    expect(useTripStreamMock).toHaveBeenLastCalledWith(undefined, {
+      bufferActivityEvents: false,
+      enabled: false,
+    })
+  })
+
+  it('preserves protected Members realtime behavior for an authenticated trailing-slash route', () => {
+    authenticateUser()
+
+    renderBoundary(
+      false,
+      makeAuth(),
+      '/trips/abc234def567/members/?tab=people#members',
+    )
+
+    expect(useTripMock).toHaveBeenLastCalledWith('abc234def567', { enabled: true })
+    expect(useTripStreamMock).toHaveBeenLastCalledWith('abc234def567', {
+      bufferActivityEvents: false,
+      enabled: true,
+    })
+  })
+
+  it('does not treat another nested path ending in members as protected', () => {
+    renderBoundary(false, makeAuth(), '/trips/abc234def567/archive/members')
+
+    expect(useTripMock).toHaveBeenLastCalledWith('abc234def567', { enabled: true })
+    expect(useTripStreamMock).toHaveBeenLastCalledWith('abc234def567', {
+      bufferActivityEvents: false,
+      enabled: true,
     })
   })
 

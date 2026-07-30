@@ -36,7 +36,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react'
-import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
+import { Link, matchPath, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useIsAuthenticated } from '../auth/authStore'
 import { AuthContext } from '../auth/authContextValue'
 import {
@@ -2139,7 +2139,7 @@ export function TripWorkspacePage() {
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
-  const isMembersRoute = location.pathname.endsWith('/members')
+  const isMembersRoute = matchPath('/trips/:publicId/members', location.pathname) !== null
   const workspaceRoute = publicId ? `/trips/${encodeURIComponent(publicId)}` : '/trips'
   const membersReturnTo = (() => {
     const state = location.state as {
