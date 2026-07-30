@@ -181,7 +181,6 @@ export class NativeGoogleMap {
 
     const map = new NativeGoogleMap(options.id, options.element)
     map.element.dataset.internalId = options.id
-    const bounds = mapElementBounds(map.element)
 
     if (options.onReady) {
       await map.setListener<MapReadyEvent>('onMapReady', (event) => {
@@ -194,6 +193,7 @@ export class NativeGoogleMap {
     // WKWebView needs one layout turn to create the scroll view the iOS plugin
     // uses as its native map container.
     await new Promise<void>((resolve) => window.setTimeout(resolve, 200))
+    const bounds = mapElementBounds(map.element)
     try {
       await capacitorGoogleMaps.create({
         apiKey: options.apiKey,
