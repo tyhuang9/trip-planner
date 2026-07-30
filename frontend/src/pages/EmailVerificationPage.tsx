@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import { verifyEmail } from '../api/auth'
 import { parseApiError } from '../api/errors'
 import { listTrips } from '../api/trips'
@@ -13,14 +13,20 @@ import { requestDeepLinkRouteFocus } from '../deep-links/routeFocusRequest'
 import { useAuth } from '../auth/useAuth'
 import styles from './AuthForm.module.css'
 
-type VerificationState = 'verifying' | 'verified' | 'error'
+type VerificationState = 'verifying' | 'verified' | 'verified-current-session-unchanged' | 'error'
+
+interface VerificationRequest {
+  locationKey: string
+  token: string
+}
 
 export function EmailVerificationPage() {
   usePageTitle('Verify email - Dupert')
 
   const [searchParams] = useSearchParams()
   const { handoffId } = useParams()
-  const [handoff] = useState(() => getDeepLinkHandoff(handoffId))
+  const handoff = useMemo(() => getDeepLinkHandoff(handoffId), [handoffId])
+  const location = useLocation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { isAuthenticated, isInitializing, logout } = useAuth()
@@ -29,13 +35,20 @@ export function EmailVerificationPage() {
   const returnTo = handoff?.kind === 'verify-email' ? handoff.returnTo : safeReturnPath(searchParams.get('return'))
   const hasToken = token.trim().length > 0
   const [verification, setVerification] = useState<{
+    locationKey: string
     state: VerificationState
     message: string
+    token: string
   }>({
+    locationKey: location.key,
     state: 'verifying',
     message: 'Verifying your email...',
+    token,
   })
-  const startedRef = useRef(false)
+  const mountedRef = useRef(false)
+  const activeRequestRef = useRef<VerificationRequest | null>(null)
+  const attemptedTokensRef = useRef(new Set<string>())
+  const currentRouteRef = useRef({ locationKey: location.key, token })
   const [identitySwitchRequired, setIdentitySwitchRequired] = useState(isAuthenticated)
   const [identitySwitchConfirmed, setIdentitySwitchConfirmed] = useState(false)
   const [isSwitchingIdentity, setIsSwitchingIdentity] = useState(false)
@@ -43,18 +56,55 @@ export function EmailVerificationPage() {
 
   if (isAuthenticated && !identitySwitchRequired) setIdentitySwitchRequired(true)
 
+  useLayoutEffect(() => {
+    currentRouteRef.current = { locationKey: location.key, token }
+  }, [location.key, token])
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
   useEffect(() => {
     if (!hasToken) return
     if (isInitializing || isAuthenticated) return
     if (identitySwitchRequired && !identitySwitchConfirmed) return
-    if (startedRef.current) return
-    startedRef.current = true
+    if (attemptedTokensRef.current.has(token)) return
+    attemptedTokensRef.current.add(token)
+
+    const request: VerificationRequest = {
+      locationKey: location.key,
+      token,
+    }
+    activeRequestRef.current = request
+    setVerification({
+      locationKey: request.locationKey,
+      state: 'verifying',
+      message: 'Verifying your email...',
+      token: request.token,
+    })
+
+    const ownsCurrentPage = () => {
+      const currentRoute = currentRouteRef.current
+      return mountedRef.current
+        && activeRequestRef.current === request
+        && currentRoute.locationKey === request.locationKey
+        && currentRoute.token === request.token
+    }
 
     verifyEmail({ token })
       .then((res) => {
+        if (!ownsCurrentPage()) return
         if (!identitySwitchConfirmed && useAuthStore.getState().authStatus === 'authenticated') {
-          startedRef.current = false
-          setIdentitySwitchRequired(true)
+          setVerification({
+            locationKey: request.locationKey,
+            state: 'verified-current-session-unchanged',
+            message: 'Your email is verified, but your current signed-in session was not changed. Sign out, then sign in with the verified account.',
+            token: request.token,
+          })
+          consumeDeepLinkHandoff(handoffId)
           return
         }
         setSession({
@@ -67,8 +117,10 @@ export function EmailVerificationPage() {
           queryFn: listTrips,
         })
         setVerification({
+          locationKey: request.locationKey,
           state: 'verified',
           message: 'Your email is verified. Taking you to Dupert...',
+          token: request.token,
         })
         const destination = typeof returnTo === 'string'
           ? returnTo
@@ -80,15 +132,18 @@ export function EmailVerificationPage() {
         navigate(destination, { replace: true })
       })
       .catch((err) => {
+        if (!ownsCurrentPage()) return
         setVerification({
+          locationKey: request.locationKey,
           state: 'error',
           message:
             parseApiError(err).topMessage ??
             'This verification link is invalid or expired.',
+          token: request.token,
         })
         clearDeepLinkHandoff(handoffId)
       })
-  }, [handoffId, hasToken, identitySwitchConfirmed, identitySwitchRequired, isAuthenticated, isInitializing, navigate, queryClient, returnTo, setSession, token])
+  }, [handoffId, hasToken, identitySwitchConfirmed, identitySwitchRequired, isAuthenticated, isInitializing, location.key, navigate, queryClient, returnTo, setSession, token])
 
   const confirmIdentitySwitch = async () => {
     if (isSwitchingIdentity) return
@@ -105,24 +160,53 @@ export function EmailVerificationPage() {
   }
 
   const keepCurrentSession = () => {
+    if (isSwitchingIdentity) return
     consumeDeepLinkHandoff(handoffId)
     requestDeepLinkRouteFocus('/trips')
     navigate('/trips', { replace: true })
   }
 
-  const state = hasToken ? verification.state : 'error'
+  const signInWithVerifiedAccount = async () => {
+    if (isSwitchingIdentity) return
+    setIsSwitchingIdentity(true)
+    setIdentitySwitchError(null)
+    try {
+      await logout()
+      requestDeepLinkRouteFocus('/login')
+      navigate('/login', { replace: true })
+    } catch {
+      setIdentitySwitchError('Could not sign out. Your current session was not changed.')
+    } finally {
+      setIsSwitchingIdentity(false)
+    }
+  }
+
+  const currentVerification = verification.locationKey === location.key && verification.token === token
+    ? verification
+    : {
+        locationKey: location.key,
+        state: 'verifying' as const,
+        message: 'Verifying your email...',
+        token,
+      }
+  const state = hasToken ? currentVerification.state : 'error'
   const message = hasToken
     ? isInitializing
       ? 'Checking your current session...'
-      : verification.message
+      : currentVerification.message
     : 'This verification link is invalid or expired.'
-  const needsIdentitySwitch = hasToken && !isInitializing && identitySwitchRequired && !identitySwitchConfirmed
+  const verificationFinishedWithCurrentSession = state === 'verified-current-session-unchanged'
+  const needsIdentitySwitch = hasToken
+    && !isInitializing
+    && identitySwitchRequired
+    && !identitySwitchConfirmed
+    && !verificationFinishedWithCurrentSession
 
   return (
     <main id="main" className={styles.shell}>
       <div className={`${styles.card} ${styles.resultCard}`}>
         <h1 className={styles.title}>
-          {state === 'verified' ? 'Email verified' : 'Verify email'}
+          {state === 'verified' || verificationFinishedWithCurrentSession ? 'Email verified' : 'Verify email'}
         </h1>
         <p className={styles.subtitle}>
           {state === 'verifying'
@@ -139,18 +223,53 @@ export function EmailVerificationPage() {
               ? styles.banner
               : `${styles.bannerSuccess} ${styles.centeredNotice}`
           }
-          role={state === 'error' ? 'alert' : 'status'}
+          role={state === 'error' ? 'alert' : isSwitchingIdentity ? undefined : 'status'}
         >
           {message}
         </div>}
+        {verificationFinishedWithCurrentSession ? (
+          <div className={styles.form}>
+            {identitySwitchError ? (
+              <div className={styles.banner} role="alert">{identitySwitchError}</div>
+            ) : null}
+            <button
+              className={styles.submit}
+              type="button"
+              aria-busy={isSwitchingIdentity ? 'true' : undefined}
+              aria-disabled={isSwitchingIdentity ? 'true' : undefined}
+              onClick={() => void signInWithVerifiedAccount()}
+            >
+              {isSwitchingIdentity ? 'Signing out...' : 'Sign out and sign in with the verified account'}
+            </button>
+            <button className={styles.textButton} type="button" disabled={isSwitchingIdentity} onClick={keepCurrentSession}>
+              Keep current session
+            </button>
+            {isSwitchingIdentity ? (
+              <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+                Your current session is being ended. Please wait.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         {needsIdentitySwitch ? (
           <div className={styles.form}>
-            <button className={styles.submit} type="button" disabled={isSwitchingIdentity} onClick={() => void confirmIdentitySwitch()}>
+            <button
+              className={styles.submit}
+              type="button"
+              aria-busy={isSwitchingIdentity ? 'true' : undefined}
+              aria-disabled={isSwitchingIdentity ? 'true' : undefined}
+              onClick={() => void confirmIdentitySwitch()}
+            >
               {isSwitchingIdentity ? 'Signing out...' : 'Sign out and verify this email'}
             </button>
             <button className={styles.textButton} type="button" disabled={isSwitchingIdentity} onClick={keepCurrentSession}>
               Keep current session
             </button>
+            {isSwitchingIdentity ? (
+              <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+                Your current session is being ended. Please wait.
+              </p>
+            ) : null}
           </div>
         ) : null}
         {isAuthenticated && !needsIdentitySwitch && state === 'error' ? (
