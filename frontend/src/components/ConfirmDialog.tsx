@@ -31,6 +31,7 @@ export function ConfirmDialog({
   const titleId = useId()
   const descriptionId = useId()
   const cancelButtonRef = useRef<HTMLButtonElement>(null)
+  const dialogRef = useRef<HTMLElement>(null)
   const previousFocusRef = useRef<HTMLElement | null>(null)
   const onCancelRef = useRef(onCancel)
 
@@ -59,6 +60,11 @@ export function ConfirmDialog({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Tab' && confirming) {
+        event.preventDefault()
+        dialogRef.current?.focus()
+        return
+      }
       if (event.key !== 'Escape') return
       event.preventDefault()
       if (confirming) return
@@ -67,6 +73,14 @@ export function ConfirmDialog({
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [confirming])
+
+  useEffect(() => {
+    if (confirming) {
+      dialogRef.current?.focus()
+    } else if (document.activeElement === dialogRef.current) {
+      cancelButtonRef.current?.focus()
+    }
   }, [confirming])
 
   return (
@@ -80,11 +94,14 @@ export function ConfirmDialog({
       }}
     >
       <section
+        ref={dialogRef}
         className={styles.dialog}
         role="alertdialog"
         aria-modal="true"
+        aria-busy={confirming ? 'true' : undefined}
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
+        tabIndex={-1}
       >
         <div className={styles.body}>
           <h2 id={titleId}>{title}</h2>
@@ -94,6 +111,9 @@ export function ConfirmDialog({
               {errorMessage}
             </p>
           ) : null}
+          <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+            {confirming ? `${confirmingLabel} Please wait.` : ''}
+          </p>
         </div>
         <div className={styles.actions}>
           <button

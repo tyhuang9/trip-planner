@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ConfirmDialog } from './ConfirmDialog'
@@ -27,9 +27,16 @@ function renderDialog({ confirming = false } = {}) {
 describe('<ConfirmDialog>', () => {
   it('keeps the dialog open when Cancel is activated while confirming', async () => {
     const { onCancel, onConfirm, rerender } = renderDialog({ confirming: true })
+    const dialog = screen.getByRole('alertdialog', { name: 'Delete activity?' })
 
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Deleting...' })).toBeDisabled()
+    expect(dialog).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByRole('status')).toHaveTextContent('Deleting... Please wait.')
+    await waitFor(() => expect(dialog).toHaveFocus())
+
+    await userEvent.tab()
+    expect(dialog).toHaveFocus()
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     await userEvent.click(screen.getByRole('button', { name: 'Deleting...' }))
@@ -46,6 +53,7 @@ describe('<ConfirmDialog>', () => {
       />,
     )
 
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus())
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(onCancel).toHaveBeenCalledTimes(1)
   })

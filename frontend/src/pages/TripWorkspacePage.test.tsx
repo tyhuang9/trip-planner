@@ -1198,6 +1198,9 @@ describe('<TripWorkspacePage>', () => {
 
     expect(within(confirmation).getByRole('button', { name: /^cancel$/i })).toBeDisabled()
     expect(within(confirmation).getByRole('button', { name: 'Removing...' })).toBeDisabled()
+    await waitFor(() => expect(confirmation).toHaveFocus())
+    await userEvent.tab()
+    expect(confirmation).toHaveFocus()
     await userEvent.click(within(confirmation).getByRole('button', { name: /^cancel$/i }))
     fireEvent.keyDown(document, { key: 'Escape' })
     fireEvent.mouseDown(confirmation.parentElement!)
