@@ -15,6 +15,10 @@ LOG_FILE="$RUNTIME_DIR/backend.log"
 LOCK_DIR="$RUNTIME_DIR/backend.lock"
 EXPECTED_COMMAND="/bin/bash $SCRIPT_PATH run"
 STATE_TMP=""
+PENDING_PID=""
+PENDING_PGID=""
+PENDING_BIRTH_TOKEN=""
+PENDING_COMMAND_FINGERPRINT=""
 
 fail() {
   echo "$1" >&2
@@ -49,14 +53,22 @@ process_birth_token() {
   ps -o lstart= -p "$1" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
 }
 
-owned_process_group() {
+process_group_matches_identity() {
+  local expected_pid="$1" expected_pgid="$2" expected_birth="$3" expected_command="$4"
   local actual_pgid actual_birth actual_command
-  actual_pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d '[:space:]')" || return 1
-  actual_birth="$(process_birth_token "$pid")" || return 1
-  actual_command="$(ps -o command= -p "$pid" 2>/dev/null)" || return 1
-  [[ "$actual_pgid" == "$pid" && "$pgid" == "$pid" && "$actual_birth" == "$birth_token" \
-    && "$actual_command" == "$command_fingerprint" && "$actual_command" == "$EXPECTED_COMMAND" ]] || return 1
-  ps -o pid= -g "$pgid" 2>/dev/null | grep -Eq "^[[:space:]]*$pid[[:space:]]*$"
+  [[ "$expected_pid" =~ ^[1-9][0-9]*$ && "$expected_pgid" == "$expected_pid" \
+    && -n "$expected_birth" && "$expected_command" == "$EXPECTED_COMMAND" ]] || return 1
+  actual_pgid="$(ps -o pgid= -p "$expected_pid" 2>/dev/null | tr -d '[:space:]')" || return 1
+  actual_birth="$(process_birth_token "$expected_pid")" || return 1
+  actual_command="$(ps -o command= -p "$expected_pid" 2>/dev/null)" || return 1
+  [[ "$actual_pgid" == "$expected_pgid" && "$actual_birth" == "$expected_birth" \
+    && "$actual_command" == "$expected_command" ]] || return 1
+  ps -o pid= -g "$expected_pgid" 2>/dev/null \
+    | grep -Eq "^[[:space:]]*${expected_pid}[[:space:]]*$"
+}
+
+owned_process_group() {
+  process_group_matches_identity "$pid" "$pgid" "$birth_token" "$command_fingerprint"
 }
 
 process_exists() {
@@ -64,7 +76,8 @@ process_exists() {
 }
 
 group_has_processes() {
-  ps -o pid= -g "$pgid" 2>/dev/null | grep -q '[0-9]'
+  local group_id="${1:-$pgid}"
+  ps -o pid= -g "$group_id" 2>/dev/null | grep -q '[0-9]'
 }
 
 finish_stop() {
@@ -77,12 +90,73 @@ release_lock() {
   rmdir "$LOCK_DIR" 2>/dev/null || true
 }
 
+clear_pending_launch() {
+  PENDING_PID=""
+  PENDING_PGID=""
+  PENDING_BIRTH_TOKEN=""
+  PENDING_COMMAND_FINGERPRINT=""
+}
+
+pending_launch_is_published() {
+  [[ -n "$PENDING_PID" && -f "$STATE_FILE" ]] || return 1
+  read_state || return 1
+  [[ "$pid" == "$PENDING_PID" && "$pgid" == "$PENDING_PGID" \
+    && "$birth_token" == "$PENDING_BIRTH_TOKEN" \
+    && "$command_fingerprint" == "$PENDING_COMMAND_FINGERPRINT" ]]
+}
+
+cleanup_pending_launch() {
+  [[ -n "$PENDING_PID" ]] || return 0
+  if pending_launch_is_published; then
+    clear_pending_launch
+    return 0
+  fi
+  if ! process_group_matches_identity \
+      "$PENDING_PID" "$PENDING_PGID" "$PENDING_BIRTH_TOKEN" "$PENDING_COMMAND_FINGERPRINT"; then
+    echo "Refusing to terminate an unverified pending backend process group (PID $PENDING_PID)." >&2
+    return 0
+  fi
+
+  kill -TERM -- "-$PENDING_PGID" 2>/dev/null || true
+  for _ in {1..30}; do
+    if ! group_has_processes "$PENDING_PGID"; then
+      clear_pending_launch
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  if ! process_group_matches_identity \
+      "$PENDING_PID" "$PENDING_PGID" "$PENDING_BIRTH_TOKEN" "$PENDING_COMMAND_FINGERPRINT"; then
+    echo "Refusing to send KILL to an unverified pending backend process group (PID $PENDING_PID)." >&2
+    return 0
+  fi
+  kill -KILL -- "-$PENDING_PGID" 2>/dev/null || true
+  for _ in {1..10}; do
+    if ! group_has_processes "$PENDING_PGID"; then
+      clear_pending_launch
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "Could not confirm that pending backend process group $PENDING_PGID stopped after KILL." >&2
+}
+
+handle_exit() {
+  local status=$?
+  trap - EXIT
+  set +e
+  cleanup_pending_launch
+  release_lock
+  exit "$status"
+}
+
 acquire_lock() {
   mkdir -p "$RUNTIME_DIR"
   chmod 700 "$RUNTIME_DIR"
   mkdir "$LOCK_DIR" 2>/dev/null \
     || fail "Another backend lifecycle command is running, or $LOCK_DIR is stale. Remove it only after confirming no startback/stopback command is active."
-  trap release_lock EXIT
+  trap handle_exit EXIT
 }
 
 publish_state() {
@@ -125,7 +199,11 @@ start() {
   chmod 600 "$LOG_FILE"
   perl -MPOSIX=setsid -e 'POSIX::setsid() or die "setsid: $!"; exec @ARGV' \
     /bin/bash "$SCRIPT_PATH" run >>"$LOG_FILE" 2>&1 &
-  pid=$!
+  PENDING_PID=$!
+  PENDING_PGID="$PENDING_PID"
+  PENDING_COMMAND_FINGERPRINT="$EXPECTED_COMMAND"
+  PENDING_BIRTH_TOKEN="$(process_birth_token "$PENDING_PID")" || PENDING_BIRTH_TOKEN=""
+  pid="$PENDING_PID"
   pgid=""
   birth_token=""
   command_fingerprint=""
@@ -133,12 +211,18 @@ start() {
     pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
     birth_token="$(process_birth_token "$pid")"
     command_fingerprint="$(ps -o command= -p "$pid" 2>/dev/null)"
-    [[ "$pgid" == "$pid" && -n "$birth_token" && "$command_fingerprint" == "$EXPECTED_COMMAND" ]] && break
+    if [[ -z "$PENDING_BIRTH_TOKEN" && -n "$birth_token" ]]; then
+      PENDING_BIRTH_TOKEN="$birth_token"
+    fi
+    [[ "$pgid" == "$pid" && -n "$birth_token" && "$birth_token" == "$PENDING_BIRTH_TOKEN" \
+      && "$command_fingerprint" == "$EXPECTED_COMMAND" ]] && break
     sleep 0.05
   done
-  [[ "$pgid" == "$pid" && -n "$birth_token" && "$command_fingerprint" == "$EXPECTED_COMMAND" ]] \
+  [[ "$pgid" == "$pid" && -n "$birth_token" && "$birth_token" == "$PENDING_BIRTH_TOKEN" \
+    && "$command_fingerprint" == "$EXPECTED_COMMAND" ]] \
     || fail "Backend identity could not be verified before publishing state; see $LOG_FILE."
   publish_state
+  clear_pending_launch
   echo "Backend started (PID $pid; log: $LOG_FILE)."
 }
 

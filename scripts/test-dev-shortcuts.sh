@@ -10,8 +10,10 @@ BACKEND_SCRIPT="$TEST_ROOT/scripts/backend.sh"
 STATE_FILE="$TEST_ROOT/.dupert/runtime/backend.state"
 FAKE_LOG="$TEST_TEMP/commands.log"
 FAKE_STOPPED="$TEST_TEMP/stopped"
+FAKE_LAUNCH_PID="$TEST_TEMP/launch-pid"
 FAKE_BIRTH_TOKEN='Fri Jul 24 12:34:56 2026'
 EXPECTED_COMMAND="/bin/bash $BACKEND_SCRIPT run"
+REAL_MV="$(command -v mv)"
 trap 'rm -rf "$TEST_TEMP"' EXIT
 
 mkdir -p "$TEST_ROOT/scripts" "$TEST_ROOT/backend" "$FAKE_BIN"
@@ -28,6 +30,9 @@ if [[ -n "${FAKE_STALE_ONCE:-}" && ! -f "${FAKE_STALE_FLAG:?}" ]]; then
 fi
 if [[ "$*" == *"-p"* ]]; then
   candidate_pid="${*: -1}"
+  if [[ ! -s "${FAKE_LAUNCH_PID:?}" ]]; then
+    printf '%s\n' "$candidate_pid" >"$FAKE_LAUNCH_PID"
+  fi
   if [[ "$*" == *"pgid="* ]]; then
     count=0
     [[ -f "${FAKE_PRESETSID_COUNTER:?}" ]] && read -r count <"$FAKE_PRESETSID_COUNTER"
@@ -42,7 +47,11 @@ if [[ "$*" == *"-p"* ]]; then
     if [[ -f "${FAKE_STATE:?}" ]]; then awk -F= '/^pid=/{print $2}' "$FAKE_STATE"; else echo "$candidate_pid"; fi
   else echo "${FAKE_COMMAND:?}"; fi
 elif [[ ! -f "${FAKE_STOPPED:?}" ]]; then
-  awk -F= '/^pid=/{print $2}' "${FAKE_STATE:?}"
+  if [[ -f "${FAKE_STATE:?}" ]]; then
+    awk -F= '/^pid=/{print $2}' "$FAKE_STATE"
+  elif [[ -f "${FAKE_LAUNCH_PID:?}" ]]; then
+    cat "$FAKE_LAUNCH_PID"
+  fi
 fi
 EOF
 cat >"$FAKE_BIN/perl" <<'EOF'
@@ -64,7 +73,16 @@ cat >"$FAKE_BIN/sleep" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
-chmod +x "$FAKE_BIN/ps" "$FAKE_BIN/perl" "$FAKE_BIN/kill" "$FAKE_BIN/sleep"
+cat >"$FAKE_BIN/mv" <<'EOF'
+#!/usr/bin/env bash
+destination="${!#}"
+if [[ "${FAKE_FAIL_STATE_PUBLISH:-false}" == "true" && "$destination" == "${FAKE_STATE:?}" ]]; then
+  echo "Injected backend state publication failure." >&2
+  exit 73
+fi
+exec "${FAKE_REAL_MV:?}" "$@"
+EOF
+chmod +x "$FAKE_BIN/ps" "$FAKE_BIN/perl" "$FAKE_BIN/kill" "$FAKE_BIN/sleep" "$FAKE_BIN/mv"
 
 assert_contains() { grep -Fq "$2" "$1" || { echo "Expected $1 to contain: $2" >&2; exit 1; }; }
 wait_for_perl() {
@@ -81,15 +99,32 @@ capture_failure() {
 }
 backend() {
   PATH="$FAKE_BIN:$PATH" FAKE_LOG="$FAKE_LOG" FAKE_STOPPED="$FAKE_STOPPED" FAKE_STATE="$STATE_FILE" FAKE_STALE_FLAG="$TEST_TEMP/stale" \
+    FAKE_LAUNCH_PID="$FAKE_LAUNCH_PID" FAKE_REAL_MV="$REAL_MV" \
     FAKE_PRESETSID_COUNT="${FAKE_PRESETSID_COUNT_OVERRIDE:-0}" FAKE_PRESETSID_COUNTER="$TEST_TEMP/presetsid-count" \
     FAKE_CURRENT_BIRTH="${FAKE_BIRTH_OVERRIDE:-$FAKE_BIRTH_TOKEN}" \
     FAKE_TERM_STOPS="${FAKE_TERM_STOPS_OVERRIDE:-true}" FAKE_KILL_RACE="${FAKE_KILL_RACE_OVERRIDE:-false}" \
+    FAKE_FAIL_STATE_PUBLISH="${FAKE_FAIL_STATE_PUBLISH_OVERRIDE:-false}" \
     FAKE_COMMAND="${FAKE_COMMAND_OVERRIDE:-$EXPECTED_COMMAND}" /bin/bash "$BACKEND_SCRIPT" "$@"
 }
 write_state() {
   mkdir -p "${STATE_FILE%/*}"
   printf 'version=1\nroot_dir=%s\npid=%s\npgid=%s\nbirth_token=%s\ncommand_fingerprint=%s\n' \
     "$TEST_ROOT" "$1" "$1" "$FAKE_BIRTH_TOKEN" "$EXPECTED_COMMAND" >"$STATE_FILE"
+}
+assert_failed_launch_cleanup() {
+  local launch_pid
+  [[ -s "$FAKE_LAUNCH_PID" ]] || { echo "Failed start did not record its launched PID." >&2; exit 1; }
+  launch_pid="$(<"$FAKE_LAUNCH_PID")"
+  grep -Fxq "kill -TERM -- -$launch_pid" "$FAKE_LOG" \
+    || { echo "Failed start did not terminate its verified pending process group." >&2; exit 1; }
+  [[ -f "$FAKE_STOPPED" ]] || { echo "Failed start left its fake process group running." >&2; exit 1; }
+  [[ ! -f "$STATE_FILE" ]] || { echo "Failed start left published backend state." >&2; exit 1; }
+  if compgen -G "$TEST_ROOT/.dupert/runtime/backend.state.*" >/dev/null; then
+    echo "Failed start left temporary backend state." >&2
+    exit 1
+  fi
+  [[ ! -d "$TEST_ROOT/.dupert/runtime/backend.lock" ]] \
+    || { echo "Failed start did not release the lifecycle lock." >&2; exit 1; }
 }
 
 bash -n "$BACKEND_SCRIPT"
@@ -114,7 +149,21 @@ capture_failure backend start
 [[ ! -s "$FAKE_LOG" ]] || { echo "Concurrent start reached the launcher." >&2; exit 1; }
 rmdir "$TEST_ROOT/.dupert/runtime/backend.lock"
 
-rm -f "$TEST_TEMP/presetsid-count"
+rm -f "$STATE_FILE" "$FAKE_STOPPED" "$FAKE_LAUNCH_PID" "$TEST_TEMP/presetsid-count"; : >"$FAKE_LOG"
+FAKE_PRESETSID_COUNT_OVERRIDE=100 capture_failure backend start
+[[ "$LAST_OUTPUT" == *"Backend identity could not be verified before publishing state"* ]] \
+  || { echo "$LAST_OUTPUT" >&2; exit 1; }
+[[ "$(<"$TEST_TEMP/presetsid-count")" -eq 100 ]] \
+  || { echo "Identity failure did not exhaust the verification window." >&2; exit 1; }
+assert_failed_launch_cleanup
+
+rm -f "$STATE_FILE" "$FAKE_STOPPED" "$FAKE_LAUNCH_PID" "$TEST_TEMP/presetsid-count"; : >"$FAKE_LOG"
+FAKE_FAIL_STATE_PUBLISH_OVERRIDE=true capture_failure backend start
+[[ "$LAST_OUTPUT" == *"Injected backend state publication failure"* ]] \
+  || { echo "$LAST_OUTPUT" >&2; exit 1; }
+assert_failed_launch_cleanup
+
+rm -f "$FAKE_STOPPED" "$FAKE_LAUNCH_PID" "$TEST_TEMP/presetsid-count"; : >"$FAKE_LOG"
 FAKE_PRESETSID_COUNT_OVERRIDE=2 backend start >/dev/null
 [[ -f "$STATE_FILE" ]] || { echo "Start did not create state." >&2; exit 1; }
 wait_for_perl
