@@ -73,7 +73,7 @@ describe('<RequireAuth>', () => {
     renderWithAuth(
       '/protected',
       makeAuth({
-        authStatus: 'restoring',
+        authStatus: 'unauthenticated',
         isInitializing: true,
         isAuthenticated: false,
       }),
