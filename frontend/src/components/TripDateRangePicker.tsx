@@ -220,8 +220,11 @@ export function TripDateRangePicker({
   useLayoutEffect(() => {
     if (!isOpen) return
     const initialFocus =
-      panelRef.current?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]') ??
-      panelRef.current?.querySelector<HTMLButtonElement>('button:not([disabled])')
+      panelRef.current?.querySelector<HTMLButtonElement>(
+        '[role="grid"] button[aria-pressed="true"]:not(:disabled)',
+      ) ?? panelRef.current?.querySelector<HTMLButtonElement>(
+        '[role="grid"] button:not(:disabled)',
+      )
     initialFocus?.focus({ preventScroll: true })
   }, [isOpen])
 
