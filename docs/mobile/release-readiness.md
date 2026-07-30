@@ -84,7 +84,7 @@ a real macOS builder produces reproducible evidence.
 | Authentication and guest sessions | BLOCKED | Unassigned | Issue #64 templates are TEMPLATE / NOT EVIDENCE; physical iPhone and Android ADR and smoke evidence is unexecuted |
 | Maps | BLOCKED | Unassigned | Depends on issue #66 renderer ADR and restricted-key evidence |
 | Universal/App Links | BLOCKED | Unassigned | Issue #67 code policy is implemented, but acceptance remains blocked on issue #64 ADR, deployed `/.well-known` association files, Apple Team ID, Android SHA-256 fingerprints, and signed physical-device cold/warm evidence |
-| Privacy and store metadata | BLOCKED | Unassigned | Privacy audit, declarations, policy/support URLs, disclosures, review data, and screenshots are not recorded |
+| Privacy and store metadata | BLOCKED | Unassigned | App-owned manifest source contract passes, but Xcode archive privacy report + App Store Connect reconciliation, vendor manifests, disclosures, review data, and screenshots are not recorded |
 | Device install smoke | BLOCKED | Unassigned | Issue #64 device-spike template is TEMPLATE / NOT EVIDENCE; no signed iOS and Android installs or member/guest staging smoke evidence recorded |
 | Backward compatibility and rollback | BLOCKED | Unassigned | Previous-version compatibility and rollback drill are not recorded |
 | Monitoring and ownership | BLOCKED | Unassigned | Release owners, monitoring links, escalation path, and go/no-go approver are not assigned |
