@@ -115,11 +115,14 @@ change the deployed exact allowlist and tests—never broaden it with a wildcard
 ## Target boundaries
 
 Native entry aliases omit the browser AppAccessGate, Vercel Speed Insights, and
-the browser Google Maps renderer/loader. Until issue #66 selects and verifies a
-native renderer, the native target exposes an accessible map-evaluation state
-and keeps the itinerary usable. Every `build:native:*` command runs an artifact
-scan that rejects service-worker registration, browser Maps, AppAccessGate
-configuration, analytics, and configured browser-value leakage.
+the browser Google Maps renderer/loader. They instead load the native-only
+`TripMapSurface.native.tsx` renderer through `nativeGoogleMapsBridge.ts`, backed
+by the iOS and Android Google Maps SDKs. This checked-in implementation and its
+automated tests are not issue #66 ADR, restricted-key, signed-artifact, or
+physical-device evidence; the Maps release gate remains blocked. Every
+`build:native:*` command runs an artifact scan that rejects service-worker
+registration, browser Maps, AppAccessGate configuration, analytics, and
+configured browser-value leakage.
 
 The platform facade owns foreground/background lifecycle subscription. Native
 builds subscribe through the Capacitor App plugin; callers must use this facade
@@ -169,10 +172,12 @@ process.
 
 ## Deferred native qualification
 
-This issue deliberately does not add Apple Team/distribution signing, Android
-release signing fingerprints, Maps key restrictions, App/Universal Links,
-association files, privacy/support/deletion URLs, permissions, native
-HTTP/cookie/storage changes, or a native Maps renderer. iOS simulator/unsigned
-build and Android compile/emulator qualification are manual checks when those
-toolchains are available; physical-device qualification belongs to the later
-issues named in the mobile-foundation sequence.
+This source contract deliberately does not add Apple Team/distribution signing,
+Android release signing fingerprints, Maps key restrictions, App/Universal
+Links, association files, privacy/support/deletion URLs, permissions, native
+HTTP/cookie/storage changes, or a claim that the native Maps renderer is
+release-qualified. The renderer and bridge exist, but their issue #66 ADR,
+restricted-key, signed-artifact, and physical-device evidence remains deferred.
+iOS simulator/unsigned build and Android compile/emulator qualification do not
+replace the physical-device qualification required by the later issues in the
+mobile-foundation sequence.
