@@ -1,10 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router'
 import { AuthContext, type AuthContextValue } from '../auth/authContextValue'
 import AcceptInvitePage from './AcceptInvitePage'
-import { putDeepLinkHandoff, __resetDeepLinkVaultForTests } from '../deep-links/vault'
+import {
+  getDeepLinkHandoff,
+  putDeepLinkHandoff,
+  __resetDeepLinkVaultForTests,
+} from '../deep-links/vault'
 import { DeepLinkRouteFocus } from '../deep-links/DeepLinkRouteFocus'
 import { __resetDeepLinkRouteFocusForTests } from '../deep-links/routeFocusRequest'
 
@@ -59,11 +63,20 @@ function renderInvite(ctx: AuthContextValue) {
   )
 }
 
+function RouteChangeButton({ to }: { to: string }) {
+  const navigate = useNavigate()
+  return <button type="button" onClick={() => navigate(to)}>Open next invite</button>
+}
+
 beforeEach(() => {
   shareMocks.mutateAsync.mockReset()
   shareMocks.isPending = false
   __resetDeepLinkVaultForTests()
   __resetDeepLinkRouteFocusForTests()
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('<AcceptInvitePage>', () => {
@@ -109,6 +122,61 @@ describe('<AcceptInvitePage>', () => {
 
     expect(screen.getByRole('link', { name: /sign in/i })).toHaveAttribute('href', `/login?return=%2Flink%2F${handoffId}`)
     expect(screen.getByRole('link', { name: /continue as guest/i })).toHaveAttribute('href', `/link/${handoffId}/guest`)
+  })
+
+  it('keeps the handoff token after its vault entry expires during an unrelated rerender', async () => {
+    let now = 1_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const handoffId = putDeepLinkHandoff({ kind: 'share', token: 'stable-token' })
+    const auth = makeAuth({ isAuthenticated: true })
+    const tree = () => (
+      <AuthContext.Provider value={auth}>
+        <MemoryRouter initialEntries={[`/link/${handoffId}`]}>
+          <Routes>
+            <Route path="/link/:handoffId" element={<AcceptInvitePage />} />
+          </Routes>
+        </MemoryRouter>
+      </AuthContext.Provider>
+    )
+    const view = render(tree())
+
+    now += 10 * 60_000 + 1
+    view.rerender(tree())
+
+    const acceptButton = screen.getByRole('button', { name: 'Accept invite' })
+    expect(acceptButton).toBeEnabled()
+    await userEvent.click(acceptButton)
+    expect(shareMocks.mutateAsync).toHaveBeenCalledWith('stable-token')
+  })
+
+  it('refreshes the snapshot when the router reuses the page for a new handoff', async () => {
+    shareMocks.mutateAsync.mockResolvedValue({
+      publicId: 'abc234def567',
+      role: 'EDITOR',
+    })
+    const firstHandoffId = putDeepLinkHandoff({ kind: 'share', token: 'first-token' })
+    const secondHandoffId = putDeepLinkHandoff({ kind: 'share', token: 'second-token' })
+    render(
+      <AuthContext.Provider value={makeAuth({ isAuthenticated: true })}>
+        <MemoryRouter initialEntries={[`/link/${firstHandoffId}`]}>
+          <RouteChangeButton to={`/link/${secondHandoffId}`} />
+          <Routes>
+            <Route path="/link/:handoffId" element={<AcceptInvitePage />} />
+            <Route path="/trips/:publicId" element={<div>Shared trip</div>} />
+          </Routes>
+        </MemoryRouter>
+      </AuthContext.Provider>,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open next invite' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Accept invite' }))
+
+    expect(shareMocks.mutateAsync).toHaveBeenCalledWith('second-token')
+    expect(getDeepLinkHandoff(firstHandoffId)).toEqual({
+      kind: 'share',
+      token: 'first-token',
+    })
+    expect(getDeepLinkHandoff(secondHandoffId)).toBeUndefined()
   })
 
   it('announces invite acceptance progress politely', () => {
