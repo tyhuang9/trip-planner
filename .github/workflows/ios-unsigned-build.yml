@@ -11,6 +11,8 @@ on:
       - 'frontend/package-lock.json'
       - 'frontend/package.json'
       - 'frontend/public/**'
+      - 'frontend/scripts/check-ios-archive-mach-o.mjs'
+      - 'frontend/scripts/check-ios-archive-mach-o.node-test.mjs'
       - 'frontend/scripts/check-native-bundle-policy.mjs'
       - 'frontend/src/**'
       - 'frontend/tsconfig*.json'
@@ -101,6 +103,13 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             archive \
             -quiet
+
+      - name: Verify archived iOS Mach-O binaries
+        shell: bash
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+        run: node scripts/check-ios-archive-mach-o.mjs "${RUNNER_TEMP}/Dupert-unsigned.xcarchive/Products/Applications/App.app"
 
       - name: Inspect unsigned Release app
         shell: bash
