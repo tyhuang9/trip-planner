@@ -85,6 +85,30 @@ function shouldSendGuestWriteHeader(config: InternalAxiosRequestConfig): boolean
  * Reset back to null when the refresh settles (success OR failure).
  */
 let refreshPromise: Promise<AuthResponse> | null = null
+let authSessionGeneration = 0
+let terminalAuthMutationCount = 0
+
+function isTerminalAuthMutationActive(): boolean {
+  return terminalAuthMutationCount > 0
+}
+
+/**
+ * Prevents refresh work from installing a session while a terminal auth
+ * mutation is pending. The generation also invalidates refreshes that began
+ * before the marker, even after a failed mutation releases it.
+ */
+export function beginTerminalAuthMutation(): () => void {
+  authSessionGeneration += 1
+  terminalAuthMutationCount += 1
+  let released = false
+
+  return () => {
+    if (released) return
+    released = true
+    terminalAuthMutationCount -= 1
+    authSessionGeneration += 1
+  }
+}
 
 export class AuthResolutionPendingError extends Error {
   constructor() {
@@ -140,8 +164,8 @@ export function withAuthSessionLock<T>(
  * a 401 from refresh must surface directly to the caller, not trigger a
  * recursive refresh.
  *
- * On success, writes the new session into the auth store; on failure
- * clears the store and rethrows.
+ * On success, writes the new session into the auth store. A refresh failure
+ * clears the current session unless a terminal auth mutation superseded it.
  *
  * IMPORTANT: this is the ONLY function in the frontend that should hit the
  * refresh endpoint. Both the response interceptor (on 401) and the
@@ -157,6 +181,10 @@ async function performRefresh(): Promise<AuthResponse> {
     useAuthStore.getState().clearSession('offline-unknown')
     throw new AuthResolutionPendingError()
   }
+  if (isTerminalAuthMutationActive()) {
+    throw new AuthResolutionPendingError()
+  }
+  const generationAtStart = authSessionGeneration
   const accessTokenAtStart = useAuthStore.getState().accessToken
   try {
     const response = await axios.post<AuthResponse>(
@@ -172,12 +200,22 @@ async function performRefresh(): Promise<AuthResponse> {
       useAuthStore.getState().clearSession('offline-unknown')
       throw new AuthResolutionPendingError()
     }
+    if (
+      isTerminalAuthMutationActive() ||
+      generationAtStart !== authSessionGeneration
+    ) {
+      throw new AuthResolutionPendingError()
+    }
     const { accessToken, expiresInSeconds, user } = response.data
     useAuthStore.getState().setSession({ accessToken, expiresInSeconds, user })
     return response.data
   } catch (err) {
     reportAmbiguousBackendFailure(err)
-    if (useAuthStore.getState().accessToken === accessTokenAtStart) {
+    if (
+      !isTerminalAuthMutationActive() &&
+      generationAtStart === authSessionGeneration &&
+      useAuthStore.getState().accessToken === accessTokenAtStart
+    ) {
       useAuthStore
         .getState()
         .clearSession(
@@ -207,6 +245,9 @@ export function refreshSession(): Promise<AuthResponse> {
     useAuthStore.getState().clearSession('offline-unknown')
     return Promise.reject(new AuthResolutionPendingError())
   }
+  if (isTerminalAuthMutationActive()) {
+    return Promise.reject(new AuthResolutionPendingError())
+  }
   if (refreshPromise === null) {
     refreshPromise = withAuthSessionLock(() => performRefresh())
       .catch((error) => {
@@ -222,7 +263,7 @@ export function refreshSession(): Promise<AuthResponse> {
   return refreshPromise
 }
 
-/** Lets logout serialize behind a refresh that started before its tombstone. */
+/** Lets terminal auth mutations serialize behind refresh work already in flight. */
 export async function waitForRefreshToSettle(): Promise<void> {
   const inFlight = refreshPromise
   if (inFlight !== null) {
@@ -329,4 +370,6 @@ apiClient.interceptors.response.use(
  */
 export function __resetRefreshSingletonForTests(): void {
   refreshPromise = null
+  authSessionGeneration = 0
+  terminalAuthMutationCount = 0
 }

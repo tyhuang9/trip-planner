@@ -51,6 +51,10 @@ export interface ChangePasswordRequest {
   newPassword: string
 }
 
+export interface DeleteAccountRequest {
+  currentPassword: string
+}
+
 export interface PasswordResetRequest {
   email: string
 }
