@@ -33,7 +33,9 @@ async function fixture({ devices, pendingReservation, reservationOwner, state } 
   const hasValidStateShape = typeof state === 'object' && state !== null &&
     typeof state.simulatorUdid === 'string' && typeof state.bootedByShortcut === 'boolean'
   if (pendingReservation || reservationOwner !== undefined || hasValidStateShape) {
-    const owner = reservationOwner ?? state?.repositoryRoot ?? root
+    const owner = reservationOwner === 'self'
+      ? root
+      : reservationOwner ?? state?.repositoryRoot ?? root
     const reservation = join(root, '.git/dupert-ios-shortcuts', reservationName)
     await mkdir(join(root, '.git/dupert-ios-shortcuts'), { recursive: true })
     await writeFile(reservation, JSON.stringify(pendingReservation ? {
@@ -222,6 +224,42 @@ test('rejects a concurrent start reserved by another worktree', async (t) => {
   assert.notEqual(result.status, 0)
   assert.match(result.stderr, /reserved by another worktree/)
   assert.doesNotMatch(await subject.commandsRun(), /npm |npx |simctl boot /)
+})
+
+test('reports same-worktree reservation recovery when local state cannot prove ownership', async (t) => {
+  const scenarios = [
+    { name: 'missing state', state: undefined },
+    { name: 'invalid state', state: '{not json' },
+    {
+      name: 'different simulator',
+      state: {
+        simulatorUdid: '00000000-0000-0000-0000-000000000002',
+        bootedByShortcut: false,
+      },
+    },
+  ]
+
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async (scenarioTest) => {
+      const subject = await fixture({
+        devices: [iphone('Booted')],
+        reservationOwner: 'self',
+        state: scenario.state,
+      })
+      scenarioTest.after(subject.cleanup)
+
+      const result = subject.run('start')
+
+      assert.notEqual(result.status, 0)
+      assert.match(result.stderr, /This worktree holds the reservation/)
+      assert.match(result.stderr, /local state is missing, invalid, or records a different simulator/)
+      assert.match(result.stderr, /After confirming Dupert is not running/)
+      assert.match(result.stderr, /run npm run startios again/)
+      assert.doesNotMatch(result.stderr, /reserved by another worktree/)
+      assert.doesNotMatch(await subject.commandsRun(), /npm |npx |simctl boot /)
+      assert.equal(JSON.parse(await readFile(subject.reservation, 'utf8')).phase, 'owned')
+    })
+  }
 })
 
 test('stops only the recorded app and never shuts down Simulator', async (t) => {
