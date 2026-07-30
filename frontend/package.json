@@ -19,7 +19,8 @@
     "sync:native:production": "npm run build:native:production && npx cap sync",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run && node --test scripts/check-native-bundle-policy.node-test.mjs scripts/check-pwa-bundle-policy.node-test.mjs scripts/check-mobile-release-readiness.node-test.mjs scripts/check-android-data-exposure.node-test.mjs scripts/check-android-unsigned-artifact.node-test.mjs scripts/check-android-unsigned-bundle.node-test.mjs scripts/check-ios-privacy-manifest.node-test.mjs",
+    "test": "vitest run && node --test scripts/check-native-bundle-policy.node-test.mjs scripts/check-pwa-bundle-policy.node-test.mjs scripts/check-mobile-release-readiness.node-test.mjs scripts/check-android-data-exposure.node-test.mjs scripts/check-android-unsigned-artifact.node-test.mjs scripts/check-android-unsigned-bundle.node-test.mjs scripts/check-ios-privacy-manifest.node-test.mjs scripts/check-ios-archive-mach-o.node-test.mjs",
+    "test:ios-archive-mach-o": "node --test scripts/check-ios-archive-mach-o.node-test.mjs",
     "test:android-unsigned-bundle": "node --test scripts/check-android-unsigned-bundle.node-test.mjs",
     "check:android-data-exposure": "node scripts/check-android-data-exposure.mjs",
     "check:android-unsigned-artifact": "node scripts/check-android-unsigned-artifact.mjs",
@@ -28,6 +29,7 @@
     "check:native-bundle-policy": "node scripts/check-native-bundle-policy.mjs",
     "check:pwa-bundle-policy": "node scripts/check-pwa-bundle-policy.mjs",
     "check:ios-privacy-manifest": "node scripts/check-ios-privacy-manifest.mjs",
+    "check:ios-archive-mach-o": "node scripts/check-ios-archive-mach-o.mjs",
     "check:mobile-release-readiness": "npm run check:ios-privacy-manifest && git -C .. ls-files -z | node scripts/check-mobile-release-readiness.mjs --tracked-files-stdin"
   },
   "dependencies": {
