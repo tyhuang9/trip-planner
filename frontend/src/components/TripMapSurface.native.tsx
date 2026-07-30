@@ -304,6 +304,7 @@ export function TripMapSurface({
   const markerRenderRef = useRef(0)
   const routeRenderRef = useRef(0)
   const lastFitKeyRef = useRef<string | null>(null)
+  const activeRouteRequestRef = useRef<{ controller: AbortController; key: string } | null>(null)
   const nativeMapId = `trip-map-native-${useId()}`
 
   const [map, setMap] = useState<NativeGoogleMap | null>(null)
@@ -412,7 +413,12 @@ export function TripMapSurface({
   }, [destinationKey])
 
   useEffect(() => {
+    const activeRequest = activeRouteRequestRef.current
+    if (activeRequest?.key === routeGroupKey) return
+
+    activeRequest?.controller.abort()
     if (routeGroups.length === 0) {
+      activeRouteRequestRef.current = null
       queueMicrotask(() => {
         setLoadedRoutes([])
         setRouteError(null)
@@ -421,6 +427,7 @@ export function TripMapSurface({
       return
     }
     const controller = new AbortController()
+    activeRouteRequestRef.current = { controller, key: routeGroupKey }
     queueMicrotask(() => {
       setRouteLoading(true)
       setRouteError(null)
@@ -445,8 +452,12 @@ export function TripMapSurface({
       .finally(() => {
         if (!controller.signal.aborted) setRouteLoading(false)
       })
-    return () => controller.abort()
   }, [routeGroupKey, routeGroups])
+
+  useEffect(() => () => {
+    activeRouteRequestRef.current?.controller.abort()
+    activeRouteRequestRef.current = null
+  }, [])
 
   useEffect(() => {
     if (!isNativeRuntime || needsIosApiKey || !elementRef.current) return
