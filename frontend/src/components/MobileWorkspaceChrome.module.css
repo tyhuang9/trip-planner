@@ -7,6 +7,7 @@
   .chrome {
     --workspace-chrome-control-top: calc(var(--space-2) + env(safe-area-inset-top));
     --workspace-chrome-control-right: calc(var(--space-4) + env(safe-area-inset-right));
+
     display: contents;
   }
 

@@ -106,14 +106,14 @@
 
   .mapNotice {
     right: var(--space-3);
-    bottom: calc(var(--mobile-bottom-nav-height, 64px) + var(--space-3));
+    bottom: calc(var(--mobile-bottom-nav-height, calc(56px + env(safe-area-inset-bottom))) + var(--space-3));
     left: var(--space-3);
   }
 
   .routeSummary {
     top: auto;
     right: var(--space-3);
-    bottom: calc(var(--mobile-bottom-nav-height, 64px) + var(--space-3));
+    bottom: calc(var(--mobile-bottom-nav-height, calc(56px + env(safe-area-inset-bottom))) + var(--space-3));
     width: min(15rem, calc(100% - var(--space-6)));
   }
 }
