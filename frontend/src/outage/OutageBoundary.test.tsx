@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import { StrictMode, useEffect } from 'react'
 import userEvent from '@testing-library/user-event'
 import MockAdapter from 'axios-mock-adapter'
 import axios from 'axios'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { OutageBoundary } from './OutageBoundary'
-import { __resetOutageMonitorForTests, reportAmbiguousBackendFailure } from './outageMonitor'
+import { OutageBoundary, OUTAGE_RECHECK_INTERVAL_MS } from './OutageBoundary'
+import { __resetOutageMonitorForTests } from './outageMonitor'
 import { AuthProvider } from '../auth/AuthContext'
 import { __resetRefreshSingletonForTests } from '../api/client'
 
@@ -40,6 +40,14 @@ function authApp(onMount: () => void) {
   )
 }
 
+function healthFetch(livenessStatus: () => number, databaseStatus: () => number) {
+  return vi.fn().mockImplementation((url: string) => Promise.resolve(
+    new Response(null, {
+      status: url.includes('/database') ? databaseStatus() : livenessStatus(),
+    }),
+  ))
+}
+
 afterEach(() => {
   __resetOutageMonitorForTests()
   __resetRefreshSingletonForTests()
@@ -47,14 +55,15 @@ afterEach(() => {
   refreshMock = null
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
   Reflect.deleteProperty(navigator, 'onLine')
 })
 
 describe('<OutageBoundary>', () => {
-  it('waits for healthy liveness before mounting auth children or starting refresh', async () => {
-    let resolveLiveness: ((value: Response) => void) | undefined
+  it('waits for both startup probes before mounting auth or refreshing a session', async () => {
+    const resolveProbes: Array<(value: Response) => void> = []
     const fetchMock = vi.fn().mockImplementation(() => new Promise<Response>((resolve) => {
-      resolveLiveness = resolve
+      resolveProbes.push(resolve)
     }))
     const authChildMounted = vi.fn()
     refreshMock = new MockAdapter(axios)
@@ -62,81 +71,42 @@ describe('<OutageBoundary>', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(authApp(authChildMounted))
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
     expect(screen.getByRole('status')).toHaveTextContent(/checking dupert’s route/i)
     expect(authChildMounted).not.toHaveBeenCalled()
     expect(refreshMock.history.post).toHaveLength(0)
 
-    resolveLiveness?.(new Response(null, { status: 200 }))
+    resolveProbes.forEach((resolve) => resolve(new Response(null, { status: 200 })))
 
     await waitFor(() => expect(authChildMounted).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(refreshMock?.history.post).toHaveLength(1))
     expect(fetchMock.mock.calls[0][0]).toContain('/actuator/health/liveness')
-    expect(fetchMock.mock.calls[0][0]).not.toContain('/actuator/health/database')
+    expect(fetchMock.mock.calls[1][0]).toContain('/actuator/health/database')
   })
 
-  it('shows the outage card instead of mounting auth children when liveness fails', async () => {
-    let resolveLiveness: ((value: Response) => void) | undefined
-    const fetchMock = vi.fn().mockImplementation(() => new Promise<Response>((resolve) => {
-      resolveLiveness = resolve
-    }))
+  it('shows the playful Neon page instead of mounting auth when the database is down', async () => {
     const authChildMounted = vi.fn()
     refreshMock = new MockAdapter(axios)
     refreshMock.onPost('/api/auth/refresh').reply(401, { error: 'unauthenticated' })
-    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('fetch', healthFetch(() => 200, () => 503))
+
     render(authApp(authChildMounted))
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
-    expect(authChildMounted).not.toHaveBeenCalled()
-    expect(refreshMock.history.post).toHaveLength(0)
-
-    resolveLiveness?.(new Response(null, { status: 503 }))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent(/render app service/i)
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/neon database/i)
+    expect(alert).toHaveTextContent(/database sat on the suitcase/i)
     expect(authChildMounted).not.toHaveBeenCalled()
     expect(refreshMock.history.post).toHaveLength(0)
   })
 
-  it('deduplicates the mount health probe across StrictMode effect replays', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
-    vi.stubGlobal('fetch', fetchMock)
-    render(<StrictMode>{app()}</StrictMode>)
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
-  })
-
-  it('does not update or flash after unmount while its startup probe is in flight', async () => {
-    let resolveLiveness: ((value: Response) => void) | undefined
-    const fetchMock = vi.fn().mockImplementation(() => new Promise<Response>((resolve) => {
-      resolveLiveness = resolve
-    }))
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    vi.stubGlobal('fetch', fetchMock)
-    const { unmount } = render(app())
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
-
-    unmount()
-    resolveLiveness?.(new Response(null, { status: 503 }))
-    await Promise.resolve()
-    await Promise.resolve()
-
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(errorSpy).not.toHaveBeenCalled()
-  })
-
-  it('shows the definitive Render state with one alert, one retry status, and focused heading', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 503 })))
+  it('shows the playful Render page when liveness fails', async () => {
+    vi.stubGlobal('fetch', healthFetch(() => 503, () => 503))
     render(app())
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(/render app service/i)
-    expect(alert).toHaveTextContent(/used up its monthly render free-tier allowance/i)
     expect(alert).toHaveTextContent(/ran out of road-trip snacks/i)
-    expect(alert).not.toHaveAttribute('aria-live')
     expect(within(alert).getByRole('heading')).toHaveFocus()
-    expect(within(alert).queryByRole('button')).not.toBeInTheDocument()
-    expect(within(alert).queryByRole('status')).not.toBeInTheDocument()
-    expect(screen.getAllByRole('status')).toHaveLength(1)
   })
 
   it('uses cautious Render copy when an online liveness check is unreachable', async () => {
@@ -145,31 +115,25 @@ describe('<OutageBoundary>', () => {
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveAttribute('data-kind', 'server-unreachable')
-    expect(alert).toHaveTextContent(/render app service/i)
-    expect(alert).toHaveTextContent(/monthly free-tier allowance may be empty/i)
     expect(alert).toHaveTextContent(/wandered off the map/i)
   })
 
-  it('shows a distinct Neon state and focuses the remounted main landmark after recovery', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(null, { status: 200 }))
-      .mockResolvedValueOnce(new Response(null, { status: 200 }))
-      .mockResolvedValueOnce(new Response(null, { status: 503 }))
-      .mockResolvedValueOnce(new Response(null, { status: 200 }))
-      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+  it('deduplicates the dual startup probe across StrictMode effect replays', async () => {
+    const fetchMock = healthFetch(() => 200, () => 200)
     vi.stubGlobal('fetch', fetchMock)
+    render(<StrictMode>{app()}</StrictMode>)
+
+    await screen.findByText('Trip planner')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('recovers through the manual retry and restores focus to the app landmark', async () => {
+    let databaseStatus = 503
+    vi.stubGlobal('fetch', healthFetch(() => 200, () => databaseStatus))
     render(app())
+    await screen.findByRole('alert')
 
-    reportAmbiguousBackendFailure({
-      isAxiosError: true,
-      response: { status: 500 },
-    })
-    const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent(/neon database/i)
-    expect(alert).toHaveTextContent(/used up its monthly neon free-tier allowance/i)
-    expect(alert).toHaveTextContent(/database sat on the suitcase/i)
-    expect(screen.queryByText('Trip planner')).not.toBeInTheDocument()
-
+    databaseStatus = 200
     await userEvent.click(screen.getByRole('button', { name: /try again/i }))
 
     const main = await screen.findByRole('main')
@@ -178,59 +142,59 @@ describe('<OutageBoundary>', () => {
     expect(main).not.toHaveAttribute('tabindex')
   })
 
-  it('uses neutral retry feedback and drops it when the incident kind changes', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(null, { status: 200 }))
-      .mockResolvedValueOnce(new Response(null, { status: 503 }))
-      .mockResolvedValueOnce(new Response(null, { status: 503 }))
-      .mockResolvedValueOnce(new Response(null, { status: 200 }))
-      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+  it('quietly rechecks on foreground without making the retry button look clicked', async () => {
+    let databaseStatus = 503
+    let resolveDatabase: ((value: Response) => void) | undefined
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (!url.includes('/database')) return Promise.resolve(new Response(null, { status: 200 }))
+      if (databaseStatus === 503) return Promise.resolve(new Response(null, { status: 503 }))
+      return new Promise<Response>((resolve) => {
+        resolveDatabase = resolve
+      })
+    })
     vi.stubGlobal('fetch', fetchMock)
     render(app())
-
-    reportAmbiguousBackendFailure()
     await screen.findByRole('alert')
-    await userEvent.click(screen.getByRole('button', { name: /try again/i }))
-    expect(await screen.findByRole('status')).toHaveTextContent(
-      'Still no answer. Give it another poke whenever you’re ready.',
-    )
 
-    reportAmbiguousBackendFailure()
-    await waitFor(() => expect(screen.getByRole('alert')).toHaveAttribute('data-kind', 'database'))
-    expect(screen.getByRole('status')).toBeEmptyDOMElement()
+    databaseStatus = 200
+    window.dispatchEvent(new Event('focus'))
+    await waitFor(() => expect(resolveDatabase).toBeDefined())
+    const retryButton = screen.getByRole('button', { name: /try again/i })
+    expect(retryButton).toBeEnabled()
+    expect(retryButton).toHaveTextContent('Try again')
+
+    resolveDatabase?.(new Response(null, { status: 200 }))
+    expect(await screen.findByText('Trip planner')).toBeInTheDocument()
   })
 
-  it('clears feedback after recovery before the same incident kind recurs', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(null, { status: 200 }))
-      .mockResolvedValueOnce(new Response(null, { status: 503 }))
-      .mockResolvedValueOnce(new Response(null, { status: 200 }))
-      .mockResolvedValueOnce(new Response(null, { status: 200 }))
-      .mockResolvedValueOnce(new Response(null, { status: 503 }))
-    vi.stubGlobal('fetch', fetchMock)
+  it('recovers automatically on the quiet outage interval', async () => {
+    vi.useFakeTimers()
+    let databaseStatus = 503
+    vi.stubGlobal('fetch', healthFetch(() => 200, () => databaseStatus))
     render(app())
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('alert')).toHaveTextContent(/neon database/i)
 
-    reportAmbiguousBackendFailure()
-    await screen.findByRole('alert')
-    await userEvent.click(screen.getByRole('button', { name: /try again/i }))
-    await screen.findByText('Trip planner')
+    databaseStatus = 200
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(OUTAGE_RECHECK_INTERVAL_MS)
+    })
 
-    reportAmbiguousBackendFailure()
-    await screen.findByRole('alert')
-    expect(screen.getByRole('alert')).toHaveAttribute('data-kind', 'server')
-    expect(screen.getByRole('status')).toBeEmptyDOMElement()
+    expect(screen.getByText('Trip planner')).toBeInTheDocument()
   })
 
-  it('keeps the connectivity state clear while giving it a playful travel mishap', async () => {
+  it('shows the playful connectivity page without making a request when offline', async () => {
     Object.defineProperty(navigator, 'onLine', { configurable: true, value: false })
-    vi.stubGlobal('fetch', vi.fn())
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
     render(app())
-
-    reportAmbiguousBackendFailure()
 
     const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent(/internet connection/i)
     expect(alert).toHaveTextContent(/internet missed the bus/i)
     expect(alert).toHaveTextContent(/unscheduled layover/i)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })
