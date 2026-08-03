@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { CloudOff, DatabaseZap, RefreshCw, WifiOff } from 'lucide-react'
+import { subscribeToAppLifecycle } from '../platform/runtime'
 import { checkHealth, checkStartupHealth, subscribeToOutage, type OutageKind } from './outageMonitor'
 import styles from './OutageBoundary.module.css'
 
 interface OutageBoundaryProps {
   children: ReactNode
 }
+
+export const OUTAGE_RECHECK_INTERVAL_MS = 15_000
 
 const COPY: Record<OutageKind, {
   title: string
@@ -52,6 +55,13 @@ export function OutageBoundary({ children }: OutageBoundaryProps) {
   const headingRef = useRef<HTMLHeadingElement>(null)
   const previousOutageRef = useRef<OutageKind | null>(null)
   const isMountedRef = useRef(false)
+  const recheckHealth = useCallback(() => {
+    void checkHealth().then((result) => {
+      if (isMountedRef.current && result === null) {
+        setHasPassedStartupHealth(true)
+      }
+    })
+  }, [])
 
   useEffect(() => subscribeToOutage((next) => {
     setRetryFeedback(null)
@@ -70,6 +80,29 @@ export function OutageBoundary({ children }: OutageBoundaryProps) {
       isMountedRef.current = false
     }
   }, [])
+
+  useEffect(() => {
+    const unsubscribe = subscribeToAppLifecycle((state) => {
+      if (state === 'foreground') recheckHealth()
+    })
+
+    window.addEventListener('online', recheckHealth)
+    return () => {
+      unsubscribe()
+      window.removeEventListener('online', recheckHealth)
+    }
+  }, [recheckHealth])
+
+  useEffect(() => {
+    if (outage === null) return
+
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return
+      recheckHealth()
+    }, OUTAGE_RECHECK_INTERVAL_MS)
+
+    return () => window.clearInterval(interval)
+  }, [outage, recheckHealth])
 
   useEffect(() => {
     if (outage !== null) {
