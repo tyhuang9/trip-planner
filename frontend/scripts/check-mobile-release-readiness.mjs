@@ -352,6 +352,12 @@ export function inspectMobileReleaseReadiness(sources) {
     violations.push('frontend/package.json is invalid JSON')
     return violations
   }
+  const releasePreflight = frontendPackage.scripts?.['check:mobile-release-readiness']
+  for (const command of ['check:ios-native-map-source', 'check:ios-map-device-evidence']) {
+    if (typeof releasePreflight !== 'string' || !releasePreflight.includes(command)) {
+      violations.push(`mobile release preflight must run ${command}`)
+    }
+  }
 
   const capacitorPackages = ['@capacitor/core', '@capacitor/android', '@capacitor/ios']
     .map((name) => [name, frontendPackage.dependencies?.[name]])

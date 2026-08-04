@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "template_status": "UNEXECUTED",
+  "notice": "TEMPLATE / NOT EVIDENCE — immutable source; JSON results are the sole claim-bearing artifact.",
+  "copy_results_to": "docs/mobile/evidence/issue-66-ios/YYYY-MM-DD/<lowercase-run-id>/results.json",
+  "result_status_vocabulary": ["UNEXECUTED", "PASS", "FAIL", "BLOCKED", "UNVERIFIED"],
+  "platform": {
+    "name": "ios",
+    "device_type": "UNEXECUTED",
+    "is_simulator": "UNEXECUTED",
+    "commit_or_tag": "UNEXECUTED",
+    "app_version": "UNEXECUTED",
+    "platform_build": "UNEXECUTED",
+    "device_model": "UNEXECUTED",
+    "os_version": "UNEXECUTED",
+    "tooling": "UNEXECUTED",
+    "staging_environment": "UNEXECUTED",
+    "tester_owner": "UNEXECUTED",
+    "tested_at": "UNEXECUTED",
+    "artifact_identity_checksum": "UNEXECUTED"
+  },
+  "external_key_restriction": {
+    "status": "UNEXECUTED",
+    "restriction": "UNEXECUTED",
+    "safe_reference": "UNEXECUTED",
+    "redaction_notes": "UNEXECUTED"
+  },
+  "gates": [
+    { "gate_id": "native_renderer_and_restricted_key", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+    { "gate_id": "create_destroy_navigation", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+    { "gate_id": "background_resume_force_relaunch_orientation", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+    { "gate_id": "camera_markers_polylines_and_place_selection", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+    { "gate_id": "tabs_sheets_overlays_scrolling_and_gestures", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+    { "gate_id": "voiceover_and_failure_state_accessibility", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+    { "gate_id": "memory_and_map_ready_timing", "status": "UNEXECUTED", "evidence": "UNEXECUTED" },
+    { "gate_id": "missing_rejected_key_and_network_failures", "status": "UNEXECUTED", "evidence": "UNEXECUTED" }
+  ],
+  "adr_contract": {
+    "selected_renderer": "UNEXECUTED",
+    "follow_up_scope": "UNEXECUTED",
+    "decision_artifact_reference": "UNEXECUTED",
+    "allowed_renderers": ["native_google_maps_ios_qualified", "native_google_maps_ios_rejected"]
+  },
+  "redaction_policy": "UNEXECUTED",
+  "references": {
+    "runbook": "docs/mobile/ios-map-device-spike.md",
+    "adr": "docs/mobile/ios-map-renderer-adr-template.md"
+  }
+}

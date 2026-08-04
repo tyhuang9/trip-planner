@@ -58,6 +58,14 @@ test('accepts source contract and safe completed result', () => {
   assert.deepEqual(inspectMobileReleaseReadiness(tracked()), [])
 })
 
+test('requires the mobile preflight to run iOS map source and evidence checks', () => {
+  const candidate = sources()
+  candidate.frontendPackage = candidate.frontendPackage.replace(' && npm run check:ios-native-map-source', '').replace(' && npm run check:ios-map-device-evidence', '')
+  const output = messages(candidate)
+  assert.match(output, /must run check:ios-native-map-source/)
+  assert.match(output, /must run check:ios-map-device-evidence/)
+})
+
 test('rejects native identifier and version drift', () => {
   const candidate = sources()
   candidate.androidAppBuild = candidate.androidAppBuild.replace('applicationId "io.github.tyhuang9.dupert"', 'applicationId "io.github.tyhuang9.other"').replace('versionName "1.0"', 'versionName "1.1"')
