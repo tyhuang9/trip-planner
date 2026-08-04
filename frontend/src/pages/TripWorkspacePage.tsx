@@ -767,12 +767,23 @@ function buildGoogleMapsExport(activities: Activity[], scopeLabel: string): Goog
   }
 }
 
-function googleMapsUrlForPlace(place: PlaceSelection): string | null {
+function googleMapsUrlForPlace(
+  place: PlaceSelection,
+  { preferPlaceId = false }: { preferPlaceId?: boolean } = {},
+): string | null {
+  const query = place.placeName || place.title || place.address
+  if (preferPlaceId && place.placeId && query) {
+    const parameters = new URLSearchParams({
+      api: '1',
+      query,
+      query_place_id: place.placeId,
+    })
+    return `https://www.google.com/maps/search/?${parameters.toString()}`
+  }
   if (place.googleMapsUri) return place.googleMapsUri
   if (Number.isFinite(place.lat) && Number.isFinite(place.lng)) {
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${place.lat},${place.lng}`)}`
   }
-  const query = place.address || place.placeName || place.title
   return query
     ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`
     : null
@@ -2764,7 +2775,11 @@ export function TripWorkspacePage() {
     ? selectedDayHours(mapDetailPlace, selectedDay)
     : null
   const mapDetailDirectionsUrl = mapDetailPlace ? directionsUrlForPlace(mapDetailPlace) : null
-  const mapDetailGoogleMapsUrl = mapDetailPlace ? googleMapsUrlForPlace(mapDetailPlace) : null
+  const mapDetailGoogleMapsUrl = mapDetailPlace
+    ? googleMapsUrlForPlace(mapDetailPlace, {
+        preferPlaceId: selectedMapClickedActivityId !== null,
+      })
+    : null
   const mapDetailRating = mapDetailPlace ? formatPlaceRating(mapDetailPlace) : null
   const mapDetailFocusId = mapDetailPlace ? placeStableId(mapDetailPlace) : null
   const isMapDetailLoading = Boolean(mapDetailPlace?.isLoadingDetails)
@@ -3182,21 +3197,32 @@ export function TripWorkspacePage() {
 
     setIsMapSearchSubmitting(true)
     try {
-      const details = activity.placeId
-        ? googlePlaceToPlaceSelection(
+      let details: PlaceSelection | null = null
+      if (activity.placeId) {
+        try {
+          details = googlePlaceToPlaceSelection(
             await fetchGooglePlaceById({ includePhoto: true, placeId: activity.placeId }),
           )
-        : activityLocation
-          ? await fetchGooglePlaceNearLocation({
-              includePhoto: true,
-              options: {
-                location: activityLocation,
-                radius: 75,
-                rankPreference: 'DISTANCE',
-              },
-            }).then((place) => place ? googlePlaceToPlaceSelection(place) : null)
-          : null
+        } catch {
+          // The saved event metadata still provides an exact Google Maps link.
+        }
+      }
       if (mapPlaceDetailsRequestIdRef.current !== requestId) return
+
+      if (!fallbackPlace.placeId && activityLocation) {
+        const nearbyPlace = await fetchGooglePlaceNearLocation({
+          includePhoto: true,
+          options: {
+            location: activityLocation,
+            radius: 75,
+            rankPreference: 'DISTANCE',
+          },
+        })
+        if (mapPlaceDetailsRequestIdRef.current !== requestId) return
+        const nearbyDetails = nearbyPlace ? googlePlaceToPlaceSelection(nearbyPlace) : null
+        if (nearbyDetails?.placeId) details = nearbyDetails
+      }
+
       if (details) {
         setSelectedMapClickedPlace(mergeActivityPlaceSelection(activity, fallbackPlace, details))
       }

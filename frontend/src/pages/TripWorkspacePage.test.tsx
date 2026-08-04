@@ -531,6 +531,18 @@ function withoutDayDate(activity: Activity): Omit<Activity, 'dayDate'> {
   return response
 }
 
+function expectGoogleMapsPlaceLink(
+  link: HTMLElement,
+  { placeId, query }: { placeId: string; query: string },
+) {
+  const url = new URL(link.getAttribute('href') ?? '')
+  expect(url.origin).toBe('https://www.google.com')
+  expect(url.pathname).toBe('/maps/search/')
+  expect(url.searchParams.get('api')).toBe('1')
+  expect(url.searchParams.get('query')).toBe(query)
+  expect(url.searchParams.get('query_place_id')).toBe(placeId)
+}
+
 function mockWorkspace(
   activities: ActivityApiFixture[] = [],
   trip: Trip = SAMPLE_TRIP,
@@ -2770,7 +2782,10 @@ describe('<TripWorkspacePage>', () => {
     const googleMapsLink = within(selectedMapPlace).getByRole('link', {
       name: /open in google maps/i,
     })
-    expect(googleMapsLink).toHaveAttribute('href', 'https://maps.google.com/?cid=tokyo-tower')
+    expectGoogleMapsPlaceLink(googleMapsLink, {
+      placeId: 'google.tokyo-tower',
+      query: 'Tokyo Tower',
+    })
     expect(googleMapsLink).not.toHaveTextContent(/open in google maps/i)
     expect(screen.getByTestId('preview-map-place')).toHaveTextContent('none')
 
@@ -3694,10 +3709,57 @@ describe('<TripWorkspacePage>', () => {
     })
     const placeCard = await screen.findByLabelText(/selected map place/i)
     expect(within(placeCard).getByRole('heading', { name: /nearby cafe/i })).toBeInTheDocument()
-    expect(within(placeCard).getByRole('link', { name: /open in google maps/i })).toHaveAttribute(
-      'href',
-      'https://maps.google.com/?cid=nearby',
-    )
+    expectGoogleMapsPlaceLink(within(placeCard).getByRole('link', {
+      name: /open in google maps/i,
+    }), {
+      placeId: 'google.nearby-cafe',
+      query: 'Nearby Cafe',
+    })
+  })
+
+  it('uses the nearby Place ID when a coordinate-only event has no Maps URI', async () => {
+    const activity = {
+      ...SAMPLE_ACTIVITY,
+      address: 'Tsukiji, Chuo City, Tokyo',
+      lat: 35.7,
+      lng: 139.8,
+      placeName: 'Tsukiji sushi',
+    }
+    googlePlacesMockState.fetchGooglePlaceNearLocation.mockResolvedValueOnce({
+      businessStatus: 'OPERATIONAL',
+      currentOpeningHours: null,
+      displayName: 'Nearby Cafe',
+      formattedAddress: 'Nearby address',
+      googleMapsUri: null,
+      id: 'google.nearby-cafe',
+      lat: 35.7002,
+      lng: 139.8002,
+      photoUrl: null,
+      primaryType: 'cafe',
+      primaryTypeDisplayName: 'Cafe',
+      rating: 4.7,
+      regularOpeningHours: null,
+      reviews: [],
+      text: 'Nearby Cafe, Nearby address',
+      types: ['cafe'],
+      userRatingCount: 42,
+      websiteUri: null,
+    })
+    mockWorkspace([activity])
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+
+    await screen.findByTestId('trip-map')
+    await userEvent.click(screen.getByRole('button', { name: /mock activate marker/i }))
+
+    const placeCard = await screen.findByLabelText(/selected map place/i)
+    expect(within(placeCard).getByRole('heading', { name: /nearby cafe/i })).toBeInTheDocument()
+    expectGoogleMapsPlaceLink(within(placeCard).getByRole('link', {
+      name: /open in google maps/i,
+    }), {
+      placeId: 'google.nearby-cafe',
+      query: 'Nearby Cafe',
+    })
   })
 
   it('preserves the active mobile place details when a text search fails', async () => {
