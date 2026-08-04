@@ -315,23 +315,24 @@ test('unrelated release violations do not suppress device-contract violations', 
 })
 
 test('rejects an all-FAIL completed result with cookie-only selected', () => {
-  const result = completed(); const fail = (value) => { if (Array.isArray(value)) value.forEach(fail); else if (value && typeof value === 'object') { for (const [key, child] of Object.entries(value)) { if (key === 'status') value[key] = 'FAIL'; else fail(child) } } }; fail(result.platforms); assert.match(messages(tracked(result)), /must be PASS for a selected ADR decision/)
+  const result = completed(); const fail = (value) => { if (Array.isArray(value)) value.forEach(fail); else if (value && typeof value === 'object') { for (const [key, child] of Object.entries(value)) { if (key === 'status') value[key] = 'FAIL'; else fail(child) } } }; fail(result.platforms); assert.match(messages(tracked(result)), /cookie_only_proven requires every executed check to PASS/)
 })
 
-test('rejects a non-PASS required case', () => {
-  const result = completed(); result.platforms[0].contexts[0].cases[0].status = 'BLOCKED'; assert.match(messages(tracked(result)), /status must be PASS/)
+test('rejects incomplete evidence statuses', () => {
+  const result = completed(); result.platforms[0].contexts[0].cases[0].status = 'BLOCKED'; assert.match(messages(tracked(result)), /status must be PASS or FAIL/)
 })
 
-test('rejects a non-PASS offline boundary', () => {
-  const result = completed(); result.platforms[0].contexts[0].cases.find((x) => x.session_boundaries).session_boundaries[0].status = 'UNVERIFIED'; assert.match(messages(tracked(result)), /boundary status must be PASS/)
+test('rejects incomplete offline-boundary evidence', () => {
+  const result = completed(); result.platforms[0].contexts[0].cases.find((x) => x.session_boundaries).session_boundaries[0].status = 'UNVERIFIED'; assert.match(messages(tracked(result)), /boundary status must be PASS or FAIL/)
 })
 
-test('rejects a non-PASS credential lifecycle stage', () => {
-  const result = completed(); result.platforms[1].contexts[1].credential_lifecycle[0].status = 'FAIL'; assert.match(messages(tracked(result)), /lifecycle stage status must be PASS/)
+test('requires a failure before selecting native credential transport', () => {
+  const result = completed(); result.adr_contract.selected_outcome = 'native_credential_transport'; assert.match(messages(tracked(result)), /requires at least one executed FAIL/)
+  result.platforms[1].contexts[1].credential_lifecycle[0].status = 'FAIL'; assert.deepEqual(inspectMobileReleaseReadiness(tracked(result)), [])
 })
 
-test('rejects a non-PASS platform case while accepting the all-PASS control', () => {
-  assert.deepEqual(inspectMobileReleaseReadiness(tracked()), []); const result = completed(); result.platforms[1].platform_cases[0].status = 'BLOCKED'; assert.match(messages(tracked(result)), /platform case status must be PASS/)
+test('requires all checks to pass before selecting cookie-only transport', () => {
+  assert.deepEqual(inspectMobileReleaseReadiness(tracked()), []); const result = completed(); result.platforms[1].platform_cases[0].status = 'FAIL'; assert.match(messages(tracked(result)), /cookie_only_proven requires every executed check to PASS/)
 })
 
 test('rejects reset_token keyed values', () => {
