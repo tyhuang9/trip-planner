@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "template_status": "UNEXECUTED",
+  "notice": "TEMPLATE / NOT EVIDENCE — immutable source; JSON results are the sole claim-bearing artifact.",
+  "copy_results_to": "docs/mobile/evidence/ios-beta-release-readiness/YYYY-MM-DD/<lowercase-run-id>/results.json",
+  "platform": "ios",
+  "release_roles": {
+    "release_owner": "UNEXECUTED",
+    "go_no_go_approver": "UNEXECUTED",
+    "support_owner": "UNEXECUTED",
+    "monitoring_owner": "UNEXECUTED"
+  },
+  "checks": [
+    { "check_id": "auth_device_matrix_and_adr", "status": "UNEXECUTED", "restricted_evidence_reference": "UNEXECUTED", "summary": "UNEXECUTED" },
+    { "check_id": "map_renderer_and_restricted_key", "status": "UNEXECUTED", "restricted_evidence_reference": "UNEXECUTED", "summary": "UNEXECUTED" },
+    { "check_id": "universal_links_hosted_signed_and_device", "status": "UNEXECUTED", "restricted_evidence_reference": "UNEXECUTED", "summary": "UNEXECUTED" },
+    { "check_id": "signed_archive_provenance_and_install", "status": "UNEXECUTED", "restricted_evidence_reference": "UNEXECUTED", "summary": "UNEXECUTED" },
+    { "check_id": "privacy_support_deletion_and_store_metadata", "status": "UNEXECUTED", "restricted_evidence_reference": "UNEXECUTED", "summary": "UNEXECUTED" },
+    { "check_id": "previous_build_current_staging_smoke", "status": "UNEXECUTED", "restricted_evidence_reference": "UNEXECUTED", "summary": "UNEXECUTED" },
+    { "check_id": "rollback_monitoring_and_escalation", "status": "UNEXECUTED", "restricted_evidence_reference": "UNEXECUTED", "summary": "UNEXECUTED" }
+  ],
+  "go_no_go": "UNEXECUTED",
+  "redaction_policy": "UNEXECUTED",
+  "references": {
+    "runbook": "docs/mobile/ios-beta-release-readiness-runbook.md"
+  }
+}
