@@ -13,6 +13,7 @@ const GOOGLE_PLACE_DETAILS_DEFAULT_FIELDS = [
   'id',
   'displayName',
   'formattedAddress',
+  'googleMapsUri',
   'location',
   'rating',
   'types',

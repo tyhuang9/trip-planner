@@ -1477,6 +1477,11 @@
   background: var(--color-floating-surface);
   box-shadow: var(--shadow-soft);
   pointer-events: auto;
+  transition: min-height 180ms ease;
+}
+
+.placeDetailCardLoading {
+  min-height: min(24rem, 75dvh);
 }
 
 .placeDetailCardRaised {
@@ -3280,6 +3285,10 @@
     border-left: 0;
     border-radius: var(--radius-xl) var(--radius-xl) 0 0;
     background: var(--color-surface);
+  }
+
+  .workspaceShellMobileMap .placeDetailCardLoading {
+    min-height: min(calc(100dvh - 128px - env(safe-area-inset-bottom)), 24rem);
   }
 
   .workspaceShellMobileMap .placeDetailMobileControls {

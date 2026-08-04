@@ -217,6 +217,8 @@ describe('<GooglePlaceAutocomplete>', () => {
     })
     expect(GOOGLE_PLACE_DETAILS_FIELD_MASK).not.toContain('reviews')
     expect(GOOGLE_PLACE_DETAILS_WITHOUT_PHOTOS_FIELD_MASK).not.toContain('reviews')
+    expect(GOOGLE_PLACE_DETAILS_FIELD_MASK).toContain('googleMapsUri')
+    expect(GOOGLE_PLACE_DETAILS_WITHOUT_PHOTOS_FIELD_MASK).toContain('googleMapsUri')
     expect(placeDetailsCall()).toBeDefined()
 
     const photoCall = apiMock.history.post.find((request) => request.url === '/places/photo-url')

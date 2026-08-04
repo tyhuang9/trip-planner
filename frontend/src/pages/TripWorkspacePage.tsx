@@ -106,6 +106,7 @@ import { PlaceSearch } from '../components/PlaceSearch'
 import { TripDateRangePicker } from '../components/TripDateRangePicker'
 import {
   fetchGooglePlaceById,
+  fetchGooglePlaceNearLocation,
   fetchGooglePlaceTextSearch,
   googlePlaceCategoryTypeForQuery,
   type GooglePlaceTextSearchOptions,
@@ -2838,7 +2839,7 @@ export function TripWorkspacePage() {
     setMapSearchLoadMoreError(false)
   }
 
-  const closeMapSearchResults = () => {
+  const closeMapSearchResults = ({ focusSearch = true }: { focusSearch?: boolean } = {}) => {
     mapSearchRequestIdRef.current += 1
     mapTextSearchSessionRef.current = null
     setMapSearchValue('')
@@ -2852,7 +2853,7 @@ export function TripWorkspacePage() {
     setIsMapSearchSubmitting(false)
     setIsMapSearchLoadingMore(false)
     setMapSearchLoadMoreError(false)
-    if (isMobileViewport) {
+    if (isMobileViewport && focusSearch) {
       setMapSearchFocusKey((current) => (current ?? 0) + 1)
     }
   }
@@ -3165,6 +3166,9 @@ export function TripWorkspacePage() {
   const showActivityPlaceDetails = async (activity: Activity) => {
     const fallbackPlace = activityToPlaceSelection(activity)
     if (!fallbackPlace) return
+    const activityLocation = hasFiniteCoordinates(activity)
+      ? { lat: activity.lat, lng: activity.lng }
+      : null
 
     const requestId = mapPlaceDetailsRequestIdRef.current + 1
     mapPlaceDetailsRequestIdRef.current = requestId
@@ -3176,15 +3180,26 @@ export function TripWorkspacePage() {
     setCoordinateMapMarker(null)
     setPendingMapPlace(null)
 
-    if (!activity.placeId) return
-
     setIsMapSearchSubmitting(true)
     try {
-      const details = googlePlaceToPlaceSelection(
-        await fetchGooglePlaceById({ includePhoto: true, placeId: activity.placeId }),
-      )
+      const details = activity.placeId
+        ? googlePlaceToPlaceSelection(
+            await fetchGooglePlaceById({ includePhoto: true, placeId: activity.placeId }),
+          )
+        : activityLocation
+          ? await fetchGooglePlaceNearLocation({
+              includePhoto: true,
+              options: {
+                location: activityLocation,
+                radius: 75,
+                rankPreference: 'DISTANCE',
+              },
+            }).then((place) => place ? googlePlaceToPlaceSelection(place) : null)
+          : null
       if (mapPlaceDetailsRequestIdRef.current !== requestId) return
-      setSelectedMapClickedPlace(mergeActivityPlaceSelection(activity, fallbackPlace, details))
+      if (details) {
+        setSelectedMapClickedPlace(mergeActivityPlaceSelection(activity, fallbackPlace, details))
+      }
     } catch {
       if (mapPlaceDetailsRequestIdRef.current === requestId) {
         setSelectedMapClickedPlace(fallbackPlace)
@@ -3541,11 +3556,68 @@ export function TripWorkspacePage() {
   }: MapPlaceClickEvent) => {
     const normalizedPlaceId = placeId?.trim() || null
     if (!normalizedPlaceId) {
-      const markerPlace = clickedLocationToPlaceSelection(location)
-      if (!markerPlace) return
-      setCoordinateMapMarker(markerPlace)
+      const loadingPlace = loadingPlaceDetailsSelection(null, location)
+      const coordinateFallback = clickedLocationToPlaceSelection(location)
+      if (!loadingPlace || !coordinateFallback || !location) return
+
+      const requestId = mapPlaceDetailsRequestIdRef.current + 1
+      mapPlaceDetailsRequestIdRef.current = requestId
+      mapPlaceCardTimingRef.current = {
+        clickedAtIso,
+        clickedAtMs,
+        placeId: null,
+        renderedSignatures: new Set<string>(),
+        requestId,
+        traceId,
+      }
+      logPlaceDetailsTiming('frontend_details_flow_start', {
+        clickedAtIso,
+        elapsedSinceClickMs: placeDetailsElapsedMs(clickedAtMs),
+        hasPreviewPlace: true,
+        placeId: null,
+        requestId,
+        traceId,
+      })
+      setSelectedMapSearchResult(null)
+      setSelectedMapClickedPlace(loadingPlace)
+      setSelectedMapClickedActivityId(null)
+      setCoordinateMapMarker(null)
       setMapSearchPreview(null)
       setHoveredMapSearchResultId(null)
+      setActiveActivityId(null)
+      setHoveredActivityId(null)
+      setPendingMapPlace(mapLocationTarget ? loadingPlace : null)
+      setIsMapSearchSubmitting(true)
+      try {
+        const nearbyPlace = await fetchGooglePlaceNearLocation({
+          includePhoto: true,
+          options: {
+            location,
+            radius: 75,
+            rankPreference: 'DISTANCE',
+          },
+        })
+        if (mapPlaceDetailsRequestIdRef.current !== requestId) return
+        if (nearbyPlace?.id) {
+          const resolvedPlace = googlePlaceToPlaceSelection(nearbyPlace)
+          setSelectedMapClickedPlace(resolvedPlace)
+          setPendingMapPlace(mapLocationTarget ? resolvedPlace : null)
+          return
+        }
+        setSelectedMapClickedPlace(null)
+        setCoordinateMapMarker(coordinateFallback)
+        setPendingMapPlace(mapLocationTarget ? coordinateFallback : null)
+      } catch {
+        if (mapPlaceDetailsRequestIdRef.current === requestId) {
+          setSelectedMapClickedPlace(null)
+          setCoordinateMapMarker(coordinateFallback)
+          setPendingMapPlace(mapLocationTarget ? coordinateFallback : null)
+        }
+      } finally {
+        if (mapPlaceDetailsRequestIdRef.current === requestId) {
+          setIsMapSearchSubmitting(false)
+        }
+      }
       return
     }
 
@@ -3774,7 +3846,7 @@ export function TripWorkspacePage() {
 
   const closeMapPlaceDetails = () => {
     clearMapSelection()
-    closeMapSearchResults()
+    closeMapSearchResults({ focusSearch: false })
   }
 
   const handleActiveActivityChange = (activityId: number | null) => {
@@ -4097,6 +4169,7 @@ export function TripWorkspacePage() {
       setMapSearchFocusKey(undefined)
       setExpandedActivityId(null)
       clearPlaceDraft()
+      clearMapSelection()
     }
   }
 
@@ -4820,11 +4893,13 @@ export function TripWorkspacePage() {
                   <section
                     className={[
                       styles.placeDetailCard,
+                      isMapDetailLoading ? styles.placeDetailCardLoading : '',
                       !isMobileViewport && mapSearchResults.length > 0
                         ? styles.placeDetailCardRaised
                         : '',
                     ].filter(Boolean).join(' ')}
                     aria-labelledby="map-place-detail-title map-place-detail-label"
+                    aria-busy={isMapDetailLoading}
                   >
                     <span id="map-place-detail-label" className="sr-only">Selected map place</span>
                     <div className={styles.placeHero}>
@@ -4936,7 +5011,7 @@ export function TripWorkspacePage() {
                             <span className={styles.placeActionLabel}>Directions</span>
                           </a>
                         )}
-                        {mapDetailGoogleMapsUrl && (
+                        {!isMapDetailLoading && mapDetailGoogleMapsUrl && (
                           <a
                             className={styles.placeMapsAction}
                             href={mapDetailGoogleMapsUrl}
