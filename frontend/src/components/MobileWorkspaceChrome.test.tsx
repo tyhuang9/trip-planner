@@ -68,6 +68,7 @@ describe('<MobileWorkspaceChrome>', () => {
     expect(popup).toBeInTheDocument()
     expect(dialog).toContainElement(closeButton)
     expect(popup).not.toContainElement(closeButton)
+    expect(trigger).toHaveClass(styles.menuButtonHidden)
     expect(trigger).toHaveAttribute('aria-controls', 'mobile-trip-menu')
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
     await waitFor(() => {
@@ -187,10 +188,10 @@ describe('<MobileWorkspaceChrome>', () => {
     expect(brandBlock).toMatch(/width:\s*44px/)
     expect(brandBlock).toMatch(/height:\s*44px/)
     expect(popupBlock).toMatch(/position:\s*absolute/)
-    expect(popupBlock).toMatch(/top:\s*calc\(var\(--space-3\) \+ env\(safe-area-inset-top\)\)/)
-    expect(popupBlock).toMatch(/right:\s*calc\(var\(--space-3\) \+ env\(safe-area-inset-right\)\)/)
-    expect(popupBlock).toMatch(/width:\s*min\(22rem,\s*calc\(100vw - var\(--space-6\) - env\(safe-area-inset-left\) - env\(safe-area-inset-right\)\)\)/)
-    expect(popupBlock).toMatch(/max-height:\s*calc\(100dvh - 8rem - var\(--space-4\) - env\(safe-area-inset-bottom\) - var\(--space-3\) - env\(safe-area-inset-top\)\)/)
+    expect(popupBlock).toMatch(/top:\s*calc\(var\(--workspace-chrome-control-top\) - var\(--space-2\)\)/)
+    expect(popupBlock).toMatch(/right:\s*calc\(var\(--workspace-chrome-control-right\) - var\(--space-2\)\)/)
+    expect(popupBlock).toMatch(/width:\s*min\(22rem,\s*calc\(100vw - var\(--workspace-chrome-control-right\) \+ var\(--space-2\) - var\(--space-3\) - env\(safe-area-inset-left\)\)\)/)
+    expect(popupBlock).toMatch(/max-height:\s*calc\(100dvh - 8rem - var\(--space-4\) - env\(safe-area-inset-bottom\) - var\(--workspace-chrome-control-top\) \+ var\(--space-2\)\)/)
     expect(popupBlock).toMatch(/border-radius:\s*var\(--radius-xl\)/)
     expect(popupBlock).toMatch(/overflow:\s*hidden/)
     expect(popupBlock).not.toMatch(/height:\s*100dvh/)
@@ -198,7 +199,7 @@ describe('<MobileWorkspaceChrome>', () => {
     expect(actionsBlock).toMatch(/overflow-y:\s*auto/)
   })
 
-  it('overlays the full close control at the menu trigger center without moving or unclipping the popup', () => {
+  it('replaces the menu trigger while the popup provides an even control inset', () => {
     const headerBlock = cssBlocks(chromeCss, '.header')[0] ?? ''
     const dialogBlock = cssBlocks(chromeCss, '.menuDialog')[0] ?? ''
     const popupBlock = cssBlocks(chromeCss, '.menuPopup')[0] ?? ''
@@ -217,8 +218,8 @@ describe('<MobileWorkspaceChrome>', () => {
     expect(controlBlock).toMatch(/height:\s*44px/)
     expect(spacerBlock).toMatch(/width:\s*44px/)
     expect(spacerBlock).toMatch(/height:\s*44px/)
-    expect(popupBlock).toMatch(/top:\s*calc\(var\(--space-3\) \+ env\(safe-area-inset-top\)\)/)
-    expect(popupBlock).toMatch(/right:\s*calc\(var\(--space-3\) \+ env\(safe-area-inset-right\)\)/)
+    expect(popupBlock).toMatch(/top:\s*calc\(var\(--workspace-chrome-control-top\) - var\(--space-2\)\)/)
+    expect(popupBlock).toMatch(/right:\s*calc\(var\(--workspace-chrome-control-right\) - var\(--space-2\)\)/)
     expect(popupBlock).toMatch(/overflow:\s*hidden/)
     expect(popupBlock).toMatch(/pointer-events:\s*auto/)
     expect(chromeCss).toMatch(

@@ -133,7 +133,7 @@ export function MobileWorkspaceChrome({
           <button
             ref={menuTriggerRef}
             type="button"
-            className={styles.menuButton}
+            className={`${styles.menuButton}${isMenuOpen ? ` ${styles.menuButtonHidden}` : ''}`}
             aria-expanded={isMenuOpen}
             aria-haspopup="dialog"
             aria-controls="mobile-trip-menu"
