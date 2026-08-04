@@ -363,6 +363,7 @@ export function inspectMobileReleaseReadiness(sources) {
     }
   }
   if (capacitorVersions.size !== 1) violations.push('Capacitor platform, core, and CLI versions must agree')
+  if (!frontendPackage.scripts?.['check:mobile-release-readiness']?.includes('check:ios-universal-links')) violations.push('mobile release preflight must run the iOS Universal Links source check')
   const capacitorVersion = capacitorVersions.size === 1 ? [...capacitorVersions][0] : null
 
   const appId = capture(sources.capacitorConfig, /appId:\s*['"]([^'"]+)['"]/, 'Capacitor appId', violations)

@@ -48,8 +48,8 @@ export function inspectIosUniversalLinks(sources) {
   if (!Array.isArray(associationHeaders) || associationHeaders.length !== 1) violations.push('Vercel must define exactly one Apple association header rule')
   else {
     const headers = associationHeaders[0].headers
-    const contentType = headers?.find((header) => header?.key === 'Content-Type')?.value
-    if (contentType !== 'application/json') violations.push('Apple association response must use application/json')
+    const expectedHeaders = [['Content-Type', 'application/json'], ['Cache-Control', 'public, max-age=300, must-revalidate']]
+    if (!Array.isArray(headers) || headers.length !== expectedHeaders.length || expectedHeaders.some(([key, value]) => headers.filter((header) => header?.key === key && header?.value === value).length !== 1)) violations.push('Apple association response headers are invalid or conflicting')
   }
   if (!sources.policy.includes(`const ORIGIN = 'https://${HOST}'`)) violations.push('deep-link policy must use the owned Universal Links host')
   return violations

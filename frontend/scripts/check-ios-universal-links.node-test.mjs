@@ -20,7 +20,8 @@ test('rejects entitlement, association, hosting, and policy drift', () => {
     [(candidate) => { candidate.association = candidate.association.replace('"apps": []', '"apps": ["legacy"]') }, /legacy apps/],
     [(candidate) => { candidate.association = candidate.association.replace('"applinks": {', '"other": {},\n  "applinks": {') }, /only applinks/],
     [(candidate) => { candidate.association = candidate.association.replace('/reset-password', '/anything') }, /routes/],
-    [(candidate) => { candidate.vercel = candidate.vercel.replace('application/json', 'text/html') }, /application\/json/],
+    [(candidate) => { candidate.vercel = candidate.vercel.replace('application/json', 'text/html') }, /headers are invalid or conflicting/],
+    [(candidate) => { candidate.vercel = candidate.vercel.replace('"headers": [\n        {', '"headers": [\n        {\n          "key": "Content-Type",\n          "value": "text/html"\n        },\n        {') }, /headers are invalid or conflicting/],
     [(candidate) => { candidate.policy = candidate.policy.replace('https://dupert.vercel.app', 'https://evil.example') }, /owned Universal Links host/],
   ]
   for (const [mutate, expected] of cases) {

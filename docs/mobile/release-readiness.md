@@ -124,4 +124,6 @@ identity and must match the eventual controlled signed artifact. Full iOS #67
 acceptance is **BLOCKED** until issue #64 supplies its ADR and the production host,
 signing owners, hosted association response, and physical iPhone provide the
 evidence named in the gate ledger. Android App Links remain deferred with Android
-device qualification.
+device qualification. Apple association components intentionally restrict only
+paths; the existing native parser remains the sole query-parameter and credential
+allowlist, rejecting unsupported or duplicate parameters before any handoff.

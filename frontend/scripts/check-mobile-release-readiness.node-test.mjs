@@ -66,6 +66,14 @@ test('rejects native identifier and version drift', () => {
   assert.match(output, /Android and iOS marketing versions must agree/)
 })
 
+test('requires the mobile preflight to run the iOS Universal Links source check', () => {
+  const candidate = sources()
+  const pkg = JSON.parse(candidate.frontendPackage)
+  pkg.scripts['check:mobile-release-readiness'] = 'npm run check:ios-privacy-manifest'
+  candidate.frontendPackage = JSON.stringify(pkg)
+  assert.match(messages(candidate), /must run the iOS Universal Links source check/)
+})
+
 test('rejects unsafe production backend origin', () => {
   const candidate = sources()
   candidate.nativeProductionEnvironment = 'VITE_BACKEND_API_URL=http://localhost:8000?token=unsafe\n'

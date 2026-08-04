@@ -31,7 +31,7 @@
     "check:ios-privacy-manifest": "node scripts/check-ios-privacy-manifest.mjs",
     "check:ios-universal-links": "node scripts/check-ios-universal-links.mjs",
     "check:ios-archive-mach-o": "node scripts/check-ios-archive-mach-o.mjs",
-    "check:mobile-release-readiness": "npm run check:ios-privacy-manifest && git -C .. ls-files -z | node scripts/check-mobile-release-readiness.mjs --tracked-files-stdin"
+    "check:mobile-release-readiness": "npm run check:ios-privacy-manifest && npm run check:ios-universal-links && git -C .. ls-files -z | node scripts/check-mobile-release-readiness.mjs --tracked-files-stdin"
   },
   "dependencies": {
     "@capacitor/android": "8.4.2",
