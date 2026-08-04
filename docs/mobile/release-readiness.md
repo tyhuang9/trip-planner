@@ -77,10 +77,10 @@ a real macOS builder produces reproducible evidence.
 | Gate | Status | Owner | Evidence |
 | --- | --- | --- | --- |
 | Repository contract | PASS | Engineering | `frontend/scripts/check-mobile-release-readiness.mjs` and CI |
-| Artifact provenance | BLOCKED | Unassigned | No tagged signed artifact or controlled-build run recorded |
-| Signing and secrets | BLOCKED | Unassigned | No approved signing workflow, secret store, or certificate fingerprints recorded |
+| Artifact provenance | BLOCKED | Unassigned | Controlled iOS signing template exists, but no tagged signed artifact or controlled-build run is recorded |
+| Signing and secrets | BLOCKED | Unassigned | Controlled iOS signing runbook exists, but no approved owner, secret store, or certificate fingerprint is recorded |
 | Identity and versioning | BLOCKED | Unassigned | Source values agree, but signed artifact metadata has not been inspected |
-| Production configuration | BLOCKED | Unassigned | Source origin policy passes; packaged artifact inspection is not recorded |
+| Production configuration | BLOCKED | Unassigned | Source origin policy passes; signed packaged-artifact inspection is not recorded |
 | Authentication and guest sessions | BLOCKED | Unassigned | Issue #64 templates are TEMPLATE / NOT EVIDENCE; physical iPhone and Android ADR and smoke evidence is unexecuted |
 | Maps | BLOCKED | Unassigned | Depends on issue #66 renderer ADR and restricted-key evidence |
 | Universal/App Links | BLOCKED | Unassigned | Issue #67 code policy is implemented, but acceptance remains blocked on issue #64 ADR, deployed `/.well-known` association files, Apple Team ID, Android SHA-256 fingerprints, and signed physical-device cold/warm evidence |
@@ -112,6 +112,16 @@ Before any row above moves to `PASS`, record:
 
 Issue #68 stays open until signed artifacts install and all acceptance evidence is
 recorded. This preflight deliberately performs no signing and reads no release secret.
+
+## Controlled iOS signing evidence status
+
+The [`ios-signed-beta-runbook.md`](ios-signed-beta-runbook.md) and
+[`ios-signed-beta-evidence.template.json`](ios-signed-beta-evidence.template.json)
+are **TEMPLATE / NOT EVIDENCE**. The signed-archive inspector verifies a future
+controlled archive against non-secret expected identity/configuration values, but
+does not create, sign, export, upload, or retain an archive. Signing, provenance,
+privacy reconciliation, and member/guest install smoke remain **BLOCKED** until
+an authorized owner records redaction-safe controlled-run evidence.
 
 ## Universal/App Links evidence status
 

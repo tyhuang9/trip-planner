@@ -58,6 +58,12 @@ test('accepts source contract and safe completed result', () => {
   assert.deepEqual(inspectMobileReleaseReadiness(tracked()), [])
 })
 
+test('requires the mobile preflight to run the iOS signed beta source check', () => {
+  const candidate = sources()
+  candidate.frontendPackage = candidate.frontendPackage.replace(' && npm run check:ios-signed-beta-contract', '')
+  assert.match(messages(candidate), /must run check:ios-signed-beta-contract/)
+})
+
 test('rejects native identifier and version drift', () => {
   const candidate = sources()
   candidate.androidAppBuild = candidate.androidAppBuild.replace('applicationId "io.github.tyhuang9.dupert"', 'applicationId "io.github.tyhuang9.other"').replace('versionName "1.0"', 'versionName "1.1"')
