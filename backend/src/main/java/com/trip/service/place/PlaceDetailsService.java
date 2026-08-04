@@ -31,6 +31,7 @@ public class PlaceDetailsService {
         "id",
         "displayName",
         "formattedAddress",
+        "googleMapsUri",
         "location",
         "rating",
         "userRatingCount",
