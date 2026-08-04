@@ -9,8 +9,18 @@ import { assertMobileReleaseReadiness, inspectMobileReleaseReadiness, loadMobile
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const sources = () => loadMobileReleaseSources(root)
 const messages = (candidate) => inspectMobileReleaseReadiness(candidate).join('\n')
-const sourceFiles = ['docs/mobile/auth-session-device-evidence.catalog.json', 'docs/mobile/auth-session-device-evidence.template.json', 'docs/mobile/auth-session-device-spike.md', 'docs/mobile/auth-session-transport-adr-template.md']
+const sourceFiles = [
+  'docs/mobile/auth-session-device-evidence.catalog.json',
+  'docs/mobile/auth-session-device-evidence.template.json',
+  'docs/mobile/auth-session-device-spike.md',
+  'docs/mobile/auth-session-transport-adr-template.md',
+  'docs/mobile/ios-beta-auth-session-evidence.catalog.json',
+  'docs/mobile/ios-beta-auth-session-device-evidence.template.json',
+  'docs/mobile/ios-beta-auth-session-device-spike.md',
+  'docs/mobile/ios-beta-auth-session-transport-adr-template.md',
+]
 const resultPath = 'docs/mobile/evidence/issue-64/2026-07-29/safe-run-1/results.json'
+const iosBetaResultPath = 'docs/mobile/evidence/issue-64-ios/2026-07-29/ios-safe-run-1/results.json'
 
 function completed() {
   const value = JSON.parse(sources().authSessionEvidenceTemplate)
@@ -53,9 +63,48 @@ function trackedAt(runId, result = completed(), date = '2026-07-29') {
   return candidate
 }
 
+function iosBetaCompleted() {
+  const result = JSON.parse(JSON.stringify(completed()).replaceAll('safe-run-1', 'ios-safe-run-1'))
+  return {
+    ...result,
+    schema_version: 3,
+    release_track: 'ios_beta',
+    copy_results_to: 'docs/mobile/evidence/issue-64-ios/YYYY-MM-DD/<lowercase-run-id>/results.json',
+    platforms: [result.platforms.find((platform) => platform.platform === 'ios')],
+    references: {
+      catalog: 'docs/mobile/ios-beta-auth-session-evidence.catalog.json',
+      spike: 'docs/mobile/ios-beta-auth-session-device-spike.md',
+      adr: 'docs/mobile/ios-beta-auth-session-transport-adr-template.md',
+    },
+  }
+}
+
+function trackedIosBeta(result = iosBetaCompleted()) {
+  const candidate = sources()
+  candidate.trackedFiles = [...sourceFiles, iosBetaResultPath]
+  candidate.resultCopies = { [iosBetaResultPath]: JSON.stringify(result) }
+  return candidate
+}
+
 test('accepts source contract and safe completed result', () => {
   assert.deepEqual(inspectMobileReleaseReadiness(sources()), [])
   assert.deepEqual(inspectMobileReleaseReadiness(tracked()), [])
+})
+
+test('accepts an iOS-only beta result and rejects cross-platform or legacy drift', () => {
+  assert.deepEqual(inspectMobileReleaseReadiness(trackedIosBeta()), [])
+  const crossPlatform = iosBetaCompleted()
+  crossPlatform.platforms.push(completed().platforms.find((platform) => platform.platform === 'android'))
+  assert.match(messages(trackedIosBeta(crossPlatform)), /platforms must contain exactly: ios/)
+  const legacySchema = iosBetaCompleted()
+  legacySchema.schema_version = 2
+  assert.match(messages(trackedIosBeta(legacySchema)), /schema_version must be 3/)
+})
+
+test('rejects an untracked iOS beta result copy', () => {
+  const candidate = sources()
+  candidate.resultCopies = { [iosBetaResultPath]: JSON.stringify(iosBetaCompleted()) }
+  assert.match(messages(candidate), /iOS beta result copy must be tracked at an authorized path/)
 })
 
 test('rejects native identifier and version drift', () => {
@@ -100,6 +149,12 @@ test('keeps both issue 64 release gates blocked', () => {
     candidate.releaseDocument = candidate.releaseDocument.replace(`| ${gate} | BLOCKED |`, `| ${gate} | PASS |`)
     assert.match(messages(candidate), new RegExp(`${gate} must remain BLOCKED`))
   }
+})
+
+test('rejects iOS beta scope-marker drift', () => {
+  const candidate = sources()
+  candidate.releaseDocument = candidate.releaseDocument.replace('primary_platform=ios', 'primary_platform=android')
+  assert.match(messages(candidate), /ios-beta-release-scope marker primary_platform must equal ios/)
 })
 
 test('rejects missing iOS and Android platform entries', () => {
