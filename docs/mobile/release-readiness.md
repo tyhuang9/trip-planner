@@ -115,9 +115,13 @@ recorded. This preflight deliberately performs no signing and reads no release s
 
 ## Universal/App Links evidence status
 
-The application contains only the #67 client-side deep-link parser, memory-only
-handoff policy, and native capture bridge. This is not association or signing
-evidence. Do not add placeholder Apple App Site Association/Asset Links files or
-invent an Apple Team ID or Android certificate fingerprint. Full #67 acceptance is
-**BLOCKED** until issue #64 supplies its ADR and the production host, signing owners,
-and physical devices provide the evidence named in the gate ledger.
+The application has a checked-in iOS Associated Domains entitlement and an Apple
+App Site Association source contract for `dupert.vercel.app`, in addition to the
+#67 client-side deep-link parser, memory-only handoff policy, and native capture
+bridge. This is source evidence only—not hosted association, signing, or device
+evidence. The current Apple Team ID comes from the locally available development
+identity and must match the eventual controlled signed artifact. Full iOS #67
+acceptance is **BLOCKED** until issue #64 supplies its ADR and the production host,
+signing owners, hosted association response, and physical iPhone provide the
+evidence named in the gate ledger. Android App Links remain deferred with Android
+device qualification.
