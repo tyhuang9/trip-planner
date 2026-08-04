@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "template_status": "UNEXECUTED",
+  "notice": "TEMPLATE / NOT EVIDENCE — immutable source; JSON results are the sole claim-bearing artifact.",
+  "copy_results_to": "docs/mobile/evidence/ios-signed-beta/YYYY-MM-DD/<lowercase-run-id>/results.json",
+  "artifact": {
+    "commit_or_tag": "UNEXECUTED",
+    "version": "UNEXECUTED",
+    "build": "UNEXECUTED",
+    "xcode_version": "UNEXECUTED",
+    "macos_version": "UNEXECUTED",
+    "archive_sha256": "UNEXECUTED",
+    "ipa_sha256": "UNEXECUTED",
+    "certificate_fingerprint": "UNEXECUTED",
+    "signing_channel": "UNEXECUTED",
+    "restricted_evidence_reference": "UNEXECUTED"
+  },
+  "archive_inspection": {
+    "status": "UNEXECUTED",
+    "bundle_identity": "UNEXECUTED",
+    "entitlements": "UNEXECUTED",
+    "production_api_origin": "UNEXECUTED",
+    "privacy_manifest": "UNEXECUTED",
+    "native_dependencies": "UNEXECUTED",
+    "development_endpoint_scan": "UNEXECUTED",
+    "browser_value_scan": "UNEXECUTED",
+    "restricted_evidence_reference": "UNEXECUTED"
+  },
+  "device_smoke": {
+    "member": "UNEXECUTED",
+    "guest": "UNEXECUTED",
+    "restricted_evidence_reference": "UNEXECUTED"
+  },
+  "redaction_policy": "UNEXECUTED",
+  "references": {
+    "runbook": "docs/mobile/ios-signed-beta-runbook.md"
+  }
+}
