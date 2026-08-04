@@ -37,3 +37,16 @@ credential belongs in the iOS beta evidence record.
   links until bootstrap, keeps sensitive values in a memory-only vault, and
   scrubs history. Associated Domains and a deployed Apple association file have
   not been verified.
+
+## Repository baseline
+
+Recorded 2026-08-03 against commit
+`7787ed64e7c03c11b140b52cac4ae0adc81debfc`:
+
+- `npm run check:mobile-release-readiness` passed.
+- Focused mobile-release and iOS-privacy Node contract suites passed (83 tests).
+- Frontend lint passed.
+- The full frontend suite was not clean: one existing
+  `TripWorkspacePage` edit-conflict test could not find **Save changes**. This
+  release-contract change does not touch that component, so it remains an
+  unverified unrelated baseline failure.
