@@ -309,7 +309,7 @@ test('rejects privacy documentation that claims PASS or broadens the contract', 
   }, /exactly one canonical BLOCKED/)
   expectRejected((candidate) => {
     candidate.releaseDocument = candidate.releaseDocument.replace(
-      'Xcode archive privacy report + App Store Connect reconciliation',
+      'Xcode archive privacy report, App Store Connect reconciliation',
       'privacy declaration is ready for App Store approval',
     )
   }, /exactly one canonical BLOCKED/)
