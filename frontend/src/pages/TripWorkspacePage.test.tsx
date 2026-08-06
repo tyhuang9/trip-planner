@@ -2438,9 +2438,10 @@ describe('<TripWorkspacePage>', () => {
     expect(screen.getByRole('heading', { name: /full trip timeline/i })).toBeInTheDocument()
     await waitFor(() => {
       expect(within(screen.getByLabelText(/selected map place/i)).getByRole('heading', {
-        name: /nearby cafe/i,
+        name: /tokyo tower/i,
       })).toBeInTheDocument()
     })
+    expect(googlePlacesMockState.fetchGooglePlaceNearLocation).not.toHaveBeenCalled()
   })
 
   it('lists only active mobile map days while preserving trip-day numbers and filters', async () => {
@@ -2690,7 +2691,7 @@ describe('<TripWorkspacePage>', () => {
       title: 'Tokyo Tower',
       placeId: 'google.tokyo-tower',
       placeName: 'Tokyo Tower',
-      address: '4 Chome-2-8 Shibakoen, Minato City, Tokyo',
+      address: 'Saved Tokyo Tower address',
       lat: 35.6586,
       lng: 139.7454,
       orderIndex: 0,
@@ -2711,7 +2712,7 @@ describe('<TripWorkspacePage>', () => {
       businessStatus: 'OPERATIONAL',
       currentOpeningHours: null,
       displayName: 'Tokyo Tower',
-      formattedAddress: '4 Chome-2-8 Shibakoen, Minato City, Tokyo',
+      formattedAddress: 'Enriched Google address',
       googleMapsUri: 'https://maps.google.com/?cid=tokyo-tower',
       id: 'google.tokyo-tower',
       lat: 35.6586,
@@ -2722,7 +2723,7 @@ describe('<TripWorkspacePage>', () => {
       rating: 4.5,
       regularOpeningHours: null,
       reviews: [],
-      text: 'Tokyo Tower, 4 Chome-2-8 Shibakoen, Minato City, Tokyo',
+      text: 'Tokyo Tower, Enriched Google address',
       types: ['tourist_attraction'],
       userRatingCount: 10000,
       websiteUri: null,
@@ -2776,6 +2777,8 @@ describe('<TripWorkspacePage>', () => {
     expect(within(screen.getByLabelText(/selected map place/i)).getByRole('img', {
       name: /tokyo tower/i,
     })).toHaveAttribute('src', 'https://example.com/tokyo-tower-marker.webp')
+    expect(within(screen.getByLabelText(/selected map place/i)).getByText('Enriched Google address'))
+      .toBeInTheDocument()
     expect(within(screen.getByLabelText(/selected map place/i)).getByText(/4\.5 \(10,000 reviews\)/i))
       .toBeInTheDocument()
     const selectedMapPlace = screen.getByLabelText(/selected map place/i)
@@ -2784,7 +2787,7 @@ describe('<TripWorkspacePage>', () => {
     })
     expectGoogleMapsPlaceLink(googleMapsLink, {
       placeId: 'google.tokyo-tower',
-      query: 'Tokyo Tower',
+      query: 'Saved Tokyo Tower address',
     })
     expect(googleMapsLink).not.toHaveTextContent(/open in google maps/i)
     expect(screen.getByTestId('preview-map-place')).toHaveTextContent('none')
@@ -3682,13 +3685,14 @@ describe('<TripWorkspacePage>', () => {
     expect(screen.getByRole('textbox', { name: /map place search/i })).not.toHaveFocus()
   })
 
-  it('resolves a coordinate-only event marker to its nearest real place', async () => {
+  it('keeps a saved event without a Place ID and uses its address for Maps', async () => {
     const activity = {
       ...SAMPLE_ACTIVITY,
-      address: 'Tsukiji, Chuo City, Tokyo',
+      address: 'Saved address',
       lat: 35.7,
       lng: 139.8,
-      placeName: 'Tsukiji sushi',
+      placeName: 'Saved venue name',
+      title: 'Saved event title',
     }
     mockWorkspace([activity])
 
@@ -3697,54 +3701,30 @@ describe('<TripWorkspacePage>', () => {
     await screen.findByTestId('trip-map')
     await userEvent.click(screen.getByRole('button', { name: /mock activate marker/i }))
 
-    await waitFor(() => {
-      expect(googlePlacesMockState.fetchGooglePlaceNearLocation).toHaveBeenCalledWith({
-        includePhoto: true,
-        options: {
-          location: { lat: 35.7, lng: 139.8 },
-          radius: 75,
-          rankPreference: 'DISTANCE',
-        },
-      })
-    })
     const placeCard = await screen.findByLabelText(/selected map place/i)
-    expect(within(placeCard).getByRole('heading', { name: /nearby cafe/i })).toBeInTheDocument()
-    expectGoogleMapsPlaceLink(within(placeCard).getByRole('link', {
-      name: /open in google maps/i,
-    }), {
-      placeId: 'google.nearby-cafe',
-      query: 'Nearby Cafe',
-    })
+    expect(googlePlacesMockState.fetchGooglePlaceNearLocation).not.toHaveBeenCalled()
+    expect(googlePlacesMockState.fetchGooglePlaceById).not.toHaveBeenCalled()
+    expect(within(placeCard).getByRole('heading', { name: /saved venue name/i })).toBeInTheDocument()
+    expect(within(placeCard).getByText('Saved address')).toBeInTheDocument()
+    expect(within(placeCard).getByRole('link', { name: /directions/i })).toHaveAttribute(
+      'href',
+      'https://www.google.com/maps/dir/?api=1&destination=35.7%2C139.8',
+    )
+    expect(within(placeCard).getByRole('link', { name: /open in google maps/i })).toHaveAttribute(
+      'href',
+      'https://www.google.com/maps/search/?api=1&query=Saved%20address',
+    )
   })
 
-  it('uses the nearby Place ID when a coordinate-only event has no Maps URI', async () => {
+  it('uses a saved place name before coordinates when an event has no address', async () => {
     const activity = {
       ...SAMPLE_ACTIVITY,
-      address: 'Tsukiji, Chuo City, Tokyo',
+      address: null,
       lat: 35.7,
       lng: 139.8,
-      placeName: 'Tsukiji sushi',
+      placeName: 'Saved venue name',
+      title: 'Saved event title',
     }
-    googlePlacesMockState.fetchGooglePlaceNearLocation.mockResolvedValueOnce({
-      businessStatus: 'OPERATIONAL',
-      currentOpeningHours: null,
-      displayName: 'Nearby Cafe',
-      formattedAddress: 'Nearby address',
-      googleMapsUri: null,
-      id: 'google.nearby-cafe',
-      lat: 35.7002,
-      lng: 139.8002,
-      photoUrl: null,
-      primaryType: 'cafe',
-      primaryTypeDisplayName: 'Cafe',
-      rating: 4.7,
-      regularOpeningHours: null,
-      reviews: [],
-      text: 'Nearby Cafe, Nearby address',
-      types: ['cafe'],
-      userRatingCount: 42,
-      websiteUri: null,
-    })
     mockWorkspace([activity])
 
     renderWorkspace('/trips/abc234def567/d/2026-05-01')
@@ -3753,13 +3733,61 @@ describe('<TripWorkspacePage>', () => {
     await userEvent.click(screen.getByRole('button', { name: /mock activate marker/i }))
 
     const placeCard = await screen.findByLabelText(/selected map place/i)
-    expect(within(placeCard).getByRole('heading', { name: /nearby cafe/i })).toBeInTheDocument()
-    expectGoogleMapsPlaceLink(within(placeCard).getByRole('link', {
-      name: /open in google maps/i,
-    }), {
-      placeId: 'google.nearby-cafe',
-      query: 'Nearby Cafe',
-    })
+    expect(googlePlacesMockState.fetchGooglePlaceNearLocation).not.toHaveBeenCalled()
+    expect(within(placeCard).getByRole('heading', { name: /saved venue name/i })).toBeInTheDocument()
+    expect(within(placeCard).getByRole('link', { name: /open in google maps/i })).toHaveAttribute(
+      'href',
+      'https://www.google.com/maps/search/?api=1&query=Saved%20venue%20name',
+    )
+  })
+
+  it('uses a saved title before coordinates when an event has no address or place name', async () => {
+    const activity = {
+      ...SAMPLE_ACTIVITY,
+      address: null,
+      lat: 35.7,
+      lng: 139.8,
+      placeName: null,
+      title: 'Saved event title',
+    }
+    mockWorkspace([activity])
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+
+    await screen.findByTestId('trip-map')
+    await userEvent.click(screen.getByRole('button', { name: /mock activate marker/i }))
+
+    const placeCard = await screen.findByLabelText(/selected map place/i)
+    expect(googlePlacesMockState.fetchGooglePlaceNearLocation).not.toHaveBeenCalled()
+    expect(within(placeCard).getByRole('heading', { name: /saved event title/i })).toBeInTheDocument()
+    expect(within(placeCard).getByRole('link', { name: /open in google maps/i })).toHaveAttribute(
+      'href',
+      'https://www.google.com/maps/search/?api=1&query=Saved%20event%20title',
+    )
+  })
+
+  it('uses coordinates only when a saved event has no usable location text', async () => {
+    const activity = {
+      ...SAMPLE_ACTIVITY,
+      address: null,
+      lat: 35.7,
+      lng: 139.8,
+      placeName: null,
+      title: '   ',
+    }
+    mockWorkspace([activity])
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+
+    await screen.findByTestId('trip-map')
+    await userEvent.click(screen.getByRole('button', { name: /mock activate marker/i }))
+
+    const placeCard = await screen.findByLabelText(/selected map place/i)
+    expect(googlePlacesMockState.fetchGooglePlaceNearLocation).not.toHaveBeenCalled()
+    expect(within(placeCard).getByRole('link', { name: /open in google maps/i })).toHaveAttribute(
+      'href',
+      'https://www.google.com/maps/search/?api=1&query=35.7%2C139.8',
+    )
   })
 
   it('preserves the active mobile place details when a text search fails', async () => {
