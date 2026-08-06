@@ -769,16 +769,27 @@ function buildGoogleMapsExport(activities: Activity[], scopeLabel: string): Goog
 
 function googleMapsUrlForPlace(
   place: PlaceSelection,
-  { preferPlaceId = false }: { preferPlaceId?: boolean } = {},
+  { isSavedActivity = false }: { isSavedActivity?: boolean } = {},
 ): string | null {
-  const query = place.placeName || place.title || place.address
-  if (preferPlaceId && place.placeId && query) {
+  const savedActivityQuery = [place.address, place.placeName, place.title]
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    ?.trim()
+  const query = isSavedActivity
+    ? savedActivityQuery
+    : place.placeName || place.title || place.address
+  if (isSavedActivity && place.placeId && query) {
     const parameters = new URLSearchParams({
       api: '1',
       query,
       query_place_id: place.placeId,
     })
     return `https://www.google.com/maps/search/?${parameters.toString()}`
+  }
+  if (isSavedActivity && query) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`
+  }
+  if (isSavedActivity && Number.isFinite(place.lat) && Number.isFinite(place.lng)) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${place.lat},${place.lng}`)}`
   }
   if (place.googleMapsUri) return place.googleMapsUri
   if (Number.isFinite(place.lat) && Number.isFinite(place.lng)) {
@@ -2771,13 +2782,19 @@ export function TripWorkspacePage() {
     selectedMapClickedPlace ??
     (mobileSearchSheetActive ? null : concretePlaceDraft) ??
     mapSearchPreview
+  const selectedMapClickedActivity = selectedMapClickedActivityId === null
+    ? null
+    : allActivities.find((activity) => activity.id === selectedMapClickedActivityId) ?? null
+  const selectedMapClickedActivityPlace = selectedMapClickedActivity
+    ? activityToPlaceSelection(selectedMapClickedActivity)
+    : null
   const mapDetailSelectedDayHours = mapDetailPlace
     ? selectedDayHours(mapDetailPlace, selectedDay)
     : null
   const mapDetailDirectionsUrl = mapDetailPlace ? directionsUrlForPlace(mapDetailPlace) : null
   const mapDetailGoogleMapsUrl = mapDetailPlace
-    ? googleMapsUrlForPlace(mapDetailPlace, {
-        preferPlaceId: selectedMapClickedActivityId !== null,
+    ? googleMapsUrlForPlace(selectedMapClickedActivityPlace ?? mapDetailPlace, {
+        isSavedActivity: selectedMapClickedActivityPlace !== null,
       })
     : null
   const mapDetailRating = mapDetailPlace ? formatPlaceRating(mapDetailPlace) : null
@@ -3181,9 +3198,6 @@ export function TripWorkspacePage() {
   const showActivityPlaceDetails = async (activity: Activity) => {
     const fallbackPlace = activityToPlaceSelection(activity)
     if (!fallbackPlace) return
-    const activityLocation = hasFiniteCoordinates(activity)
-      ? { lat: activity.lat, lng: activity.lng }
-      : null
 
     const requestId = mapPlaceDetailsRequestIdRef.current + 1
     mapPlaceDetailsRequestIdRef.current = requestId
@@ -3208,20 +3222,6 @@ export function TripWorkspacePage() {
         }
       }
       if (mapPlaceDetailsRequestIdRef.current !== requestId) return
-
-      if (!fallbackPlace.placeId && activityLocation) {
-        const nearbyPlace = await fetchGooglePlaceNearLocation({
-          includePhoto: true,
-          options: {
-            location: activityLocation,
-            radius: 75,
-            rankPreference: 'DISTANCE',
-          },
-        })
-        if (mapPlaceDetailsRequestIdRef.current !== requestId) return
-        const nearbyDetails = nearbyPlace ? googlePlaceToPlaceSelection(nearbyPlace) : null
-        if (nearbyDetails?.placeId) details = nearbyDetails
-      }
 
       if (details) {
         setSelectedMapClickedPlace(mergeActivityPlaceSelection(activity, fallbackPlace, details))
