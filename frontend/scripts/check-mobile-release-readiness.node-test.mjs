@@ -331,6 +331,20 @@ test('requires a failure before selecting native credential transport', () => {
   result.platforms[1].contexts[1].credential_lifecycle[0].status = 'FAIL'; assert.deepEqual(inspectMobileReleaseReadiness(tracked(result)), [])
 })
 
+test('accepts native credential transport for each completed auth evidence failure shape', () => {
+  const markFailures = [
+    (result) => { result.platforms[0].contexts[0].cases[0].status = 'FAIL' },
+    (result) => { result.platforms[0].contexts[0].cases.find((entry) => entry.session_boundaries).session_boundaries[0].status = 'FAIL' },
+    (result) => { result.platforms[1].platform_cases[0].status = 'FAIL' },
+  ]
+  for (const markFailure of markFailures) {
+    const result = completed()
+    result.adr_contract.selected_outcome = 'native_credential_transport'
+    markFailure(result)
+    assert.deepEqual(inspectMobileReleaseReadiness(tracked(result)), [])
+  }
+})
+
 test('requires all checks to pass before selecting cookie-only transport', () => {
   assert.deepEqual(inspectMobileReleaseReadiness(tracked()), []); const result = completed(); result.platforms[1].platform_cases[0].status = 'FAIL'; assert.match(messages(tracked(result)), /cookie_only_proven requires every executed check to PASS/)
 })
