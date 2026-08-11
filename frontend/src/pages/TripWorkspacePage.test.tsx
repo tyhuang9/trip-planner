@@ -4122,6 +4122,115 @@ describe('<TripWorkspacePage>', () => {
     )
   })
 
+  it('shows a terminal error and suppresses Add to Trip when search-result details fail', async () => {
+    googlePlacesMockState.fetchGooglePlaceTextSearch.mockResolvedValueOnce({
+      nextPageToken: null,
+      places: [{
+        businessStatus: 'OPERATIONAL',
+        currentOpeningHours: null,
+        displayName: 'Search Result Cafe',
+        formattedAddress: '100 Example Avenue',
+        googleMapsUri: 'https://maps.google.com/?cid=search-result',
+        id: 'google.search-result',
+        lat: 35.7,
+        lng: 139.8,
+        photoUrl: null,
+        primaryType: 'cafe',
+        primaryTypeDisplayName: 'Cafe',
+        rating: null,
+        regularOpeningHours: null,
+        reviews: [],
+        text: 'Search Result Cafe, 100 Example Avenue',
+        types: ['cafe'],
+        userRatingCount: null,
+        websiteUri: null,
+      }],
+    })
+    googlePlacesMockState.fetchGooglePlaceById.mockRejectedValueOnce(new Error('details failed'))
+    mockWorkspace()
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+
+    await screen.findByTestId('trip-map')
+    await userEvent.click(screen.getByRole('button', { name: /mock type ramen search/i }))
+    await userEvent.click(screen.getByRole('button', { name: /mock submit place search/i }))
+    expect(await within(screen.getByTestId('search-map-results')).findByText('Search Result Cafe'))
+      .toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /mock select search result/i }))
+
+    const detailCard = screen.getByLabelText(/selected map place/i)
+    expect(await within(detailCard).findByRole('alert')).toHaveTextContent(
+      /couldn't load details for this place/i,
+    )
+    expect(detailCard).toHaveAttribute('aria-busy', 'false')
+    expect(within(detailCard).queryByRole('button', { name: /add to trip/i })).not.toBeInTheDocument()
+    expect(within(detailCard).queryByRole('button', { name: /confirm update/i })).not.toBeInTheDocument()
+    expect(within(detailCard).getByRole('button', { name: /close place details/i })).toBeInTheDocument()
+    expect(within(detailCard).getByRole('link', { name: /open in google maps/i })).toHaveAttribute(
+      'href',
+      'https://maps.google.com/?cid=search-result',
+    )
+  })
+
+  it('clears a pending activity location update when search-result details fail', async () => {
+    const placedActivity = {
+      ...SAMPLE_ACTIVITY,
+      address: 'Saved activity address',
+      lat: 35.65,
+      lng: 139.75,
+      placeName: 'Saved activity place',
+    }
+    googlePlacesMockState.fetchGooglePlaceTextSearch.mockResolvedValueOnce({
+      nextPageToken: null,
+      places: [{
+        businessStatus: 'OPERATIONAL',
+        currentOpeningHours: null,
+        displayName: 'Replacement Cafe',
+        formattedAddress: '200 Example Avenue',
+        googleMapsUri: 'https://maps.google.com/?cid=replacement',
+        id: 'google.replacement',
+        lat: 35.71,
+        lng: 139.81,
+        photoUrl: null,
+        primaryType: 'cafe',
+        primaryTypeDisplayName: 'Cafe',
+        rating: null,
+        regularOpeningHours: null,
+        reviews: [],
+        text: 'Replacement Cafe, 200 Example Avenue',
+        types: ['cafe'],
+        userRatingCount: null,
+        websiteUri: null,
+      }],
+    })
+    googlePlacesMockState.fetchGooglePlaceById.mockRejectedValueOnce(new Error('details failed'))
+    mockWorkspace([placedActivity])
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+
+    const activityCard = (await screen.findByRole('heading', {
+      name: /tsukiji sushi/i,
+    })).closest('article')
+    expect(activityCard).not.toBeNull()
+    await userEvent.click(activityCard as HTMLElement)
+    await userEvent.click(screen.getByRole('button', { name: /change on map/i }))
+    await userEvent.click(screen.getByRole('button', { name: /mock type ramen search/i }))
+    await userEvent.click(screen.getByRole('button', { name: /mock submit place search/i }))
+    expect(await within(screen.getByTestId('search-map-results')).findByText('Replacement Cafe'))
+      .toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /mock select search result/i }))
+
+    const detailCard = screen.getByLabelText(/selected map place/i)
+    expect(await within(detailCard).findByRole('alert')).toHaveTextContent(
+      /couldn't load details for this place/i,
+    )
+    expect(within(detailCard).queryByRole('button', { name: /confirm update/i })).not.toBeInTheDocument()
+    expect(within(detailCard).queryByRole('button', { name: /add to trip/i })).not.toBeInTheDocument()
+    expect(apiMock.history.patch).toHaveLength(0)
+  })
+
   it('shows an accessible terminal card when exact native place details fail', async () => {
     googlePlacesMockState.fetchGooglePlaceById.mockRejectedValueOnce(new Error('details failed'))
     mockWorkspace()

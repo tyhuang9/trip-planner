@@ -3775,8 +3775,9 @@ export function TripWorkspacePage() {
         setPendingMapPlace(hydratedPlace)
       }
     } catch {
-      if (mapPlaceDetailsRequestIdRef.current === requestId && mapLocationTarget) {
-        setPendingMapPlace(place)
+      if (mapPlaceDetailsRequestIdRef.current === requestId) {
+        setSelectedMapSearchResult(failedPlaceDetailsSelection(place))
+        setPendingMapPlace(null)
       }
     } finally {
       if (mapPlaceDetailsRequestIdRef.current === requestId) {
