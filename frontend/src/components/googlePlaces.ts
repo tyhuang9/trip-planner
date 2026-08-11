@@ -1,5 +1,6 @@
 import { apiClient } from '../api/client'
 import { buildApiUrl } from '../api/baseUrl'
+import { apiErrorCode } from '../api/errors'
 import {
   logPlaceDetailsTiming,
   placeDetailsElapsedMs,
@@ -690,29 +691,48 @@ export async function fetchGooglePlaceDetails({
     sessionTokenPresent: normalizedSessionToken.length > 0,
     traceId: traceId?.trim() || null,
   })
-  const request = getBackendJson<BackendPlaceDetailsResponse>(
-    `/places/${encodeURIComponent(placeId)}/details`,
-    'Google Place Details',
-    {
-      ...(shouldSendFields ? { fields: fieldMask } : {}),
-      ...(traceId?.trim() ? { clientTraceId: traceId.trim() } : {}),
-      ...(normalizedSessionToken ? { sessionToken: normalizedSessionToken } : {}),
-    },
-    fetchImpl,
-    signal,
-  ).then((response) => {
-    logPlaceDetailsTiming('frontend_details_response_received', {
-      durationMs: placeDetailsElapsedMs(requestStartedAtMs),
-      fieldMask: response.fieldMask,
-      includePhoto,
-      placeId: response.placeId,
-      source: response.source,
-      stale: response.stale,
-      traceId: traceId?.trim() || null,
+  const requestParams = {
+    ...(traceId?.trim() ? { clientTraceId: traceId.trim() } : {}),
+    ...(normalizedSessionToken ? { sessionToken: normalizedSessionToken } : {}),
+  }
+  const requestDetails = (fieldsMask?: string) =>
+    getBackendJson<BackendPlaceDetailsResponse>(
+      `/places/${encodeURIComponent(placeId)}/details`,
+      'Google Place Details',
+      {
+        ...requestParams,
+        ...(fieldsMask ? { fields: fieldsMask } : {}),
+      },
+      fetchImpl,
+      signal,
+    )
+  const requestedFieldMask = shouldSendFields ? fieldMask : undefined
+  const request = requestDetails(requestedFieldMask)
+    .catch((error) => {
+      if (
+        apiErrorCode(error) !== 'invalid_place_detail_fields' ||
+        !requestedFieldMask?.split(',').includes('googleMapsUri')
+      ) {
+        throw error
+      }
+      return requestDetails(fieldMask
+        .split(',')
+        .filter((field) => field !== 'googleMapsUri')
+        .join(','))
     })
-    markPerformance('place-details-ready')
-    return response.details
-  })
+    .then((response) => {
+      logPlaceDetailsTiming('frontend_details_response_received', {
+        durationMs: placeDetailsElapsedMs(requestStartedAtMs),
+        fieldMask: response.fieldMask,
+        includePhoto,
+        placeId: response.placeId,
+        source: response.source,
+        stale: response.stale,
+        traceId: traceId?.trim() || null,
+      })
+      markPerformance('place-details-ready')
+      return response.details
+    })
 
   if (!signal) {
     backendPlaceDetailsCache.set(cacheKey, { ...cached, request })

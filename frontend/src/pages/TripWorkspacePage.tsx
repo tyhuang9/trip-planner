@@ -792,6 +792,14 @@ function googleMapsUrlForPlace(
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${place.lat},${place.lng}`)}`
   }
   if (place.googleMapsUri) return place.googleMapsUri
+  if (place.placeId && query) {
+    const parameters = new URLSearchParams({
+      api: '1',
+      query,
+      query_place_id: place.placeId,
+    })
+    return `https://www.google.com/maps/search/?${parameters.toString()}`
+  }
   if (Number.isFinite(place.lat) && Number.isFinite(place.lng)) {
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${place.lat},${place.lng}`)}`
   }
@@ -862,6 +870,16 @@ function loadingPlaceDetailsSelection(
     placeId: placeId,
     lat: location?.lat ?? null,
     lng: location?.lng ?? null,
+  }
+}
+
+function failedPlaceDetailsSelection(place: PlaceSelection): PlaceSelection {
+  return {
+    ...place,
+    title: 'Place details unavailable',
+    placeName: 'Place details unavailable',
+    isLoadingDetails: false,
+    placeDetailsError: 'We couldn\'t load details for this place. You can still open it in Google Maps.',
   }
 }
 
@@ -2800,8 +2818,9 @@ export function TripWorkspacePage() {
   const mapDetailRating = mapDetailPlace ? formatPlaceRating(mapDetailPlace) : null
   const mapDetailFocusId = mapDetailPlace ? placeStableId(mapDetailPlace) : null
   const isMapDetailLoading = Boolean(mapDetailPlace?.isLoadingDetails)
+  const hasMapDetailError = Boolean(mapDetailPlace?.placeDetailsError)
   const canAddMapDetailPlace =
-    !isMapDetailLoading && (
+    !isMapDetailLoading && !hasMapDetailError && (
       selectedMapSearchResult !== null ||
       (selectedMapClickedPlace !== null && selectedMapClickedActivityId === null)
     )
@@ -3692,8 +3711,8 @@ export function TripWorkspacePage() {
       }
     } catch {
       if (mapPlaceDetailsRequestIdRef.current === requestId) {
-        setSelectedMapClickedPlace(loadingPlace)
-        setPendingMapPlace(mapLocationTarget ? loadingPlace : null)
+        setSelectedMapClickedPlace(failedPlaceDetailsSelection(loadingPlace))
+        setPendingMapPlace(null)
       }
     } finally {
       if (mapPlaceDetailsRequestIdRef.current === requestId) {
@@ -3756,8 +3775,9 @@ export function TripWorkspacePage() {
         setPendingMapPlace(hydratedPlace)
       }
     } catch {
-      if (mapPlaceDetailsRequestIdRef.current === requestId && mapLocationTarget) {
-        setPendingMapPlace(place)
+      if (mapPlaceDetailsRequestIdRef.current === requestId) {
+        setSelectedMapSearchResult(failedPlaceDetailsSelection(place))
+        setPendingMapPlace(null)
       }
     } finally {
       if (mapPlaceDetailsRequestIdRef.current === requestId) {
@@ -4980,6 +5000,9 @@ export function TripWorkspacePage() {
                           <span className={styles.placeLoadingText}>Fetching data...</span>
                         </div>
                       )}
+                      {hasMapDetailError && (
+                        <p role="alert">{mapDetailPlace.placeDetailsError}</p>
+                      )}
                       {!isMapDetailLoading && mapDetailSelectedDayHours && (
                         <p className={styles.placeHours}>
                           {mapDetailSelectedDayHours}
@@ -4998,7 +5021,7 @@ export function TripWorkspacePage() {
                         </p>
                       )}
                       <div className={styles.placeDetailActions}>
-                        {!isMapDetailLoading && mapLocationTarget && pendingMapPlace ? (
+                        {!isMapDetailLoading && !hasMapDetailError && mapLocationTarget && pendingMapPlace ? (
                           <button
                             type="button"
                             className={styles.primaryAction}
@@ -5007,7 +5030,7 @@ export function TripWorkspacePage() {
                           >
                             Confirm Update
                           </button>
-                        ) : !isMapDetailLoading && canAddMapDetailPlace ? (
+                        ) : !isMapDetailLoading && !hasMapDetailError && canAddMapDetailPlace ? (
                           <button
                             type="button"
                             className={styles.primaryAction}
@@ -5015,7 +5038,7 @@ export function TripWorkspacePage() {
                           >
                             Add to Trip
                           </button>
-                        ) : !isMapDetailLoading && placeDraft ? (
+                        ) : !isMapDetailLoading && !hasMapDetailError && placeDraft ? (
                           <button
                             type="button"
                             className={styles.primaryAction}
