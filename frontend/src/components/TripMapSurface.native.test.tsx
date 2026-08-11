@@ -161,6 +161,38 @@ describe('<TripMapSurface> native target', () => {
     }))
   })
 
+  it('forwards a same-location map callback after the native POI suppression window expires', async () => {
+    const onMapPlaceClick = vi.fn()
+    await act(async () => {
+      render(<TripMapSurface activities={[]} destination={null} onMapPlaceClick={onMapPlaceClick} />)
+    })
+    await waitFor(() => expect(nativeMapHarness.listeners.poiClick).not.toBeNull())
+
+    let nowMs = 1_000
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => nowMs)
+    try {
+      act(() => {
+        nativeMapHarness.listeners.poiClick?.({
+          latitude: 35.7,
+          longitude: 139.8,
+          name: 'Exact place',
+          placeId: 'google.exact-place',
+        })
+        nowMs += 501
+        nativeMapHarness.listeners.mapClick?.({ latitude: 35.7, longitude: 139.8 })
+      })
+    } finally {
+      nowSpy.mockRestore()
+    }
+
+    expect(onMapPlaceClick).toHaveBeenCalledTimes(2)
+    expect(onMapPlaceClick).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      location: { lat: 35.7, lng: 139.8 },
+      placeId: null,
+      source: 'native-coordinate',
+    }))
+  })
+
   it('keeps saved marker actions isolated from base-map POI callbacks', async () => {
     const onActivityActivate = vi.fn()
     const onMapPlaceClick = vi.fn()
