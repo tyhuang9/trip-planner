@@ -3597,9 +3597,45 @@ export function TripWorkspacePage() {
     clickedAtMs,
     location,
     placeId,
+    source,
     traceId,
   }: MapPlaceClickEvent) => {
     const normalizedPlaceId = placeId?.trim() || null
+    if (source === 'native-coordinate' || (source === 'native-poi' && !normalizedPlaceId)) {
+      const coordinateFallback = clickedLocationToPlaceSelection(location)
+      if (!coordinateFallback) return
+
+      const requestId = mapPlaceDetailsRequestIdRef.current + 1
+      mapPlaceDetailsRequestIdRef.current = requestId
+      mapPlaceCardTimingRef.current = {
+        clickedAtIso,
+        clickedAtMs,
+        placeId: null,
+        renderedSignatures: new Set<string>(),
+        requestId,
+        traceId,
+      }
+      logPlaceDetailsTiming('frontend_details_flow_start', {
+        clickedAtIso,
+        elapsedSinceClickMs: placeDetailsElapsedMs(clickedAtMs),
+        hasPreviewPlace: true,
+        placeId: null,
+        requestId,
+        traceId,
+      })
+      setSelectedMapSearchResult(null)
+      setSelectedMapClickedPlace(null)
+      setSelectedMapClickedActivityId(null)
+      setCoordinateMapMarker(coordinateFallback)
+      setMapSearchPreview(null)
+      setHoveredMapSearchResultId(null)
+      setActiveActivityId(null)
+      setHoveredActivityId(null)
+      setPendingMapPlace(mapLocationTarget ? coordinateFallback : null)
+      setIsMapSearchSubmitting(false)
+      return
+    }
+
     if (!normalizedPlaceId) {
       const loadingPlace = loadingPlaceDetailsSelection(null, location)
       const coordinateFallback = clickedLocationToPlaceSelection(location)
@@ -4935,6 +4971,12 @@ export function TripWorkspacePage() {
                     </>
                   )}
                   <h2 id="map-panel-title" className="sr-only">Map</h2>
+                  {coordinateMapMarker && (
+                    <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+                      Selected location: {coordinateMapMarker.coordinatesLabel ?? 'coordinates unavailable'}.
+                      {' '}No place details available.
+                    </p>
+                  )}
                   {canEditTrip && mapDetailPlace && (
                   <section
                     className={[

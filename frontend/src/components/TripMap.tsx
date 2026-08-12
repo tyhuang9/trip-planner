@@ -95,7 +95,9 @@ export interface MapPlaceClickEvent {
   clickedAtIso: string
   clickedAtMs: number
   location: MapClickedLocation | null
+  placeName: string | null
   placeId: string | null
+  source: 'native-coordinate' | 'native-poi' | 'web'
   traceId: string
 }
 
@@ -1022,7 +1024,15 @@ function TripMapContent({
       placeId,
       traceId,
     })
-    onMapPlaceClick?.({ clickedAtIso, clickedAtMs, location, placeId, traceId })
+    onMapPlaceClick?.({
+      clickedAtIso,
+      clickedAtMs,
+      location,
+      placeId,
+      placeName: null,
+      source: 'web',
+      traceId,
+    })
   }, [onMapPlaceClick])
 
   useEffect(() => {

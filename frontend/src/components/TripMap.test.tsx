@@ -1273,7 +1273,9 @@ describe('<TripMap>', () => {
       clickedAtIso: expect.any(String),
       clickedAtMs: expect.any(Number),
       location: { lat: 35.7, lng: 139.8 },
+      placeName: null,
       placeId: 'google.clicked-place',
+      source: 'web',
       traceId: expect.stringMatching(/^place-/),
     }))
   })
@@ -1305,7 +1307,9 @@ describe('<TripMap>', () => {
       clickedAtIso: expect.any(String),
       clickedAtMs: expect.any(Number),
       location: { lat: 35.7001, lng: 139.8001 },
+      placeName: null,
       placeId: null,
+      source: 'web',
       traceId: expect.stringMatching(/^place-/),
     }))
   })
