@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "template_status": "UNEXECUTED",
   "notice": "TEMPLATE / NOT EVIDENCE — immutable source; JSON results are the sole claim-bearing artifact.",
   "copy_results_to": "docs/mobile/evidence/issue-64-ios/YYYY-MM-DD/<lowercase-run-id>/results.json",
@@ -767,8 +767,25 @@
   "adr_contract": {
     "selected_outcome": "UNEXECUTED",
     "decision_artifact_reference": "UNEXECUTED",
+    "security_properties": "UNEXECUTED",
+    "frontend_work": {
+      "classification": "UNEXECUTED",
+      "scope_ids": [],
+      "details": "UNEXECUTED"
+    },
+    "backend_work": {
+      "classification": "UNEXECUTED",
+      "scope_ids": [],
+      "details": "UNEXECUTED"
+    },
+    "migration_compatibility": "UNEXECUTED",
+    "revised_estimate": "UNEXECUTED",
+    "follow_up_issue_references": [],
     "allowed_outcomes": [
       "cookie_only_proven",
+      "native_credential_transport"
+    ],
+    "fallback_outcomes": [
       "native_credential_transport"
     ],
     "forbidden_fallbacks": [
@@ -781,5 +798,6 @@
     "spike": "docs/mobile/ios-beta-auth-session-device-spike.md",
     "adr": "docs/mobile/ios-beta-auth-session-transport-adr-template.md"
   },
-  "release_track": "ios_beta"
+  "release_track": "ios_beta",
+  "qualification": "provisional_ios_implementation"
 }

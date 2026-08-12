@@ -1,6 +1,7 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "release_track": "ios_beta",
+  "qualification": "provisional_ios_implementation",
   "platforms": {
     "ios": {
       "device_type": "physical_iphone",
@@ -59,9 +60,58 @@
       "cookie_only_proven",
       "native_credential_transport"
     ],
+    "fallback_outcomes": [
+      "native_credential_transport"
+    ],
     "forbidden_fallbacks": [
       "endpoint_only_fallback",
       "web_storage_refresh_or_guest_token_workaround"
-    ]
+    ],
+    "required_acceptance_fields": [
+      "selected_outcome",
+      "decision_artifact_reference",
+      "security_properties",
+      "frontend_work",
+      "backend_work",
+      "migration_compatibility",
+      "revised_estimate",
+      "follow_up_issue_references"
+    ],
+    "work_requirements": {
+      "cookie_only_proven": {
+        "frontend": {
+          "classification": "no_fallback_work",
+          "scope_ids": []
+        },
+        "backend": {
+          "classification": "no_fallback_work",
+          "scope_ids": []
+        }
+      },
+      "native_credential_transport": {
+        "frontend": {
+          "classification": "explicit_native_transport_work",
+          "scope_ids": [
+            "member_credential_storage",
+            "guest_credential_storage",
+            "member_and_guest_request_attachment",
+            "refresh_rotation_and_session_boundaries",
+            "verification_and_password_reset_returns",
+            "rest_and_sse_transport"
+          ]
+        },
+        "backend": {
+          "classification": "explicit_native_transport_work",
+          "scope_ids": [
+            "member_credential_issue_rotate_revoke",
+            "guest_credential_issue_claim_revoke",
+            "login_verification_logout_deletion",
+            "guest_acceptance_expiry_revocation",
+            "rest_and_sse_authentication",
+            "migration_and_web_compatibility"
+          ]
+        }
+      }
+    }
   }
 }
