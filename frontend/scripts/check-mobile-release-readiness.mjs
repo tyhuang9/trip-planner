@@ -90,7 +90,8 @@ function inspectCase(entry, expectedId, label, contextId, options, violations) {
   const keys = expectedId === 'offline_loss_reconnect_each_session_boundary' ? [...CASE_KEYS, 'session_boundaries'] : CASE_KEYS
   if (!requireExactKeys(entry, keys, label, violations)) return
   if (entry.case_id !== expectedId) violations.push(`${label} case_id must be ${expectedId}`)
-  if (options.template ? entry.status !== 'UNEXECUTED' : entry.status !== 'PASS') violations.push(`${label} status must be PASS for a selected ADR decision`)
+  if (options.template ? entry.status !== 'UNEXECUTED' : !['PASS', 'FAIL'].includes(entry.status)) violations.push(`${label} status must be PASS or FAIL for a selected ADR decision`)
+  if (!options.template) options.completedStatuses.push(entry.status)
   for (const key of ['preconditions', 'actions', 'expected_outcome', 'cleanup']) if (options.template ? entry[key] !== 'UNEXECUTED' : typeof entry[key] !== 'string' || !entry[key].trim() || entry[key] === 'UNEXECUTED') violations.push(`${label} ${key} must be completed text`)
   inspectEvidence(entry.evidence, `${label} evidence`, { ...options, context: contextId }, violations)
   if (expectedId === 'offline_loss_reconnect_each_session_boundary') {
@@ -99,7 +100,8 @@ function inspectCase(entry, expectedId, label, contextId, options, violations) {
     exactIds(entry.session_boundaries, 'boundary', expected, `${label} session boundaries`, violations)
     for (const boundary of entry.session_boundaries) {
       if (!requireExactKeys(boundary, ['boundary', 'status', 'evidence'], `${label} boundary`, violations)) continue
-      if (options.template ? boundary.status !== 'UNEXECUTED' : boundary.status !== 'PASS') violations.push(`${label} boundary status must be PASS for a selected ADR decision`)
+      if (options.template ? boundary.status !== 'UNEXECUTED' : !['PASS', 'FAIL'].includes(boundary.status)) violations.push(`${label} boundary status must be PASS or FAIL for a selected ADR decision`)
+      if (!options.template) options.completedStatuses.push(boundary.status)
       inspectEvidence(boundary.evidence, `${label} boundary evidence`, { ...options, context: contextId }, violations)
     }
   }
@@ -126,6 +128,7 @@ function inspectResults(document, label, template, violations, catalog, resultIn
   const platformChecksums = new Set()
   const runCommits = new Set()
   const runVersions = new Set()
+  const completedStatuses = []
   for (const platform of document.platforms) {
     const name = platform?.platform
     if (!catalog.platforms[name]) continue
@@ -168,18 +171,18 @@ function inspectResults(document, label, template, violations, catalog, resultIn
     for (const context of platform.contexts) {
       const id = context?.context_id
       if (!catalog.contexts[id] || !requireExactKeys(context, ['context_id', 'cases', 'credential_lifecycle'], `${label} ${name} ${id}`, violations)) continue
-      const options = { template, platform: name, runId: resultInfo.runId, platformChecksum: platform.metadata?.artifact_identity_checksum, usedReferences, catalog }
+      const options = { template, platform: name, runId: resultInfo.runId, platformChecksum: platform.metadata?.artifact_identity_checksum, usedReferences, catalog, completedStatuses }
       if (!Array.isArray(context.cases)) { violations.push(`${label} ${name} ${id} cases must be an array`); continue }
       exactIds(context.cases, 'case_id', catalog.contexts[id].cases, `${label} ${name} ${id} cases`, violations)
       for (const caseId of catalog.contexts[id].cases) { const entry = context.cases.find((x) => x?.case_id === caseId); if (entry) inspectCase(entry, caseId, `${label} ${name} ${id} ${caseId}`, id, options, violations) }
       if (!Array.isArray(context.credential_lifecycle)) { violations.push(`${label} ${name} ${id} lifecycle must be an array`); continue }
       exactIds(context.credential_lifecycle, 'stage_id', catalog.contexts[id].credential_lifecycle, `${label} ${name} ${id} lifecycle`, violations)
-      for (const stage of context.credential_lifecycle) { if (!requireExactKeys(stage, ['stage_id', 'status', 'evidence'], `${label} ${name} ${id} lifecycle stage`, violations)) continue; if (template ? stage.status !== 'UNEXECUTED' : stage.status !== 'PASS') violations.push(`${label} ${name} ${id} lifecycle stage status must be PASS for a selected ADR decision`); inspectEvidence(stage.evidence, `${label} ${name} ${id} lifecycle evidence`, { ...options, context: id }, violations) }
+      for (const stage of context.credential_lifecycle) { if (!requireExactKeys(stage, ['stage_id', 'status', 'evidence'], `${label} ${name} ${id} lifecycle stage`, violations)) continue; if (template ? stage.status !== 'UNEXECUTED' : !['PASS', 'FAIL'].includes(stage.status)) violations.push(`${label} ${name} ${id} lifecycle stage status must be PASS or FAIL for a selected ADR decision`); if (!template) completedStatuses.push(stage.status); inspectEvidence(stage.evidence, `${label} ${name} ${id} lifecycle evidence`, { ...options, context: id }, violations) }
     }
     if (!Array.isArray(platform.platform_cases)) { violations.push(`${label} ${name} platform_cases must be an array`); continue }
     const platformCase = catalog.platforms[name].platform_case
     exactIds(platform.platform_cases, 'case_id', [platformCase], `${label} ${name} platform cases`, violations)
-    if (platform.platform_cases[0]) inspectCase(platform.platform_cases[0], platformCase, `${label} ${name} platform case`, 'platform', { template, platform: name, runId: resultInfo.runId, platformChecksum: platform.metadata?.artifact_identity_checksum, usedReferences, catalog }, violations)
+    if (platform.platform_cases[0]) inspectCase(platform.platform_cases[0], platformCase, `${label} ${name} platform case`, 'platform', { template, platform: name, runId: resultInfo.runId, platformChecksum: platform.metadata?.artifact_identity_checksum, usedReferences, catalog, completedStatuses }, violations)
   }
   if (!template && runCommits.size !== 1) violations.push(`${label} platforms must use the same commit_or_tag`)
   if (!template && runVersions.size !== 1) violations.push(`${label} platforms must use the same app_version`)
@@ -192,6 +195,8 @@ function inspectResults(document, label, template, violations, catalog, resultIn
     } else {
       if (typeof document.adr_contract.selected_outcome !== 'string' || !catalog.adr.allowed_outcomes.includes(document.adr_contract.selected_outcome)) violations.push(`${label} ADR selected_outcome must be exactly one approved scalar`)
       if (document.adr_contract.decision_artifact_reference !== `restricted://issue-64/${resultInfo.runId}/decision`) violations.push(`${label} ADR decision_artifact_reference must match the result run`)
+      if (document.adr_contract.selected_outcome === 'cookie_only_proven' && completedStatuses.some((status) => status !== 'PASS')) violations.push(`${label} cookie_only_proven requires every executed check to PASS`)
+      if (document.adr_contract.selected_outcome === 'native_credential_transport' && !completedStatuses.includes('FAIL')) violations.push(`${label} native_credential_transport requires at least one executed FAIL`)
     }
   }
   const expectedReferences = contract?.references ?? { catalog: 'docs/mobile/auth-session-device-evidence.catalog.json', spike: 'docs/mobile/auth-session-device-spike.md', adr: 'docs/mobile/auth-session-transport-adr-template.md' }
