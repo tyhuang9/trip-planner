@@ -137,7 +137,9 @@ describe('<PasswordResetPage>', () => {
     expect(alert).toHaveTextContent('New passwords do not match.')
     expect(password).toHaveAttribute('aria-invalid', 'true')
     expect(confirmation).toHaveAttribute('aria-invalid', 'true')
-    expect(password).toHaveAttribute('aria-describedby', alert.id)
+    const passwordDescriptions = password.getAttribute('aria-describedby')?.split(' ')
+    expect(passwordDescriptions).toContain(alert.id)
+    expect(passwordDescriptions).toContain(screen.getByText('At least 12 characters with a letter and a digit.').id)
     expect(confirmation).toHaveAttribute('aria-describedby', alert.id)
   })
 
@@ -409,6 +411,142 @@ describe('<PasswordResetPage>', () => {
     expect(await screen.findByText(/password reset complete/i)).toBeInTheDocument()
     expect(authMocks.confirmPasswordReset).toHaveBeenCalledTimes(2)
     expect(getDeepLinkHandoff(handoffId)).toBeUndefined()
+  })
+
+  it.each([
+    ['password', 'confirmation'],
+    ['newPassword', 'confirmPassword'],
+    ['newPassword', 'confirm_password'],
+  ])('renders parsed %s and %s field errors with accessible associations', async (passwordField, confirmationField) => {
+    authMocks.confirmPasswordReset.mockRejectedValueOnce(Object.assign(new Error('Validation failed'), {
+      isAxiosError: true,
+      response: {
+        status: 400,
+        data: {
+          error: 'validation_failed',
+          fieldErrors: [
+            { field: passwordField, message: 'Use a stronger password.' },
+            { field: confirmationField, message: 'Passwords must match.' },
+          ],
+        },
+      },
+    }))
+    renderResetPage('/reset-password?token=validation-reset-token')
+
+    const password = screen.getByLabelText(/new password/i)
+    const confirmation = screen.getByLabelText(/confirm password/i)
+    await userEvent.type(password, 'valid-password-123')
+    await userEvent.type(confirmation, 'valid-password-123')
+    await userEvent.click(screen.getByRole('button', { name: /reset password/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/fix the highlighted fields/i)
+    const passwordError = await screen.findByText('Use a stronger password.')
+    const confirmationError = await screen.findByText('Passwords must match.')
+    expect(password).toHaveAttribute('aria-invalid', 'true')
+    expect(confirmation).toHaveAttribute('aria-invalid', 'true')
+    expect(password.getAttribute('aria-describedby')?.split(' ')).toContain(passwordError.id)
+    expect(confirmation).toHaveAttribute('aria-describedby', confirmationError.id)
+    await waitFor(() => expect(password).toHaveFocus())
+  })
+
+  it.each([
+    ['password', 'confirmation'],
+    ['newPassword', 'confirmPassword'],
+    ['newPassword', 'confirm_password'],
+  ])('clears %s/%s server errors on edit and stale errors on retry', async (passwordField, confirmationField) => {
+    authMocks.confirmPasswordReset
+      .mockRejectedValueOnce(Object.assign(new Error('Validation failed'), {
+        isAxiosError: true,
+        response: {
+          status: 400,
+          data: {
+            error: 'validation_failed',
+            fieldErrors: [
+              { field: passwordField, message: 'Password rejected.' },
+              { field: confirmationField, message: 'Confirmation rejected.' },
+            ],
+          },
+        },
+      }))
+      .mockResolvedValueOnce(undefined)
+    renderResetPage('/reset-password?token=retry-field-error-token')
+
+    const password = screen.getByLabelText(/new password/i)
+    const confirmation = screen.getByLabelText(/confirm password/i)
+    await userEvent.type(password, 'valid-password-123')
+    await userEvent.type(confirmation, 'valid-password-123')
+    await userEvent.click(screen.getByRole('button', { name: /reset password/i }))
+    expect(await screen.findByText('Password rejected.')).toBeInTheDocument()
+    expect(screen.getByText('Confirmation rejected.')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(/fix the highlighted fields/i)
+    expect(password).toHaveFocus()
+
+    await userEvent.type(password, 'x')
+    expect(screen.queryByText('Password rejected.')).not.toBeInTheDocument()
+    expect(screen.getByText('Confirmation rejected.')).toBeInTheDocument()
+    await waitFor(() => expect(password).toHaveFocus())
+    expect(screen.getByRole('alert')).toHaveTextContent(/fix the highlighted fields/i)
+
+    await userEvent.type(confirmation, 'x')
+    expect(screen.queryByText('Confirmation rejected.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /reset password/i }))
+    await screen.findByText(/password reset complete/i)
+    expect(screen.queryByText('Confirmation rejected.')).not.toBeInTheDocument()
+    expect(authMocks.confirmPasswordReset).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the backend password policy as a permanent hint without rejecting locally', async () => {
+    authMocks.confirmPasswordReset.mockRejectedValueOnce(Object.assign(new Error('Validation failed'), {
+      isAxiosError: true,
+      response: {
+        status: 400,
+        data: {
+          error: 'validation_failed',
+          fieldErrors: [
+            { field: 'password', message: 'Password must be at least 12 characters.' },
+          ],
+        },
+      },
+    }))
+    renderResetPage('/reset-password?token=policy-hint-token')
+
+    expect(screen.getByText('At least 12 characters with a letter and a digit.')).toBeInTheDocument()
+    await userEvent.type(screen.getByLabelText(/new password/i), 'a1')
+    await userEvent.type(screen.getByLabelText(/confirm password/i), 'a1')
+    await userEvent.click(screen.getByRole('button', { name: /reset password/i }))
+
+    expect(await screen.findByText('Password must be at least 12 characters.')).toBeInTheDocument()
+    expect(authMocks.confirmPasswordReset).toHaveBeenCalledWith({
+      token: 'policy-hint-token',
+      password: 'a1',
+    })
+  })
+
+  it.each([
+    ['direct', '/reset-password?token=terminal-direct-token'],
+    ['handoff', 'handoff'],
+  ])('ends %s reset in a terminal success state with no resubmission', async (kind, path) => {
+    authMocks.confirmPasswordReset.mockResolvedValue(undefined)
+    let handoffId: string | undefined
+    if (kind === 'handoff') {
+      handoffId = putDeepLinkHandoff({ kind: 'reset-password', token: 'terminal-handoff-token' })
+      path = `/link/${handoffId}`
+    }
+    renderResetPage(path)
+
+    await userEvent.type(screen.getByLabelText(/new password/i), 'terminal-password-123')
+    await userEvent.type(screen.getByLabelText(/confirm password/i), 'terminal-password-123')
+    await userEvent.click(screen.getByRole('button', { name: /reset password/i }))
+    await screen.findByText(/password reset complete/i)
+
+    expect(screen.queryByRole('form')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /reset password/i })).not.toBeInTheDocument()
+    expect(screen.getByText(/password reset complete/i)).toHaveFocus()
+    expect(screen.getByRole('link', { name: /back to sign in/i })).toBeInTheDocument()
+    await userEvent.keyboard('{Enter}')
+    expect(authMocks.confirmPasswordReset).toHaveBeenCalledTimes(1)
+    if (handoffId) expect(getDeepLinkHandoff(handoffId)).toBeUndefined()
   })
 
   it('does not consume a handoff when its request completes after unmount', async () => {
