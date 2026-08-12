@@ -22,6 +22,35 @@ const sourceFiles = [
 const resultPath = 'docs/mobile/evidence/issue-64/2026-07-29/safe-run-1/results.json'
 const iosBetaResultPath = 'docs/mobile/evidence/issue-64-ios/2026-07-29/ios-safe-run-1/results.json'
 
+function contractCatalog(releaseTrack = 'shared_cross_platform') {
+  const candidate = sources()
+  return JSON.parse(releaseTrack === 'ios_beta' ? candidate.iosBetaAuthSessionEvidenceCatalog : candidate.authSessionEvidenceCatalog)
+}
+function expectedFallbackFlowIds(releaseTrack = 'shared_cross_platform') {
+  return Object.entries(contractCatalog(releaseTrack).contexts).flatMap(([contextId, context]) => [
+    ...context.cases.map((caseId) => `${contextId}.case.${caseId}`),
+    ...context.credential_lifecycle.map((stageId) => `${contextId}.credential_lifecycle.${stageId}`),
+  ])
+}
+function outcomeWork(outcome, domain, releaseTrack = 'shared_cross_platform') {
+  const requirement = contractCatalog(releaseTrack).adr.work_requirements[outcome][domain]
+  return {
+    classification: requirement.classification,
+    scope_ids: [...requirement.scope_ids],
+    details: requirement.classification === 'no_fallback_work'
+      ? 'NO_FALLBACK_WORK'
+      : `Completed explicit native credential transport work for the catalog-owned ${domain} scopes.`,
+  }
+}
+function fallbackFollowUps(releaseTrack = 'shared_cross_platform') {
+  const flowIds = expectedFallbackFlowIds(releaseTrack)
+  const splitAt = Math.ceil(flowIds.length / 2)
+  return [
+    { issue_url: 'https://github.com/tyhuang9/dupert/issues/65', flow_ids: flowIds.slice(0, splitAt) },
+    { issue_url: 'https://github.com/tyhuang9/dupert/issues/66', flow_ids: flowIds.slice(splitAt) },
+  ]
+}
+
 function completed() {
   const value = JSON.parse(sources().authSessionEvidenceTemplate)
   value.template_status = 'COMPLETED'
@@ -30,6 +59,12 @@ function completed() {
   const result = fill(value)
   result.adr_contract.selected_outcome = 'cookie_only_proven'
   result.adr_contract.decision_artifact_reference = 'restricted://issue-64/safe-run-1/decision'
+  result.adr_contract.security_properties = 'Preserves HttpOnly credentials, rotation, revocation, and least-privilege boundaries.'
+  result.adr_contract.frontend_work = outcomeWork('cookie_only_proven', 'frontend')
+  result.adr_contract.backend_work = outcomeWork('cookie_only_proven', 'backend')
+  result.adr_contract.migration_compatibility = 'Existing web sessions remain compatible without a credential migration.'
+  result.adr_contract.revised_estimate = 'One engineering day for release verification and evidence review.'
+  result.adr_contract.follow_up_issue_references = []
   let referenceId = 0
   for (const [platformIndex, platform] of result.platforms.entries()) {
     const checksum = 'sha256:' + (platformIndex === 0 ? 'a' : 'b').repeat(64)
@@ -49,6 +84,22 @@ function completed() {
   }
   return result
 }
+function withAdrAcceptance(result, {
+  outcome = 'cookie_only_proven',
+  releaseTrack = result.release_track,
+  followUps = [],
+} = {}) {
+  Object.assign(result.adr_contract, {
+    selected_outcome: outcome,
+    security_properties: 'Preserves HttpOnly credentials, rotation, revocation, and least-privilege boundaries.',
+    frontend_work: outcomeWork(outcome, 'frontend', releaseTrack),
+    backend_work: outcomeWork(outcome, 'backend', releaseTrack),
+    migration_compatibility: 'Existing web sessions remain compatible without a credential migration.',
+    revised_estimate: 'One engineering day for release verification and evidence review.',
+    follow_up_issue_references: followUps,
+  })
+  return result
+}
 function tracked(result = completed()) {
   const candidate = sources()
   candidate.trackedFiles = [...sourceFiles, resultPath]
@@ -64,11 +115,12 @@ function trackedAt(runId, result = completed(), date = '2026-07-29') {
 }
 
 function iosBetaCompleted() {
-  const result = JSON.parse(JSON.stringify(completed()).replaceAll('safe-run-1', 'ios-safe-run-1'))
-  return {
+  const result = JSON.parse(JSON.stringify(completed()).replaceAll('restricted://issue-64/', 'restricted://issue-64-ios/').replaceAll('safe-run-1', 'ios-safe-run-1'))
+  const iosBetaResult = {
     ...result,
-    schema_version: 3,
+    schema_version: 4,
     release_track: 'ios_beta',
+    qualification: 'provisional_ios_implementation',
     copy_results_to: 'docs/mobile/evidence/issue-64-ios/YYYY-MM-DD/<lowercase-run-id>/results.json',
     platforms: [result.platforms.find((platform) => platform.platform === 'ios')],
     references: {
@@ -77,6 +129,7 @@ function iosBetaCompleted() {
       adr: 'docs/mobile/ios-beta-auth-session-transport-adr-template.md',
     },
   }
+  return withAdrAcceptance(iosBetaResult, { releaseTrack: 'ios_beta' })
 }
 
 function trackedIosBeta(result = iosBetaCompleted()) {
@@ -97,14 +150,125 @@ test('accepts an iOS-only beta result and rejects cross-platform or legacy drift
   crossPlatform.platforms.push(completed().platforms.find((platform) => platform.platform === 'android'))
   assert.match(messages(trackedIosBeta(crossPlatform)), /platforms must contain exactly: ios/)
   const legacySchema = iosBetaCompleted()
-  legacySchema.schema_version = 2
-  assert.match(messages(trackedIosBeta(legacySchema)), /schema_version must be 3/)
+  legacySchema.schema_version = 3
+  assert.match(messages(trackedIosBeta(legacySchema)), /schema_version must be 4/)
 })
 
 test('rejects an untracked iOS beta result copy', () => {
   const candidate = sources()
   candidate.resultCopies = { [iosBetaResultPath]: JSON.stringify(iosBetaCompleted()) }
   assert.match(messages(candidate), /iOS beta result copy must be tracked at an authorized path/)
+})
+
+test('requires explicit, non-interchangeable release tracks in both source contracts and results', () => {
+  const sharedCatalogCandidate = sources()
+  const sharedCatalog = JSON.parse(sharedCatalogCandidate.authSessionEvidenceCatalog)
+  sharedCatalog.release_track = 'ios_beta'
+  sharedCatalogCandidate.authSessionEvidenceCatalog = JSON.stringify(sharedCatalog)
+  assert.match(messages(sharedCatalogCandidate), /release_track must be shared_cross_platform/)
+
+  const iosCatalogCandidate = sources()
+  const iosCatalog = JSON.parse(iosCatalogCandidate.iosBetaAuthSessionEvidenceCatalog)
+  delete iosCatalog.release_track
+  iosCatalogCandidate.iosBetaAuthSessionEvidenceCatalog = JSON.stringify(iosCatalog)
+  assert.match(messages(iosCatalogCandidate), /release_track/)
+
+  const substitutedCatalogCandidate = sources()
+  substitutedCatalogCandidate.authSessionEvidenceCatalog = substitutedCatalogCandidate.iosBetaAuthSessionEvidenceCatalog
+  assert.match(messages(substitutedCatalogCandidate), /release_track must be shared_cross_platform|platforms must contain exactly/)
+
+  const sharedResult = completed()
+  sharedResult.release_track = 'ios_beta'
+  assert.match(messages(tracked(sharedResult)), /release_track is invalid/)
+
+  const missingSharedTrack = completed()
+  delete missingSharedTrack.release_track
+  assert.match(messages(tracked(missingSharedTrack)), /release_track/)
+
+  const iosResult = iosBetaCompleted()
+  iosResult.release_track = 'shared_cross_platform'
+  assert.match(messages(trackedIosBeta(iosResult)), /release_track is invalid/)
+
+  const missingIosTrack = iosBetaCompleted()
+  delete missingIosTrack.release_track
+  assert.match(messages(trackedIosBeta(missingIosTrack)), /release_track/)
+
+  assert.match(messages(tracked(iosBetaCompleted())), /release_track is invalid|copy_results_to is invalid|platforms must contain exactly/)
+  assert.match(messages(trackedIosBeta(completed())), /release_track is invalid|copy_results_to is invalid|platforms must contain exactly/)
+})
+
+test('binds claim-bearing qualification to the selected release track', () => {
+  const shared = completed()
+  shared.qualification = 'provisional_ios_implementation'
+  assert.match(messages(tracked(shared)), /qualification must be final_cross_platform_qualification/)
+
+  const ios = iosBetaCompleted()
+  ios.qualification = 'final_cross_platform_qualification'
+  assert.match(messages(trackedIosBeta(ios)), /qualification must be provisional_ios_implementation/)
+
+  const missing = iosBetaCompleted()
+  delete missing.qualification
+  assert.match(messages(trackedIosBeta(missing)), /qualification/)
+
+  const unknown = completed()
+  unknown.qualification = 'anything'
+  assert.match(messages(tracked(unknown)), /qualification must be final_cross_platform_qualification/)
+})
+
+test('uses non-interchangeable external evidence namespaces for each release track', () => {
+  const ios = iosBetaCompleted()
+  ios.adr_contract.decision_artifact_reference = 'restricted://issue-64/ios-safe-run-1/decision'
+  assert.match(messages(trackedIosBeta(ios)), /decision_artifact_reference must match the result track and run/)
+
+  const shared = completed()
+  shared.platforms[0].attestation.safe_reference = 'restricted://issue-64-ios/safe-run-1/ios/attestation'
+  assert.match(messages(tracked(shared)), /attestation reference is invalid/)
+})
+
+test('reserves final cross-platform qualification for dual-device shared evidence', () => {
+  const sharedResult = completed()
+  sharedResult.platforms = sharedResult.platforms.filter((platform) => platform.platform === 'ios')
+  assert.match(messages(tracked(sharedResult)), /platforms must contain exactly: ios, android/)
+
+  const iosResult = iosBetaCompleted()
+  iosResult.platforms.push(completed().platforms.find((platform) => platform.platform === 'android'))
+  assert.match(messages(trackedIosBeta(iosResult)), /platforms must contain exactly: ios/)
+
+  const candidate = sources()
+  assert.match(candidate.authSessionAdrTemplate, /Only the `shared_cross_platform` track.*can qualify a final cross-platform decision/s)
+  assert.match(candidate.iosBetaAuthSessionAdrTemplate, /may authorize only provisional iOS implementation.*never claim final shared or cross-platform qualification/s)
+})
+
+test('requires complete ADR acceptance evidence on both release tracks', () => {
+  for (const [name, result, inspect] of [
+    ['shared', completed(), (value) => messages(tracked(value))],
+    ['ios_beta', iosBetaCompleted(), (value) => messages(trackedIosBeta(value))],
+  ]) {
+    for (const field of ['security_properties', 'frontend_work', 'backend_work', 'migration_compatibility', 'revised_estimate', 'follow_up_issue_references']) {
+      const candidate = structuredClone(result)
+      delete candidate.adr_contract[field]
+      assert.match(inspect(candidate), new RegExp(`ADR contract.*${field}`), `${name} ${field}`)
+    }
+  }
+})
+
+test('enforces catalog-owned native work and exact follow-up partition on both release tracks', () => {
+  for (const [releaseTrack, createResult, inspect] of [
+    ['shared_cross_platform', completed, (value) => inspectMobileReleaseReadiness(tracked(value))],
+    ['ios_beta', iosBetaCompleted, (value) => inspectMobileReleaseReadiness(trackedIosBeta(value))],
+  ]) {
+    const valid = withAdrAcceptance(createResult(), { outcome: 'native_credential_transport', releaseTrack, followUps: fallbackFollowUps(releaseTrack) })
+    valid.platforms[0].contexts[0].cases[0].status = 'FAIL'
+    assert.deepEqual(inspect(valid), [], releaseTrack)
+
+    const missingScope = structuredClone(valid)
+    missingScope.adr_contract.frontend_work.scope_ids.pop()
+    assert.match(inspect(missingScope).join('\n'), /frontend_work scope_ids must exactly match/, releaseTrack)
+
+    const partialFollowUp = structuredClone(valid)
+    partialFollowUp.adr_contract.follow_up_issue_references[1].flow_ids.pop()
+    assert.match(inspect(partialFollowUp).join('\n'), /must cover every catalog member\/guest case/, releaseTrack)
+  }
 })
 
 test('rejects native identifier and version drift', () => {
@@ -243,12 +407,12 @@ test('rejects untracked templates, invalid paths, marker drift, extra gates, and
   assert.match(output, /release-gate table must use/)
 })
 
-test('rejects schema v3 in the source template', () => {
-  const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.schema_version = 3; candidate.authSessionEvidenceTemplate = JSON.stringify(document); assert.match(messages(candidate), /schema_version must be 2/)
+test('rejects a legacy schema in the shared source template', () => {
+  const candidate = sources(); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.schema_version = 3; candidate.authSessionEvidenceTemplate = JSON.stringify(document); assert.match(messages(candidate), /schema_version must be 4/)
 })
 
-test('rejects schema v3 in a completed result', () => {
-  const result = completed(); result.schema_version = 3; assert.match(messages(tracked(result)), /schema_version must be 2/)
+test('rejects a legacy schema in a shared completed result', () => {
+  const result = completed(); result.schema_version = 3; assert.match(messages(tracked(result)), /schema_version must be 4/)
 })
 
 test('uses explicit context for offline boundaries regardless of member and guest path text', () => {
@@ -311,7 +475,7 @@ test('rejects reused references and cloned cross-platform evidence', () => {
 })
 
 test('unrelated release violations do not suppress device-contract violations', () => {
-  const candidate = sources(); candidate.workflow = candidate.workflow.replace("node-version: '22'", "node-version: '24'"); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.schema_version = 3; candidate.authSessionEvidenceTemplate = JSON.stringify(document); const output = messages(candidate); assert.match(output, /CI Node version/); assert.match(output, /schema_version must be 2/)
+  const candidate = sources(); candidate.workflow = candidate.workflow.replace("node-version: '22'", "node-version: '24'"); const document = JSON.parse(candidate.authSessionEvidenceTemplate); document.schema_version = 3; candidate.authSessionEvidenceTemplate = JSON.stringify(document); const output = messages(candidate); assert.match(output, /CI Node version/); assert.match(output, /schema_version must be 4/)
 })
 
 test('rejects an all-FAIL completed result with cookie-only selected', () => {
@@ -327,7 +491,7 @@ test('rejects incomplete offline-boundary evidence', () => {
 })
 
 test('requires a failure before selecting native credential transport', () => {
-  const result = completed(); result.adr_contract.selected_outcome = 'native_credential_transport'; assert.match(messages(tracked(result)), /requires at least one executed FAIL/)
+  const result = withAdrAcceptance(completed(), { outcome: 'native_credential_transport', followUps: fallbackFollowUps() }); assert.match(messages(tracked(result)), /requires at least one executed FAIL/)
   result.platforms[1].contexts[1].credential_lifecycle[0].status = 'FAIL'; assert.deepEqual(inspectMobileReleaseReadiness(tracked(result)), [])
 })
 
@@ -338,8 +502,7 @@ test('accepts native credential transport for each completed auth evidence failu
     (result) => { result.platforms[1].platform_cases[0].status = 'FAIL' },
   ]
   for (const markFailure of markFailures) {
-    const result = completed()
-    result.adr_contract.selected_outcome = 'native_credential_transport'
+    const result = withAdrAcceptance(completed(), { outcome: 'native_credential_transport', followUps: fallbackFollowUps() })
     markFailure(result)
     assert.deepEqual(inspectMobileReleaseReadiness(tracked(result)), [])
   }
