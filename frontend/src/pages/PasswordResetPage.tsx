@@ -7,6 +7,8 @@ import { useDeepLinkHandoffSnapshot } from '../deep-links/useDeepLinkHandoffSnap
 import { consumeDeepLinkHandoff } from '../deep-links/vault'
 import styles from './AuthForm.module.css'
 
+const VALIDATION_SUMMARY = 'Please fix the highlighted fields and try again.'
+
 export default function PasswordResetPage() {
   usePageTitle('Reset password - Dupert')
 
@@ -93,18 +95,32 @@ function PasswordResetForm({
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [announcement, setAnnouncement] = useState('')
   const [shouldAnnounceOwnerTransition] = useState(announceOwnerTransition)
   const activeRequest = useRef<object | null>(null)
   const headingRef = useRef<HTMLHeadingElement>(null)
+  const successRef = useRef<HTMLDivElement>(null)
+  const passwordRef = useRef<HTMLInputElement>(null)
+  const confirmPasswordRef = useRef<HTMLInputElement>(null)
   const submitButtonRef = useRef<HTMLButtonElement>(null)
+  const shouldFocusInvalidRef = useRef(false)
   const passwordId = useId()
   const confirmPasswordId = useId()
   const passwordMismatchId = useId()
+  const passwordHintId = `${passwordId}-hint`
+  const passwordErrorId = `${passwordId}-error`
+  const confirmPasswordErrorId = `${confirmPasswordId}-error`
   const hasResetToken = token.trim().length > 0
   const hasPasswordMismatch = errorMessage === 'New passwords do not match.'
+  const passwordFieldError = fieldErrors.password ?? fieldErrors.newPassword
+  const confirmPasswordFieldError =
+    fieldErrors.confirmPassword
+    ?? fieldErrors.confirmation
+    ?? fieldErrors.confirm_password
+    ?? fieldErrors.passwordConfirmation
 
   useEffect(() => {
     let announcementTimer: number | undefined
@@ -122,17 +138,67 @@ function PasswordResetForm({
     }
   }, [hasResetToken, shouldAnnounceOwnerTransition])
 
+  useEffect(() => {
+    if (successMessage) {
+      successRef.current?.focus()
+      return
+    }
+    if (isSubmitting || !shouldFocusInvalidRef.current) return
+    shouldFocusInvalidRef.current = false
+    if (passwordFieldError) {
+      passwordRef.current?.focus()
+    } else if (confirmPasswordFieldError) {
+      confirmPasswordRef.current?.focus()
+    } else if (hasPasswordMismatch) {
+      passwordRef.current?.focus()
+    }
+  }, [confirmPasswordFieldError, hasPasswordMismatch, isSubmitting, passwordFieldError, successMessage])
+
+  function hasRelatedFieldErrors(errors: Record<string, string>) {
+    return Boolean(
+      errors.password
+      ?? errors.newPassword
+      ?? errors.confirmPassword
+      ?? errors.confirmation
+      ?? errors.confirm_password
+      ?? errors.passwordConfirmation,
+    )
+  }
+
+  function clearFieldErrors(fields: string[]) {
+    const next = { ...fieldErrors }
+    for (const field of fields) delete next[field]
+    setFieldErrors(next)
+    if (errorMessage === VALIDATION_SUMMARY && !hasRelatedFieldErrors(next)) {
+      setErrorMessage(null)
+    }
+  }
+
+  function updatePassword(value: string) {
+    setPassword(value)
+    clearFieldErrors(['password', 'newPassword'])
+    if (hasPasswordMismatch) setErrorMessage(null)
+  }
+
+  function updateConfirmPassword(value: string) {
+    setConfirmPassword(value)
+    clearFieldErrors(['confirmPassword', 'confirmation', 'confirm_password', 'passwordConfirmation'])
+    if (hasPasswordMismatch) setErrorMessage(null)
+  }
+
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (isSubmitting || activeRequest.current) return
     setAnnouncement('')
     setErrorMessage(null)
+    setFieldErrors({})
     setSuccessMessage(null)
     if (!hasResetToken) {
       setErrorMessage('This reset link is missing or invalid. Request a new password reset link.')
       return
     }
     if (password !== confirmPassword) {
+      shouldFocusInvalidRef.current = true
       setErrorMessage('New passwords do not match.')
       return
     }
@@ -151,8 +217,11 @@ function PasswordResetForm({
       setConfirmPassword('')
     } catch (error) {
       if (activeRequest.current !== request) return
+      const parsed = parseApiError(error)
       setAnnouncement('')
-      setErrorMessage(parseApiError(error).topMessage)
+      setErrorMessage(parsed.topMessage)
+      setFieldErrors(parsed.fieldErrors)
+      shouldFocusInvalidRef.current = true
     } finally {
       if (activeRequest.current === request) {
         activeRequest.current = null
@@ -177,7 +246,14 @@ function PasswordResetForm({
         </p>
 
         {successMessage && (
-          <div className={styles.bannerSuccess} role="status">
+          <div
+            ref={successRef}
+            className={styles.bannerSuccess}
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            tabIndex={-1}
+          >
             {successMessage}
           </div>
         )}
@@ -198,45 +274,74 @@ function PasswordResetForm({
           </div>
         )}
 
-        {hasResetToken ? <form className={styles.form} aria-label="Password reset" aria-busy={isSubmitting} onSubmit={onSubmit} noValidate>
+        {!successMessage && hasResetToken ? <form className={styles.form} aria-label="Password reset" aria-busy={isSubmitting} onSubmit={onSubmit} noValidate>
           <label className={styles.field} htmlFor={passwordId}>
             <span className={styles.label}>New password</span>
             <input
               id={passwordId}
+              ref={passwordRef}
               className={styles.input}
               type="password"
               autoComplete="new-password"
               value={password}
-              onChange={(event) => setPassword(event.target.value)}
+              onChange={(event) => updatePassword(event.target.value)}
               required
               disabled={isSubmitting}
-              aria-invalid={hasPasswordMismatch}
-              aria-describedby={hasPasswordMismatch ? passwordMismatchId : undefined}
+              aria-invalid={passwordFieldError || hasPasswordMismatch ? true : undefined}
+              aria-describedby={hasPasswordMismatch
+                ? `${passwordHintId} ${passwordMismatchId}`
+                : passwordFieldError
+                  ? `${passwordHintId} ${passwordErrorId}`
+                  : passwordHintId}
             />
+            <span id={passwordHintId} className={styles.hint}>
+              At least 12 characters with a letter and a digit.
+            </span>
+            <span
+              id={passwordErrorId}
+              className={styles.fieldError}
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              {passwordFieldError ?? ''}
+            </span>
           </label>
           <label className={styles.field} htmlFor={confirmPasswordId}>
             <span className={styles.label}>Confirm password</span>
             <input
               id={confirmPasswordId}
+              ref={confirmPasswordRef}
               className={styles.input}
               type="password"
               autoComplete="new-password"
               value={confirmPassword}
-              onChange={(event) => setConfirmPassword(event.target.value)}
+              onChange={(event) => updateConfirmPassword(event.target.value)}
               required
               disabled={isSubmitting}
-              aria-invalid={hasPasswordMismatch}
-              aria-describedby={hasPasswordMismatch ? passwordMismatchId : undefined}
+              aria-invalid={confirmPasswordFieldError || hasPasswordMismatch ? true : undefined}
+              aria-describedby={hasPasswordMismatch
+                ? passwordMismatchId
+                : confirmPasswordFieldError
+                  ? confirmPasswordErrorId
+                  : undefined}
             />
+            <span
+              id={confirmPasswordErrorId}
+              className={styles.fieldError}
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              {confirmPasswordFieldError ?? ''}
+            </span>
           </label>
           <button ref={submitButtonRef} className={styles.submit} type="submit" aria-disabled={isSubmitting}>
             {isSubmitting ? 'Resetting...' : 'Reset password'}
           </button>
-        </form> : (
+        </form> : !successMessage ? (
           <p className={styles.altLink}>
             <Link to="/login?mode=password-reset">Request a new password reset link</Link>
           </p>
-        )}
+        ) : null}
 
         <p className={styles.altLink}>
           <Link to="/login">Back to sign in</Link>
