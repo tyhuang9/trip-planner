@@ -1,0 +1,64 @@
+diff --git a/node_modules/@capacitor/google-maps/android/src/main/java/com/capacitorjs/plugins/googlemaps/CapacitorGoogleMap.kt b/node_modules/@capacitor/google-maps/android/src/main/java/com/capacitorjs/plugins/googlemaps/CapacitorGoogleMap.kt
+index c0bc416..db5a387 100644
+--- a/node_modules/@capacitor/google-maps/android/src/main/java/com/capacitorjs/plugins/googlemaps/CapacitorGoogleMap.kt
++++ b/node_modules/@capacitor/google-maps/android/src/main/java/com/capacitorjs/plugins/googlemaps/CapacitorGoogleMap.kt
+@@ -33,6 +33,7 @@ class CapacitorGoogleMap(
+         OnMyLocationClickListener,
+         OnMapReadyCallback,
+         OnMapClickListener,
++        OnPoiClickListener,
+         OnMarkerClickListener,
+         OnMarkerDragListener,
+         OnInfoWindowClickListener,
+@@ -969,6 +970,7 @@ class CapacitorGoogleMap(
+             this@CapacitorGoogleMap.googleMap?.setOnCircleClickListener(this@CapacitorGoogleMap)
+             this@CapacitorGoogleMap.googleMap?.setOnMarkerDragListener(this@CapacitorGoogleMap)
+             this@CapacitorGoogleMap.googleMap?.setOnMapClickListener(this@CapacitorGoogleMap)
++            this@CapacitorGoogleMap.googleMap?.setOnPoiClickListener(this@CapacitorGoogleMap)
+             this@CapacitorGoogleMap.googleMap?.setOnMyLocationButtonClickListener(
+                     this@CapacitorGoogleMap
+             )
+@@ -1040,6 +1042,16 @@ class CapacitorGoogleMap(
+         delegate.notify("onMapClick", data)
+     }
+
++    override fun onPoiClick(pointOfInterest: PointOfInterest) {
++        val data = JSObject()
++        data.put("mapId", this@CapacitorGoogleMap.id)
++        data.put("placeId", pointOfInterest.placeId)
++        data.put("name", pointOfInterest.name)
++        data.put("latitude", pointOfInterest.latLng.latitude)
++        data.put("longitude", pointOfInterest.latLng.longitude)
++        delegate.notify("onPoiClick", data)
++    }
++
+     override fun onMarkerClick(marker: Marker): Boolean {
+         val data = JSObject()
+         data.put("mapId", this@CapacitorGoogleMap.id)
+diff --git a/node_modules/@capacitor/google-maps/ios/Sources/CapacitorGoogleMapsPlugin/CapacitorGoogleMapsPlugin.swift b/node_modules/@capacitor/google-maps/ios/Sources/CapacitorGoogleMapsPlugin/CapacitorGoogleMapsPlugin.swift
+index 55a830e..88c90b8 100644
+--- a/node_modules/@capacitor/google-maps/ios/Sources/CapacitorGoogleMapsPlugin/CapacitorGoogleMapsPlugin.swift
++++ b/node_modules/@capacitor/google-maps/ios/Sources/CapacitorGoogleMapsPlugin/CapacitorGoogleMapsPlugin.swift
+@@ -1090,6 +1090,22 @@ public class CapacitorGoogleMapsPlugin: CAPPlugin, GMSMapViewDelegate, CAPBridge
+         ])
+     }
+
++    // onPoiClick
++    public func mapView(
++        _ mapView: GMSMapView,
++        didTapPOIWithPlaceID placeID: String,
++        name: String,
++        location: CLLocationCoordinate2D
++    ) {
++        self.notifyListeners("onPoiClick", data: [
++            "mapId": self.findMapIdByMapView(mapView),
++            "placeId": placeID,
++            "name": name,
++            "latitude": location.latitude,
++            "longitude": location.longitude
++        ])
++    }
++
+     // onPolygonClick, onPolylineClick, onCircleClick
+     public func mapView(_ mapView: GMSMapView, didTap overlay: GMSOverlay) {
+         if let polygon = overlay as? GMSPolygon {

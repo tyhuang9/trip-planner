@@ -55,6 +55,11 @@ interface MapClickEvent {
   mapId: string
 }
 
+interface PoiClickEvent extends MapClickEvent {
+  name: string
+  placeId: string
+}
+
 interface MarkerClickEvent {
   markerId: string
   mapId: string
@@ -264,6 +269,10 @@ export class NativeGoogleMap {
 
   setOnMapClickListener(callback?: (event: MapClickEvent) => void) {
     return this.setListener('onMapClick', callback)
+  }
+
+  setOnPoiClickListener(callback?: (event: PoiClickEvent) => void) {
+    return this.setListener('onPoiClick', callback)
   }
 
   setOnMarkerClickListener(callback?: (event: MarkerClickEvent) => void) {

@@ -62,6 +62,13 @@ const ROUTE_STYLE = {
   strokeOpacity: 0.78,
   strokeWeight: 4,
 } as const
+const NATIVE_POI_MAP_CLICK_COORDINATE_EPSILON = 0.000001
+const NATIVE_POI_MAP_CLICK_SUPPRESSION_MS = 500
+
+interface NativePoiClickFingerprint {
+  clickedAtMs: number
+  location: NativeMapCoordinate
+}
 
 function isFiniteCoordinate(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
@@ -260,6 +267,19 @@ function coordinateFromNativeEvent(event: { latitude: number; longitude: number 
     : null
 }
 
+function isDuplicateNativePoiMapClick(
+  clickedAtMs: number,
+  location: NativeMapCoordinate,
+  lastPoiClick: NativePoiClickFingerprint | null,
+): boolean {
+  if (!lastPoiClick) return false
+  const elapsedMs = clickedAtMs - lastPoiClick.clickedAtMs
+  return elapsedMs >= 0
+    && elapsedMs <= NATIVE_POI_MAP_CLICK_SUPPRESSION_MS
+    && Math.abs(location.lat - lastPoiClick.location.lat) <= NATIVE_POI_MAP_CLICK_COORDINATE_EPSILON
+    && Math.abs(location.lng - lastPoiClick.location.lng) <= NATIVE_POI_MAP_CLICK_COORDINATE_EPSILON
+}
+
 /**
  * Native-only map renderer backed by the iOS and Android Google Maps SDKs.
  * Browser Maps stays in TripMapSurface.web.tsx and is deliberately absent from
@@ -301,6 +321,7 @@ export function TripMapSurface({
   const polylineIdsRef = useRef<string[]>([])
   const markerActionsRef = useRef(new Map<string, () => void>())
   const callbacksRef = useRef({ onMapPlaceClick, onViewportContextChange })
+  const lastNativePoiClickRef = useRef<NativePoiClickFingerprint | null>(null)
   const markerRenderRef = useRef(0)
   const routeRenderRef = useRef(0)
   const lastFitKeyRef = useRef<string | null>(null)
@@ -469,10 +490,37 @@ export function TripMapSurface({
       }
       await Promise.all([
         nextMap.setOnMarkerClickListener(({ markerId }) => markerActionsRef.current.get(markerId)?.()),
+        nextMap.setOnPoiClickListener(({ latitude, longitude, name, placeId }) => {
+          const location = coordinateFromNativeEvent({ latitude, longitude })
+          const normalizedPlaceId = typeof placeId === 'string' ? placeId.trim() || null : null
+          if (!normalizedPlaceId && !location) return
+          const clickedAtMs = placeDetailsNowMs()
+          lastNativePoiClickRef.current = location ? { clickedAtMs, location } : null
+          const clickedAtIso = new Date().toISOString()
+          const traceId = createPlaceDetailsTraceId()
+          logPlaceDetailsTiming('frontend_map_click', {
+            clickedAtIso,
+            clickedAtMs,
+            hasLocation: location !== null,
+            hasPlaceId: normalizedPlaceId !== null,
+            placeId: normalizedPlaceId,
+            traceId,
+          })
+          callbacksRef.current.onMapPlaceClick?.({
+            clickedAtIso,
+            clickedAtMs,
+            location,
+            placeId: normalizedPlaceId,
+            placeName: typeof name === 'string' ? name.trim() || null : null,
+            source: 'native-poi',
+            traceId,
+          })
+        }),
         nextMap.setOnMapClickListener(({ latitude, longitude }) => {
           const location = coordinateFromNativeEvent({ latitude, longitude })
           if (!location) return
           const clickedAtMs = placeDetailsNowMs()
+          if (isDuplicateNativePoiMapClick(clickedAtMs, location, lastNativePoiClickRef.current)) return
           const clickedAtIso = new Date().toISOString()
           const traceId = createPlaceDetailsTraceId()
           logPlaceDetailsTiming('frontend_map_click', {
@@ -488,6 +536,8 @@ export function TripMapSurface({
             clickedAtMs,
             location,
             placeId: null,
+            placeName: null,
+            source: 'native-coordinate',
             traceId,
           })
         }),

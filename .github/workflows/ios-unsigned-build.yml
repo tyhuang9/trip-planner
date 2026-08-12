@@ -10,6 +10,7 @@ on:
       - 'frontend/ios/**'
       - 'frontend/package-lock.json'
       - 'frontend/package.json'
+      - 'frontend/patches/**'
       - 'frontend/public/**'
       - 'frontend/scripts/check-ios-archive-mach-o.mjs'
       - 'frontend/scripts/check-ios-archive-mach-o.node-test.mjs'
