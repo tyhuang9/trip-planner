@@ -13,7 +13,7 @@ import { applyColorMode, readStoredColorMode } from './theme/colorMode.ts'
 import { markPerformance } from './performance/timing.ts'
 import { SpeedInsights } from '@vercel/speed-insights/react'
 import { OutageBoundary } from './outage/OutageBoundary.tsx'
-import { StartupBoundary } from './startup/StartupBoundary.tsx'
+import { StartupAuthGate, StartupBoundary } from './startup/StartupBoundary.tsx'
 
 applyColorMode(readStoredColorMode())
 markPerformance('app-mounted')
@@ -26,8 +26,10 @@ createRoot(document.getElementById('root')!).render(
           <StartupBoundary>
             <OutageBoundary>
             <AuthProvider>
-              <App />
-              <SpeedInsights />
+              <StartupAuthGate>
+                <App />
+                <SpeedInsights />
+              </StartupAuthGate>
             </AuthProvider>
             </OutageBoundary>
           </StartupBoundary>
