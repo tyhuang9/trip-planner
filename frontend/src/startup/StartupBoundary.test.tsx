@@ -84,4 +84,14 @@ describe('<StartupBoundary>', () => {
     expect(await screen.findByText('Application content')).toBeInTheDocument()
     expect(waitForReadiness).toHaveBeenCalledTimes(2)
   })
+
+  it('exposes semantic step state, a concise status, and focuses terminal failure', async () => {
+    vi.mocked(waitForReadiness).mockResolvedValue('offline')
+    render(<StartupBoundary><span>Application content</span></StartupBoundary>)
+    const heading = await screen.findByRole('heading', { name: /could not get ready/i })
+    expect(heading).toHaveFocus()
+    expect(screen.getByRole('listitem', { name: /connecting to the service: active/i })).toHaveAttribute('aria-current', 'step')
+    expect(screen.getByRole('status')).toHaveTextContent(/offline/i)
+    expect(screen.getByRole('status').closest('[aria-busy]')).toBeNull()
+  })
 })

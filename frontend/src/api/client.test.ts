@@ -4,6 +4,7 @@ import axios from 'axios'
 import {
   __resetRefreshSingletonForTests,
   API_REQUEST_TIMEOUT_MS,
+  REFRESH_LOCK_DEADLINE_MS,
   apiClient,
   AUTH_COOKIE_ACTION_HEADER,
   AUTH_COOKIE_ACTION_VALUE,
@@ -412,7 +413,7 @@ describe('refreshSession cross-tab coordination', () => {
 
     expect(request).toHaveBeenCalledTimes(1)
     expect(request.mock.calls[0][0]).toBe('dupert:auth-refresh')
-    expect(request.mock.calls[0][1]).toEqual({ mode: 'exclusive' })
+    expect(request.mock.calls[0][1]).toMatchObject({ mode: 'exclusive' })
     expect(refreshMock.history.post).toHaveLength(0)
 
     releaseLock?.()
@@ -422,6 +423,19 @@ describe('refreshSession cross-tab coordination', () => {
     })
     expect(refreshMock.history.post).toHaveLength(1)
     expect(refreshMock.history.post[0].withCredentials).toBe(true)
+  })
+
+  it('bounds a never-granted Web Lock acquisition', async () => {
+    vi.useFakeTimers()
+    Object.defineProperty(globalThis.navigator, 'locks', {
+      configurable: true,
+      value: { request: vi.fn(() => new Promise(() => undefined)) },
+    })
+    const pending = refreshSession()
+    const assertion = expect(pending).rejects.toMatchObject({ name: 'TimeoutError' })
+    await vi.advanceTimersByTimeAsync(REFRESH_LOCK_DEADLINE_MS)
+    await assertion
+    expect(refreshMock.history.post).toHaveLength(0)
   })
 
   it('waits on the localStorage lease fallback without storing secrets', async () => {
@@ -480,6 +494,17 @@ describe('refreshSession cross-tab coordination', () => {
       accessToken: 'after-wait-tok',
     })
     expect(refreshMock.history.post).toHaveLength(1)
+  })
+
+  it('bounds a continuously-held localStorage lease', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-05T12:00:00Z'))
+    localStorage.setItem(REFRESH_LOCK_STORAGE_KEY, JSON.stringify({ owner: 'other-tab', expiresAt: Date.now() + REFRESH_LOCK_DEADLINE_MS + 10_000 }))
+    const pending = refreshSession()
+    const assertion = expect(pending).rejects.toMatchObject({ name: 'TimeoutError' })
+    await vi.advanceTimersByTimeAsync(REFRESH_LOCK_DEADLINE_MS)
+    await assertion
+    expect(refreshMock.history.post).toHaveLength(0)
   })
 
   it('renews the localStorage lease while a slow refresh is pending', async () => {
