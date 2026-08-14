@@ -110,14 +110,3 @@ export function OutageBoundary({ children }: OutageBoundaryProps) {
     </main>
   )
 }
-
-export function StartupHealthShell() {
-  return (
-    <main className={styles.page} id="main">
-      <section className={styles.card} role="status" aria-live="polite" aria-busy="true">
-        <h1>Checking Dupert’s route</h1>
-        <p className={styles.body}>Making sure the trip planner is ready for the road…</p>
-      </section>
-    </main>
-  )
-}
