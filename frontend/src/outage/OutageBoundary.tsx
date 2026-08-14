@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { CloudOff, DatabaseZap, RefreshCw, WifiOff } from 'lucide-react'
-import { checkHealth, checkStartupHealth, subscribeToOutage, type OutageKind } from './outageMonitor'
+import { checkHealth, subscribeToOutage, type OutageKind } from './outageMonitor'
 import styles from './OutageBoundary.module.css'
 
 interface OutageBoundaryProps {
@@ -46,30 +46,15 @@ const COPY: Record<OutageKind, {
 
 export function OutageBoundary({ children }: OutageBoundaryProps) {
   const [outage, setOutage] = useState<OutageKind | null>(null)
-  const [hasPassedStartupHealth, setHasPassedStartupHealth] = useState(false)
   const [isRetrying, setIsRetrying] = useState(false)
   const [retryFeedback, setRetryFeedback] = useState<{ kind: OutageKind; message: string } | null>(null)
   const headingRef = useRef<HTMLHeadingElement>(null)
   const previousOutageRef = useRef<OutageKind | null>(null)
-  const isMountedRef = useRef(false)
 
   useEffect(() => subscribeToOutage((next) => {
     setRetryFeedback(null)
     setOutage(next)
   }), [])
-
-  useEffect(() => {
-    isMountedRef.current = true
-    void checkStartupHealth().then((result) => {
-      if (isMountedRef.current && result === null) {
-        setHasPassedStartupHealth(true)
-      }
-    })
-
-    return () => {
-      isMountedRef.current = false
-    }
-  }, [])
 
   useEffect(() => {
     if (outage !== null) {
@@ -87,10 +72,6 @@ export function OutageBoundary({ children }: OutageBoundaryProps) {
     previousOutageRef.current = outage
   }, [outage])
 
-  if (outage === null && !hasPassedStartupHealth) {
-    return <StartupHealthShell />
-  }
-
   if (outage === null) return <>{children}</>
 
   const { title, body, service, tone, Icon } = COPY[outage]
@@ -102,7 +83,6 @@ export function OutageBoundary({ children }: OutageBoundaryProps) {
     setIsRetrying(false)
     if (result === null) {
       setRetryFeedback(null)
-      setHasPassedStartupHealth(true)
     } else {
       setRetryFeedback({
         kind: result,
@@ -131,7 +111,7 @@ export function OutageBoundary({ children }: OutageBoundaryProps) {
   )
 }
 
-function StartupHealthShell() {
+export function StartupHealthShell() {
   return (
     <main className={styles.page} id="main">
       <section className={styles.card} role="status" aria-live="polite" aria-busy="true">
