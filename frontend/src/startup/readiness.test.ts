@@ -32,7 +32,19 @@ describe('startup readiness', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('retries malformed and non-UP successful responses', async () => {
+  it('retries malformed successful responses', async () => {
+    vi.useFakeTimers()
+    const controller = new AbortController()
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{bad', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const readiness = waitForReadiness(controller.signal, vi.fn())
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    controller.abort()
+    await expect(readiness).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('retries non-UP 2xx responses', async () => {
     vi.useFakeTimers()
     const controller = new AbortController()
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'DOWN' }), { status: 200 }))
@@ -54,6 +66,18 @@ describe('startup readiness', () => {
     await vi.advanceTimersByTimeAsync(1)
     await expect(readiness).resolves.toBeNull()
     expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('removes parent abort listeners after each settled request and retry delay', async () => {
+    vi.useFakeTimers()
+    const controller = new AbortController()
+    const addListener = vi.spyOn(controller.signal, 'addEventListener')
+    const removeListener = vi.spyOn(controller.signal, 'removeEventListener')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response(null, { status: 429 })).mockResolvedValueOnce(up()).mockResolvedValueOnce(up()))
+    const readiness = waitForReadiness(controller.signal, vi.fn())
+    await vi.advanceTimersByTimeAsync(3_000)
+    await expect(readiness).resolves.toBeNull()
+    expect(removeListener).toHaveBeenCalledTimes(addListener.mock.calls.length)
   })
 
   it('honors HTTP-date Retry-After but caps it at the phase deadline', async () => {
