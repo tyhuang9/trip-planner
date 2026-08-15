@@ -86,11 +86,16 @@ const REFRESH_LOCK_NAME = 'dupert:auth-refresh'
 const REFRESH_LOCK_STORAGE_KEY = 'dupert:auth-refresh-lock'
 const REFRESH_LOCK_TTL_MS = 10_000
 const REFRESH_LOCK_POLL_MS = 50
+// A peer may hold the lease while completing one bounded refresh request.
+// Allow that 60s request window plus one 10s lease period and one poll tick,
+// then settle startup as logged out instead of waiting forever for a lock.
+export const REFRESH_LOCK_DEADLINE_MS =
+  API_REQUEST_TIMEOUT_MS + REFRESH_LOCK_TTL_MS + REFRESH_LOCK_POLL_MS
 
 interface LockManagerLike {
   request<T>(
     name: string,
-    options: { mode: 'exclusive' },
+    options: { mode: 'exclusive'; signal?: AbortSignal },
     callback: () => T | Promise<T>,
   ): Promise<T>
 }
@@ -102,8 +107,12 @@ interface RefreshLockLease {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
-    setTimeout(resolve, ms)
+    window.setTimeout(resolve, ms)
   })
+}
+
+function refreshLockTimeout(): DOMException {
+  return new DOMException('Refresh lock acquisition timed out', 'TimeoutError')
 }
 
 function createLockOwner(): string {
@@ -195,8 +204,9 @@ async function withStorageRefreshLock<T>(callback: () => Promise<T>): Promise<T>
   }
 
   const owner = createLockOwner()
+  const deadline = Date.now() + REFRESH_LOCK_DEADLINE_MS
 
-  while (true) {
+  while (Date.now() < deadline) {
     let acquired: boolean
     try {
       acquired = tryAcquireStorageRefreshLock(storage, owner)
@@ -225,16 +235,35 @@ async function withStorageRefreshLock<T>(callback: () => Promise<T>): Promise<T>
       }
     }
 
-    await sleep(REFRESH_LOCK_POLL_MS)
+    await sleep(Math.min(REFRESH_LOCK_POLL_MS, deadline - Date.now()))
   }
+  throw refreshLockTimeout()
 }
 
 function refreshWithCrossTabLock(): Promise<AuthResponse> {
   const locks = getWebLocks()
   if (locks !== null) {
-    return locks.request(REFRESH_LOCK_NAME, { mode: 'exclusive' }, () =>
-      performRefresh(),
-    )
+    const controller = new AbortController()
+    let granted = false
+    let timeout: number | undefined
+    return new Promise<AuthResponse>((resolve, reject) => {
+      const acquisition = locks.request(REFRESH_LOCK_NAME, { mode: 'exclusive', signal: controller.signal }, () => {
+        granted = true
+        if (timeout !== undefined) window.clearTimeout(timeout)
+        return performRefresh()
+      })
+      acquisition.then(resolve, (error) => {
+        if (!granted && controller.signal.aborted && (error as DOMException)?.name === 'AbortError') reject(refreshLockTimeout())
+        else reject(error)
+      })
+      timeout = window.setTimeout(() => {
+        if (granted) return
+        controller.abort()
+        reject(refreshLockTimeout())
+      }, REFRESH_LOCK_DEADLINE_MS)
+    }).finally(() => {
+      if (timeout !== undefined) window.clearTimeout(timeout)
+    })
   }
 
   return withStorageRefreshLock(() => performRefresh())
