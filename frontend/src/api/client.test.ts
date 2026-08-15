@@ -438,6 +438,24 @@ describe('refreshSession cross-tab coordination', () => {
     expect(refreshMock.history.post).toHaveLength(0)
   })
 
+  it('keeps the single refresh alive when a Web Lock is granted just before its acquisition deadline', async () => {
+    vi.useFakeTimers()
+    const request = vi.fn((_name: string, _options: unknown, callback: () => Promise<unknown>) => new Promise((resolve, reject) => {
+      setTimeout(() => { callback().then(resolve, reject) }, REFRESH_LOCK_DEADLINE_MS - 1)
+    }))
+    Object.defineProperty(globalThis.navigator, 'locks', { configurable: true, value: { request } })
+    refreshMock.onPost('/api/auth/refresh').reply(() => new Promise((resolve) => {
+      setTimeout(() => resolve([200, { accessToken: 'late-grant-tok', tokenType: 'Bearer', expiresInSeconds: 900, user: SAMPLE_USER }]), 10)
+    }))
+    const first = refreshSession()
+    const second = refreshSession()
+    expect(second).toBe(first)
+    await vi.advanceTimersByTimeAsync(REFRESH_LOCK_DEADLINE_MS + 10)
+    await expect(first).resolves.toMatchObject({ accessToken: 'late-grant-tok' })
+    expect(refreshMock.history.post).toHaveLength(1)
+    expect(useAuthStore.getState().accessToken).toBe('late-grant-tok')
+  })
+
   it('waits on the localStorage lease fallback without storing secrets', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-05T12:00:00Z'))

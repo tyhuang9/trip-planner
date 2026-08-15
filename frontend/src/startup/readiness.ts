@@ -42,6 +42,15 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
   })
 }
 
+function parseJson(response: Response, signal: AbortSignal): Promise<unknown> {
+  if (signal.aborted) return Promise.reject(aborted())
+  return new Promise((resolve, reject) => {
+    const abort = () => { signal.removeEventListener('abort', abort); reject(aborted()) }
+    signal.addEventListener('abort', abort, { once: true })
+    response.json().then((body) => { signal.removeEventListener('abort', abort); resolve(body) }, (error) => { signal.removeEventListener('abort', abort); reject(error) })
+  })
+}
+
 async function request(path: string, timeout: number, signal: AbortSignal): Promise<{ response: Response; body: unknown }> {
   if (signal.aborted) throw aborted()
   if (timeout <= 0) throw new DOMException('Deadline elapsed', 'TimeoutError')
@@ -56,7 +65,10 @@ async function request(path: string, timeout: number, signal: AbortSignal): Prom
     // probe, and must remain cancellable when the boundary unmounts.
     const response = await fetch(`${backendBaseUrl}${path}`, { cache: 'no-store', signal: controller.signal })
     let body: unknown
-    try { body = await response.json() } catch { body = null }
+    try { body = await parseJson(response, controller.signal) } catch (error) {
+      if ((error as DOMException).name === 'AbortError') throw error
+      body = null
+    }
     return { response, body }
   } finally {
     window.clearTimeout(timer)
@@ -75,6 +87,7 @@ async function waitForUp(path: string, deadlineMs: number, intervalMs: number, t
   }
   signal.addEventListener('abort', abortFromParent, { once: true })
   window.addEventListener('offline', abortForOffline, { once: true })
+  if (signal.aborted) abortFromParent()
   try {
     while (Date.now() < deadline) {
       if (wentOffline || isOffline()) return 'offline'

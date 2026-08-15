@@ -244,24 +244,24 @@ function refreshWithCrossTabLock(): Promise<AuthResponse> {
   const locks = getWebLocks()
   if (locks !== null) {
     const controller = new AbortController()
-    let timedOut = false
-    const acquisition = locks.request(
-      REFRESH_LOCK_NAME,
-      { mode: 'exclusive', signal: controller.signal },
-      () => {
-        if (timedOut) throw refreshLockTimeout()
-        return performRefresh()
-      },
-    )
+    let granted = false
     let timeout: number | undefined
-    const deadline = new Promise<never>((_, reject) => {
+    return new Promise<AuthResponse>((resolve, reject) => {
+      const acquisition = locks.request(REFRESH_LOCK_NAME, { mode: 'exclusive', signal: controller.signal }, () => {
+        granted = true
+        if (timeout !== undefined) window.clearTimeout(timeout)
+        return performRefresh()
+      })
+      acquisition.then(resolve, (error) => {
+        if (!granted && controller.signal.aborted && (error as DOMException)?.name === 'AbortError') reject(refreshLockTimeout())
+        else reject(error)
+      })
       timeout = window.setTimeout(() => {
-        timedOut = true
+        if (granted) return
         controller.abort()
         reject(refreshLockTimeout())
       }, REFRESH_LOCK_DEADLINE_MS)
-    })
-    return Promise.race([acquisition, deadline]).finally(() => {
+    }).finally(() => {
       if (timeout !== undefined) window.clearTimeout(timeout)
     })
   }
