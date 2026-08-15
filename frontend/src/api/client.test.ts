@@ -444,13 +444,14 @@ describe('refreshSession cross-tab coordination', () => {
       setTimeout(() => { callback().then(resolve, reject) }, REFRESH_LOCK_DEADLINE_MS - 1)
     }))
     Object.defineProperty(globalThis.navigator, 'locks', { configurable: true, value: { request } })
-    refreshMock.onPost('/api/auth/refresh').reply(() => new Promise((resolve) => {
-      setTimeout(() => resolve([200, { accessToken: 'late-grant-tok', tokenType: 'Bearer', expiresInSeconds: 900, user: SAMPLE_USER }]), 10)
-    }))
+    let settleRefresh: ((value: [number, object]) => void) | undefined
+    refreshMock.onPost('/api/auth/refresh').reply(() => new Promise((resolve) => { settleRefresh = resolve }))
     const first = refreshSession()
+    await vi.advanceTimersByTimeAsync(REFRESH_LOCK_DEADLINE_MS)
     const second = refreshSession()
     expect(second).toBe(first)
-    await vi.advanceTimersByTimeAsync(REFRESH_LOCK_DEADLINE_MS + 10)
+    expect(refreshMock.history.post).toHaveLength(1)
+    settleRefresh?.([200, { accessToken: 'late-grant-tok', tokenType: 'Bearer', expiresInSeconds: 900, user: SAMPLE_USER }])
     await expect(first).resolves.toMatchObject({ accessToken: 'late-grant-tok' })
     expect(refreshMock.history.post).toHaveLength(1)
     expect(useAuthStore.getState().accessToken).toBe('late-grant-tok')
