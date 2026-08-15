@@ -6,9 +6,11 @@ import {
   type MouseEvent,
   type ReactNode,
 } from 'react'
-import { CheckCircle2, Database, KeyRound, LoaderCircle, RefreshCw, Server } from 'lucide-react'
+import { CheckCircle2, CircleX, Database, KeyRound, LoaderCircle, RefreshCw, Server } from 'lucide-react'
+import { AuthProvider } from '../auth/AuthContext'
 import { AuthBootstrapShell } from '../auth/AuthBootstrapShell'
 import { useAuth } from '../auth/useAuth'
+import { OutageBoundary } from '../outage/OutageBoundary'
 import { type StartupFailure, type StartupPhase, waitForReadiness } from './readiness'
 import styles from './StartupBoundary.module.css'
 
@@ -26,6 +28,23 @@ export function StartupBoundary({ children }: { children: ReactNode }) {
     >
       {children}
     </StartupRun>
+  )
+}
+
+/**
+ * Keeps runtime outage replacement behind auth restoration. A refresh failure
+ * therefore remains in the fail-closed auth shell until the session resolves,
+ * while loaded routes still receive the normal runtime outage boundary.
+ */
+export function StartupApplicationBoundary({ children }: { children: ReactNode }) {
+  return (
+    <StartupBoundary>
+      <AuthProvider>
+        <StartupAuthGate>
+          <OutageBoundary>{children}</OutageBoundary>
+        </StartupAuthGate>
+      </AuthProvider>
+    </StartupBoundary>
   )
 }
 
@@ -74,12 +93,23 @@ export function StartupAuthGate({ children }: { children: ReactNode }) {
   const { authStatus, isInitializing } = useAuth()
   const keyboardRetryRequested = useRef(false)
   const focusAfterKeyboardRetry = useRef(false)
+  const retryButton = useRef<HTMLButtonElement>(null)
   useEffect(() => {
-    if (isInitializing || !focusAfterKeyboardRetry.current) return
-    focusAfterKeyboardRetry.current = false
-    const animationFrame = window.requestAnimationFrame(focusRecoveredMain)
+    if (!focusAfterKeyboardRetry.current) return
+    if (authStatus === 'offline-unknown') {
+      const animationFrame = window.requestAnimationFrame(() => {
+        focusAfterKeyboardRetry.current = false
+        retryButton.current?.focus()
+      })
+      return () => window.cancelAnimationFrame(animationFrame)
+    }
+    if (isInitializing) return
+    const animationFrame = window.requestAnimationFrame(() => {
+      focusAfterKeyboardRetry.current = false
+      focusRecoveredMain()
+    })
     return () => window.cancelAnimationFrame(animationFrame)
-  }, [isInitializing])
+  }, [authStatus, isInitializing])
   if (!isInitializing) return <>{children}</>
   if (authStatus === 'offline-unknown') {
     return (
@@ -97,7 +127,7 @@ export function StartupAuthGate({ children }: { children: ReactNode }) {
         }}
         onPointerDownCapture={() => { keyboardRetryRequested.current = false }}
       >
-        <AuthBootstrapShell />
+        <AuthBootstrapShell retryButtonRef={retryButton} />
       </div>
     )
   }
@@ -139,7 +169,21 @@ function StartupChecklist({
   const body = failed ? (failure === 'offline' ? 'Check your connection, then try again.' : 'The service is taking longer than expected. Please try again.') : phase === 'session' ? 'Your services are ready. Restoring your session.' : 'We are checking the route before restoring your session.'
   const phaseAnnouncement = `Startup: ${phase === 'liveness' ? 'connecting to the service' : phase === 'database' ? 'preparing trip data' : 'restoring your session'}.`
   const announcement = failed ? `${failure === 'offline' ? 'Offline.' : 'Readiness timed out.'} ${body}` : `${phaseAnnouncement}${slow ? ' This is taking a little longer than usual. We are still trying.' : ''}`
-  return <main className={styles.page} id="main"><section className={styles.card}><p className={styles.eyebrow}>Getting your trip ready</p><h1 ref={heading} tabIndex={focusAfterKeyboardRetry ? -1 : undefined}>{failed ? 'We could not get ready yet' : 'Preparing Dupert'}</h1><p className={styles.body}>{body}</p><p className={styles.announcement} role="status" aria-atomic="true">{announcement}</p><ol className={styles.steps} role="list" aria-label="Startup checklist"><Step icon={Server} label="Connecting to the service" state={phase === 'liveness' ? 'active' : 'completed'} /><Step icon={Database} label="Preparing trip data" state={phase === 'liveness' ? 'pending' : phase === 'database' ? 'active' : 'completed'} /><Step icon={KeyRound} label="Restoring your session" state={phase === 'session' ? 'active' : 'pending'} /></ol>{failed ? <button ref={retryButton} className={styles.retry} type="button" onClick={() => { onRetry?.(keyboardRetryRequested.current); keyboardRetryRequested.current = false }} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') keyboardRetryRequested.current = true }} onPointerDown={() => { keyboardRetryRequested.current = false }}><RefreshCw aria-hidden="true" />Try again</button> : <p className={styles.slow}>{slow ? 'This is taking a little longer than usual. We are still trying.' : ''}</p>}</section></main>
+  return <main className={styles.page} id="main"><section className={styles.card}><p className={styles.eyebrow}>Getting your trip ready</p><h1 ref={heading} tabIndex={focusAfterKeyboardRetry ? -1 : undefined}>{failed ? 'We could not get ready yet' : 'Preparing Dupert'}</h1><p className={styles.body}>{body}</p><p className={styles.announcement} role="status" aria-atomic="true">{announcement}</p><ol className={styles.steps} role="list" aria-label="Startup checklist"><Step icon={Server} label="Connecting to the service" state={stepState('liveness', phase, failed)} /><Step icon={Database} label="Preparing trip data" state={stepState('database', phase, failed)} /><Step icon={KeyRound} label="Restoring your session" state={stepState('session', phase, failed)} /></ol>{failed ? <button ref={retryButton} className={styles.retry} type="button" onClick={() => { onRetry?.(keyboardRetryRequested.current); keyboardRetryRequested.current = false }} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') keyboardRetryRequested.current = true }} onPointerDown={() => { keyboardRetryRequested.current = false }}><RefreshCw aria-hidden="true" />Try again</button> : <p className={styles.slow}>{slow ? 'This is taking a little longer than usual. We are still trying.' : ''}</p>}</section></main>
+}
+
+type StepState = 'pending' | 'active' | 'completed' | 'failed'
+
+function stepState(
+  step: StartupPhase,
+  currentPhase: StartupPhase,
+  failed: boolean,
+): StepState {
+  const phases: StartupPhase[] = ['liveness', 'database', 'session']
+  const stepIndex = phases.indexOf(step)
+  const currentIndex = phases.indexOf(currentPhase)
+  if (stepIndex === currentIndex) return failed ? 'failed' : 'active'
+  return stepIndex < currentIndex ? 'completed' : 'pending'
 }
 
 function StartupRecoveryFocus({ children, focusAfterKeyboardRetry }: { children: ReactNode; focusAfterKeyboardRetry: boolean }) {
@@ -160,6 +204,6 @@ function focusRecoveredMain() {
   }
 }
 
-function Step({ icon: Icon, label, state }: { icon: typeof Server; label: string; state: 'pending' | 'active' | 'completed' }) {
-  return <li className={`${styles.step} ${state === 'active' ? styles.active : ''} ${state === 'completed' ? styles.complete : ''}`} aria-label={`${label}: ${state}`} aria-current={state === 'active' ? 'step' : undefined}>{state === 'completed' ? <CheckCircle2 aria-hidden="true" /> : state === 'active' ? <LoaderCircle aria-hidden="true" /> : <Icon aria-hidden="true" />}<span>{label}</span></li>
+function Step({ icon: Icon, label, state }: { icon: typeof Server; label: string; state: StepState }) {
+  return <li className={`${styles.step} ${state === 'active' ? styles.active : ''} ${state === 'completed' ? styles.complete : ''} ${state === 'failed' ? styles.failed : ''}`} aria-label={`${label}: ${state}`} aria-current={state === 'active' ? 'step' : undefined}>{state === 'completed' ? <CheckCircle2 aria-hidden="true" /> : state === 'failed' ? <CircleX aria-hidden="true" /> : state === 'active' ? <LoaderCircle aria-hidden="true" /> : <Icon aria-hidden="true" />}<span>{label}</span></li>
 }

@@ -73,6 +73,11 @@
   color: var(--color-success-fg);
 }
 
+.failed {
+  color: var(--color-danger-fg);
+  background: var(--color-danger-bg);
+}
+
 .announcement {
   position: absolute;
   width: 1px;
