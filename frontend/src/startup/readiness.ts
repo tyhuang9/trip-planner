@@ -12,9 +12,10 @@ function retryAfterMs(response: Response): number | null {
   const value = response.headers.get('Retry-After')?.trim()
   if (!value) return null
   const seconds = Number(value)
-  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1_000
+  if (Number.isFinite(seconds)) return seconds > 0 ? seconds * 1_000 : null
   const date = Date.parse(value)
-  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : null
+  const delay = date - Date.now()
+  return Number.isFinite(delay) && delay > 0 ? delay : null
 }
 
 function aborted(): DOMException {
@@ -40,6 +41,16 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
     }
     signal.addEventListener('abort', abort, { once: true })
   })
+}
+
+async function delayOrReturnOffline(ms: number, signal: AbortSignal, offline: () => boolean): Promise<StartupFailure | null> {
+  try {
+    await delay(ms, signal)
+    return null
+  } catch (error) {
+    if ((error as DOMException).name === 'AbortError' && offline()) return 'offline'
+    throw error
+  }
 }
 
 function parseJson(response: Response, signal: AbortSignal): Promise<unknown> {
@@ -91,15 +102,11 @@ async function waitForUp(path: string, deadlineMs: number, intervalMs: number, t
   try {
     while (Date.now() < deadline) {
       if (wentOffline || isOffline()) return 'offline'
+      let result: { response: Response; body: unknown } | undefined
       try {
         const remaining = deadline - Date.now()
         if (remaining <= 0) break
-        const { response, body } = await request(path, Math.min(timeoutMs, remaining), runController.signal)
-        if (response.ok && typeof body === 'object' && body !== null && 'status' in body && body.status === 'UP') return null
-        const wait = response.status === 429 ? retryAfterMs(response) ?? intervalMs : intervalMs
-        const remainingAfterResponse = deadline - Date.now()
-        if (remainingAfterResponse <= 0) break
-        await delay(Math.min(wait, remainingAfterResponse), runController.signal)
+        result = await request(path, Math.min(timeoutMs, remaining), runController.signal)
       } catch (error) {
         if ((error as DOMException).name === 'AbortError') {
           if (wentOffline || isOffline()) return 'offline'
@@ -107,8 +114,19 @@ async function waitForUp(path: string, deadlineMs: number, intervalMs: number, t
         }
         const remainingAfterError = deadline - Date.now()
         if (remainingAfterError <= 0) break
-        await delay(Math.min(intervalMs, remainingAfterError), runController.signal)
+        const retry = await delayOrReturnOffline(Math.min(intervalMs, remainingAfterError), runController.signal, () => wentOffline || isOffline())
+        if (retry) return retry
+        continue
       }
+
+      if (!result) continue
+      const { response, body } = result
+      if (response.ok && typeof body === 'object' && body !== null && 'status' in body && body.status === 'UP') return null
+      const wait = response.status === 429 ? retryAfterMs(response) ?? intervalMs : intervalMs
+      const remainingAfterResponse = deadline - Date.now()
+      if (remainingAfterResponse <= 0) break
+      const retry = await delayOrReturnOffline(Math.min(wait, remainingAfterResponse), runController.signal, () => wentOffline || isOffline())
+      if (retry) return retry
     }
     return 'timeout'
   } finally {

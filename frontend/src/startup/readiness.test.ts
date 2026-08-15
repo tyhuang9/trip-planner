@@ -61,17 +61,34 @@ describe('startup readiness', () => {
     expect(remove.mock.calls.length).toBe(add.mock.calls.length)
   })
 
-  it('settles offline during an active request and a Retry-After delay', async () => {
+  it('settles offline during an active request', async () => {
     Object.defineProperty(navigator, 'onLine', { configurable: true, value: true })
     const active = pendingUntilAbort(); vi.stubGlobal('fetch', active)
     const request = waitForReadiness(new AbortController().signal, vi.fn())
     await Promise.resolve(); window.dispatchEvent(new Event('offline'))
     await expect(request).resolves.toBe('offline')
+  })
+
+  it('settles offline when a failed request is waiting to retry', async () => {
     vi.useFakeTimers()
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 429, headers: { 'Retry-After': '30' } })))
-    const delayed = waitForReadiness(new AbortController().signal, vi.fn())
-    await Promise.resolve(); window.dispatchEvent(new Event('offline'))
-    await expect(delayed).resolves.toBe('offline')
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: true })
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError('Network failed'))
+    vi.stubGlobal('fetch', fetchMock)
+    const readiness = waitForReadiness(new AbortController().signal, vi.fn())
+    await vi.advanceTimersByTimeAsync(0)
+    window.dispatchEvent(new Event('offline'))
+    await expect(readiness).resolves.toBe('offline')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('propagates parent cancellation while a failed request is waiting to retry', async () => {
+    vi.useFakeTimers()
+    const controller = new AbortController()
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Network failed')))
+    const readiness = waitForReadiness(controller.signal, vi.fn())
+    await vi.advanceTimersByTimeAsync(0)
+    controller.abort()
+    await expect(readiness).rejects.toMatchObject({ name: 'AbortError' })
   })
 
   it('does not start a database probe when aborted at the liveness handoff', async () => {
@@ -112,6 +129,31 @@ describe('startup readiness', () => {
     vi.stubGlobal('fetch', fetchMock)
     const readiness = waitForReadiness(new AbortController().signal, vi.fn())
     await vi.advanceTimersByTimeAsync(1_999)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(readiness).resolves.toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('uses the normal retry interval for Retry-After: 0 to avoid a request storm', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 429, headers: { 'Retry-After': '0' } })).mockResolvedValueOnce(up()).mockResolvedValueOnce(up())
+    vi.stubGlobal('fetch', fetchMock)
+    const readiness = waitForReadiness(new AbortController().signal, vi.fn())
+    await vi.advanceTimersByTimeAsync(2_999)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(readiness).resolves.toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('uses the normal retry interval for a past HTTP-date Retry-After to avoid a request storm', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 429, headers: { 'Retry-After': 'Wed, 31 Dec 2025 23:59:59 GMT' } })).mockResolvedValueOnce(up()).mockResolvedValueOnce(up())
+    vi.stubGlobal('fetch', fetchMock)
+    const readiness = waitForReadiness(new AbortController().signal, vi.fn())
+    await vi.advanceTimersByTimeAsync(2_999)
     expect(fetchMock).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(1)
     await expect(readiness).resolves.toBeNull()
