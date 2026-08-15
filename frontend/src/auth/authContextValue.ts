@@ -10,6 +10,11 @@ import type {
 } from '../types/auth'
 import type { AuthStatus } from './authStore'
 
+export type AuthResolutionFailure =
+  | 'connectivity'
+  | 'coordination-unsupported'
+  | null
+
 /**
  * Auth context shape exposed to the rest of the app. The state fields
  * (`user`, `isAuthenticated`) are sourced from the zustand store via
@@ -24,6 +29,8 @@ export interface AuthContextValue {
   authStatus: AuthStatus
   user: UserSummary | null
   isAuthenticated: boolean
+  /** Why secure session restoration is still unresolved, when known. */
+  authResolutionFailure?: AuthResolutionFailure
   /**
    * True until the silent-refresh probe on first mount has settled.
    * UI guards (e.g. a `RequireAuth` wrapper) should withhold redirects

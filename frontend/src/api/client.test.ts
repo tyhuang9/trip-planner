@@ -4,6 +4,7 @@ import axios from 'axios'
 import {
   __resetRefreshSingletonForTests,
   API_REQUEST_TIMEOUT_MS,
+  REFRESH_LOCK_DEADLINE_MS,
   apiClient,
   AuthCoordinationUnavailableError,
   AuthResolutionPendingError,
@@ -573,7 +574,7 @@ describe('refreshSession cross-tab coordination', () => {
 
     expect(request).toHaveBeenCalledTimes(1)
     expect(request.mock.calls[0][0]).toBe('dupert:auth-refresh')
-    expect(request.mock.calls[0][1]).toEqual({ mode: 'exclusive' })
+    expect(request.mock.calls[0][1]).toMatchObject({ mode: 'exclusive' })
     expect(refreshMock.history.post).toHaveLength(0)
 
     releaseLock?.()
@@ -583,6 +584,63 @@ describe('refreshSession cross-tab coordination', () => {
     })
     expect(refreshMock.history.post).toHaveLength(1)
     expect(refreshMock.history.post[0].withCredentials).toBe(true)
+  })
+
+  it('bounds a never-granted Web Lock acquisition and allows a later retry', async () => {
+    vi.useFakeTimers()
+    const request = vi.fn()
+      .mockImplementationOnce(() => new Promise(() => undefined))
+      .mockImplementationOnce(
+        (
+          _name: string,
+          _options: unknown,
+          callback: () => Promise<unknown>,
+        ) => Promise.resolve().then(callback),
+      )
+    Object.defineProperty(globalThis.navigator, 'locks', {
+      configurable: true,
+      value: { request },
+    })
+    useAuthStore.getState().clearSession('restoring')
+    const pending = refreshSession()
+    const assertion = expect(pending).rejects.toMatchObject({ name: 'TimeoutError' })
+    await vi.advanceTimersByTimeAsync(REFRESH_LOCK_DEADLINE_MS)
+    await assertion
+    expect(refreshMock.history.post).toHaveLength(0)
+    expect(useAuthStore.getState().authStatus).toBe('offline-unknown')
+
+    refreshMock.onPost('/api/auth/refresh').reply(200, {
+      accessToken: 'retry-tok',
+      tokenType: 'Bearer',
+      expiresInSeconds: 900,
+      user: SAMPLE_USER,
+    })
+    useAuthStore.getState().setAuthStatus('restoring')
+
+    await expect(refreshSession()).resolves.toMatchObject({
+      accessToken: 'retry-tok',
+    })
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(useAuthStore.getState().authStatus).toBe('authenticated')
+  })
+
+  it('keeps the single refresh alive when a Web Lock is granted just before its acquisition deadline', async () => {
+    vi.useFakeTimers()
+    const request = vi.fn((_name: string, _options: unknown, callback: () => Promise<unknown>) => new Promise((resolve, reject) => {
+      setTimeout(() => { callback().then(resolve, reject) }, REFRESH_LOCK_DEADLINE_MS - 1)
+    }))
+    Object.defineProperty(globalThis.navigator, 'locks', { configurable: true, value: { request } })
+    let settleRefresh: ((value: [number, object]) => void) | undefined
+    refreshMock.onPost('/api/auth/refresh').reply(() => new Promise((resolve) => { settleRefresh = resolve }))
+    const first = refreshSession()
+    await vi.advanceTimersByTimeAsync(REFRESH_LOCK_DEADLINE_MS)
+    const second = refreshSession()
+    expect(second).toBe(first)
+    expect(refreshMock.history.post).toHaveLength(1)
+    settleRefresh?.([200, { accessToken: 'late-grant-tok', tokenType: 'Bearer', expiresInSeconds: 900, user: SAMPLE_USER }])
+    await expect(first).resolves.toMatchObject({ accessToken: 'late-grant-tok' })
+    expect(refreshMock.history.post).toHaveLength(1)
+    expect(useAuthStore.getState().accessToken).toBe('late-grant-tok')
   })
 
   it('fails closed when secure cross-tab coordination is unavailable', async () => {

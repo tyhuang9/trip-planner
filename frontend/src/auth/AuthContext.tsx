@@ -3,11 +3,13 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
 } from 'react'
 import * as authApi from '../api/auth'
 import {
   beginTerminalAuthMutation,
+  AuthCoordinationUnavailableError,
   isConfirmedUnauthenticated,
   refreshSession,
   waitForRefreshToSettle,
@@ -15,7 +17,11 @@ import {
 } from '../api/client'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAuthStore, useIsAuthenticated, useUser } from './authStore'
-import { AuthContext, type AuthContextValue } from './authContextValue'
+import {
+  AuthContext,
+  type AuthContextValue,
+  type AuthResolutionFailure,
+} from './authContextValue'
 import { markPerformance } from '../performance/timing'
 import type {
   DeleteAccountRequest,
@@ -40,6 +46,17 @@ let logoutRevocationPromise: Promise<void> | null = null
 
 function shouldRefreshSessionSoon(expiresAt: number): boolean {
   return Date.now() >= expiresAt - PROACTIVE_REFRESH_LEAD_MS
+}
+
+function classifyAuthResolutionFailure(
+  error: unknown,
+): Exclude<AuthResolutionFailure, null> {
+  const cause = error instanceof Error && error.cause !== undefined
+    ? error.cause
+    : error
+  return cause instanceof AuthCoordinationUnavailableError
+    ? 'coordination-unsupported'
+    : 'connectivity'
 }
 
 function revokePendingLogout(): Promise<void> {
@@ -82,6 +99,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const setUser = useAuthStore((s) => s.setUser)
   const setAuthStatus = useAuthStore((s) => s.setAuthStatus)
   const clearSession = useAuthStore((s) => s.clearSession)
+  const [authResolutionFailure, setAuthResolutionFailure] =
+    useState<AuthResolutionFailure>(null)
   const isInitializing =
     authStatus === 'restoring' ||
     authStatus === 'clearing-session' ||
@@ -124,9 +143,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
     try {
       await revokePendingLogout()
       clearSession('unauthenticated')
-    } catch {
+    } catch (error) {
       clearSession('offline-unknown')
-      throw new Error('Logout revocation is still pending.')
+      throw new Error('Logout revocation is still pending.', { cause: error })
     }
   }, [clearSession])
 
@@ -135,7 +154,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
     probedRef.current = true
 
     if (hasPendingLogoutIntent()) {
-      void syncPendingLogout().catch(() => undefined)
+      void syncPendingLogout().then(
+        () => setAuthResolutionFailure(null),
+        (error) => setAuthResolutionFailure(
+          classifyAuthResolutionFailure(error),
+        ),
+      )
       return
     }
 
@@ -154,22 +178,31 @@ export function AuthProvider({ children }: AuthProviderProps) {
     refreshSession()
       .then((res) => {
         if (cancelledRef.current) return
+        setAuthResolutionFailure(null)
         setSession({
           accessToken: res.accessToken,
           expiresInSeconds: res.expiresInSeconds,
           user: res.user,
         })
       })
-      .catch(() => {
+      .catch((error) => {
         // refreshSession classifies 401 as confirmed unauthenticated and
         // ambiguous transport/server failures as offline-unknown.
+        if (!cancelledRef.current && !isConfirmedUnauthenticated(error)) {
+          setAuthResolutionFailure(classifyAuthResolutionFailure(error))
+        }
       })
   }, [setAuthStatus, setSession, syncPendingLogout])
 
   useEffect(() => {
     const retryPendingLogout = () => {
       if (hasPendingLogoutIntent()) {
-        void syncPendingLogout().catch(() => undefined)
+        void syncPendingLogout().then(
+          () => setAuthResolutionFailure(null),
+          (error) => setAuthResolutionFailure(
+            classifyAuthResolutionFailure(error),
+          ),
+        )
       }
     }
     const handleStorage = (event: StorageEvent) => {
@@ -289,16 +322,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
     if (hasPendingLogoutIntent()) {
       try {
         await syncPendingLogout()
-      } catch {
+        setAuthResolutionFailure(null)
+      } catch (error) {
         // Keep the explicit pending-logout state visible.
+        setAuthResolutionFailure(classifyAuthResolutionFailure(error))
       }
       return
     }
+    setAuthResolutionFailure(null)
     setAuthStatus('restoring')
     try {
       await refreshSession()
-    } catch {
+    } catch (error) {
       // refreshSession owns the resulting unauthenticated/offline state.
+      setAuthResolutionFailure(classifyAuthResolutionFailure(error))
     }
   }, [setAuthStatus, syncPendingLogout])
 
@@ -314,9 +351,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
     clearSession('offline-unknown')
     try {
       await syncPendingLogout()
-    } catch {
+      setAuthResolutionFailure(null)
+    } catch (error) {
       // The tombstone keeps this device locally signed out and blocks
       // restoration until reconnect can finish server-side revocation.
+      setAuthResolutionFailure(classifyAuthResolutionFailure(error))
     }
   }, [clearSession, syncPendingLogout])
 
@@ -367,6 +406,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       user,
       isAuthenticated,
       isInitializing,
+      authResolutionFailure,
       retryAuthResolution,
       login,
       register,
@@ -382,6 +422,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       authStatus,
       isAuthenticated,
       isInitializing,
+      authResolutionFailure,
       retryAuthResolution,
       login,
       register,

@@ -329,9 +329,11 @@ APP_EMAIL_FROM_EMAIL=no-reply@your-verified-domain.example
 APP_EMAIL_FROM_NAME=Dupert
 ```
 
-### Liveness monitoring and keep-warm contract
+### Cold-start readiness contract
 
-Use the public liveness endpoint for process monitoring and keep-warm requests:
+Dupert intentionally allows its services and database to sleep while idle. There is no keep-warm schedule or workflow to configure. On a new browser visit, the frontend holds application rendering behind a bounded, provider-neutral startup checklist: it waits for liveness, waits for trip-data/database readiness, then restores the user session.
+
+The public liveness endpoint is suitable for process monitoring:
 
 ```text
 GET https://<backend-origin>/actuator/health/liveness
@@ -339,23 +341,17 @@ GET https://<backend-origin>/actuator/health/liveness
 
 The endpoint returns HTTP `200` with `{"status":"UP"}` when the application process is alive. Its health group explicitly contains only Spring's `livenessState`; it does not query Neon or depend on Google Maps, Brevo, or future external-provider health indicators. It is intentionally not a readiness or end-to-end availability check.
 
-The browser outage boundary also reads the public, sanitized database group:
+After liveness reports `UP`, the browser reads the public, sanitized database group:
 
 ```text
 GET https://<backend-origin>/actuator/health/database
 ```
 
-It returns only an overall status from the migration-aware `database` indicator. It is `503` until the service can connect and Flyway completes; after that, each health read performs a bounded connectivity check (three seconds by default) and flips back to `503` if Neon is lost. Background retries and migrations run only while this state is down, so a healthy service does not poll Neon. A `503` database response is meaningful only after liveness is `UP`; arbitrary API `5xx` responses never identify a Neon outage. Browser CORS accepts the public health paths only from exact `ALLOWED_ORIGINS` values and does not allow credentials, but CORS does not restrict non-browser clients. To protect the database check itself, database-bearing health reads (`GET` and `HEAD`) share a limit of 30 requests per minute per resolved client IP: `/actuator/health` and the `/actuator/health/database` group and its descendants. Exhaustion returns `429` with `Retry-After`. Liveness reads and health preflights are not included in that bucket.
+It returns only an overall status from the migration-aware `database` indicator. It is `503` until the service can connect and Flyway completes; after that, each health read performs a bounded connectivity check (three seconds by default) and flips back to `503` if the database is lost. Background retries and migrations run only while this state is down, so a healthy service does not poll the database. A `503` database response is meaningful only after liveness is `UP`; arbitrary API `5xx` responses never identify a database outage.
 
-Any external keep-warm monitor must use this contract:
+The frontend's startup policy is deliberately bounded: liveness has a 90-second overall deadline, a 10-second request timeout, and a 3-second retry cadence. Database readiness has a separate 30-second deadline and polls every 6 seconds; expected `503` responses continue that phase. A `429 Retry-After` response is honored for either delta-seconds or an HTTP date, without extending a phase deadline. The request bound remains active while readiness response bodies are parsed, and an offline browser event cancels an in-flight probe or retry delay immediately. Session restoration also bounds secure Web Lock acquisition to one 60-second refresh window plus a 10-second acquisition grace period. Browsers without Web Locks fail closed, and a lock timeout leaves authentication unresolved behind a retryable privacy-safe shell. A terminal state offers a fresh retry run; it does not keep background probes alive.
 
-- Send an unauthenticated `GET` to `/actuator/health/liveness` every 10 minutes.
-- Follow HTTPS redirects and treat only a `2xx` response as success.
-- Do not attach application cookies, bearer tokens, or query parameters.
-- Alert on repeated failures; choose the monitor timeout from measured cold-start latency rather than using an aggressive application timeout.
-- Keep only one primary keep-warm schedule after its configuration and successful checks have been verified, to avoid duplicate traffic.
-
-The repository's `.github/workflows/keep-alive.yml` currently implements the same 10-minute schedule. Set its `KEEP_ALIVE_URL` repository secret to the full liveness URL above. Leave this workflow enabled until a replacement external monitor has been configured and verified; a documented URL alone is not proof that a replacement is active.
+Browser CORS accepts the public health paths only from exact `ALLOWED_ORIGINS` values and does not allow credentials, but CORS does not restrict non-browser clients. Database-bearing health reads (`GET` and `HEAD`) share a limit of 30 requests per minute per resolved client IP across `/actuator/health` and `/actuator/health/database` and descendants. Exhaustion returns `429` with `Retry-After`; liveness reads and health preflights are not included in that bucket.
 
 ## Brevo email setup
 
@@ -397,7 +393,7 @@ If password reset or verification emails are not arriving in `dev`/`prod`, verif
 - Access tokens stay in memory; refresh tokens and guest-session tokens are opaque `HttpOnly` cookies.
 - Production-like backend starts require `app.cookies.secure=true`, `APP_PUBLIC_FRONTEND_URL`, and `secure.hsts.enabled=true`; the `prod` profile sets secure cookies, `SameSite=None`, and HSTS.
 - Render should run with `SPRING_PROFILES_ACTIVE=prod`, `APP_TRUST_PROXY=true`, `APP_COOKIES_SECURE=true`, `APP_COOKIES_SAME_SITE=None` for split-origin frontend/backend deployments, `SECURE_HSTS_ENABLED=true`, an exact `ALLOWED_ORIGINS` value, and `APP_PUBLIC_FRONTEND_URL` set to the real frontend origin.
-- Public actuator exposure is limited to `/actuator/health` and `/actuator/health/**`; `/actuator/info` is not publicly exposed. Keep-warm monitoring uses `/actuator/health/liveness`, whose explicit group excludes database and external-provider checks.
+- Public actuator exposure is limited to `/actuator/health` and `/actuator/health/**`; `/actuator/info` is not publicly exposed. The frontend performs a bounded startup readiness check against liveness and database health before restoring a session; no external keep-warm service is required.
 - Responses larger than 2 KB are compressed for JSON and text content. SSE uses
   `text/event-stream`, which is deliberately excluded so events are not buffered.
 - Production registration creates an unverified user, sends one Brevo verification email, and withholds auth tokens until verification. The local profile creates verified users immediately and sends no email.
