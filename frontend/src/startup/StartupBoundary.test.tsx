@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { StrictMode, type ReactNode } from 'react'
 import userEvent from '@testing-library/user-event'
@@ -9,6 +10,11 @@ import { StartupBoundary, StartupAuthGate } from './StartupBoundary'
 import { AuthProvider } from '../auth/AuthContext'
 import { __resetRefreshSingletonForTests } from '../api/client'
 import { useAuthStore } from '../auth/authStore'
+
+const authBootstrapShellCss = readFileSync(
+  'src/auth/AuthBootstrapShell.module.css',
+  'utf8',
+)
 
 vi.mock('./readiness', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./readiness')>()),
@@ -77,6 +83,33 @@ describe('<StartupBoundary>', () => {
     expect(await screen.findByText('Application content')).toBeInTheDocument()
   })
 
+  it('keeps phase-specific status announcements after the slow threshold', async () => {
+    vi.useFakeTimers()
+    let reportPhase: ((phase: 'liveness' | 'database' | 'session') => void) | undefined
+    vi.mocked(waitForReadiness).mockImplementation(async (_signal, onPhase) => {
+      reportPhase = onPhase
+      return new Promise(() => undefined)
+    })
+    render(<StartupBoundary><span>Application content</span></StartupBoundary>)
+    await act(async () => { await vi.advanceTimersByTimeAsync(8_000) })
+
+    expect(screen.getByRole('status')).toHaveTextContent(/startup: connecting to the service.*taking a little longer/i)
+    act(() => { reportPhase?.('database') })
+    expect(screen.getByRole('status')).toHaveTextContent(/startup: preparing trip data.*taking a little longer/i)
+  })
+
+  it('clears the slow timer when readiness settles', async () => {
+    vi.useFakeTimers()
+    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout')
+    vi.mocked(waitForReadiness).mockResolvedValue(null)
+
+    render(<StartupBoundary><span>Application content</span></StartupBoundary>)
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+
+    expect(screen.getByText('Application content')).toBeInTheDocument()
+    expect(clearTimeoutSpy).toHaveBeenCalled()
+  })
+
   it('cancels an in-flight run on unmount without rendering afterward', async () => {
     vi.useFakeTimers()
     let complete: ((value: null) => void) | undefined
@@ -95,6 +128,19 @@ describe('<StartupBoundary>', () => {
     expect(errorSpy).not.toHaveBeenCalled()
   })
 
+  it.each([
+    { online: true, error: new DOMException('Coordinator aborted unexpectedly', 'AbortError'), expectedStatus: /readiness timed out/i },
+    { online: false, error: new Error('Coordinator rejected'), expectedStatus: /offline/i },
+  ])('renders terminal retry UI for a mounted coordinator rejection when online is $online', async ({ online, error, expectedStatus }) => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: online })
+    vi.mocked(waitForReadiness).mockRejectedValue(error)
+
+    render(<StartupBoundary><span>Application content</span></StartupBoundary>)
+
+    expect(await screen.findByRole('button', { name: /try again/i })).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent(expectedStatus)
+  })
+
   it('shows and cleans the auth-gate slow note without a late update', async () => {
     vi.useFakeTimers()
     const refreshMock = new MockAdapter(axios)
@@ -110,6 +156,7 @@ describe('<StartupBoundary>', () => {
   })
 
   it('turns a lock deadline into a retryable auth shell and recovers', async () => {
+    const user = userEvent.setup()
     const originalLocks = Object.getOwnPropertyDescriptor(
       globalThis.navigator,
       'locks',
@@ -140,7 +187,7 @@ describe('<StartupBoundary>', () => {
     })
     const rendered = render(withQueryClient(
       <AuthProvider>
-        <StartupAuthGate><span>Application content</span></StartupAuthGate>
+        <StartupAuthGate><main id="main"><h1>Application content</h1></main></StartupAuthGate>
       </AuthProvider>,
     ))
 
@@ -150,9 +197,11 @@ describe('<StartupBoundary>', () => {
           name: /could not confirm your session/i,
         }),
       ).toBeInTheDocument()
-      await userEvent.click(screen.getByRole('button', { name: /try again/i }))
+      await user.tab()
+      await user.keyboard('{Enter}')
 
-      expect(await screen.findByText('Application content')).toBeInTheDocument()
+      const appHeading = await screen.findByRole('heading', { name: /application content/i })
+      await waitFor(() => expect(appHeading).toHaveFocus())
       expect(lockRequests).toBe(2)
       expect(refreshMock.history.post).toHaveLength(1)
     } finally {
@@ -166,22 +215,38 @@ describe('<StartupBoundary>', () => {
     }
   })
 
-  it('starts a fresh readiness run after a terminal retry', async () => {
+  it('hands keyboard retry focus to the recovered route without moving pointer focus', async () => {
     vi.mocked(waitForReadiness).mockResolvedValueOnce('timeout').mockResolvedValueOnce(null)
-    render(<StartupBoundary><span>Application content</span></StartupBoundary>)
+    const user = userEvent.setup()
+    const keyboardRender = render(<StartupBoundary><main id="main"><h1>Trip workspace</h1></main></StartupBoundary>)
     expect(await screen.findByRole('button', { name: /try again/i })).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: /try again/i }))
-    expect(await screen.findByText('Application content')).toBeInTheDocument()
+    await user.tab()
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(screen.getByRole('heading', { name: /trip workspace/i })).toHaveFocus())
     expect(waitForReadiness).toHaveBeenCalledTimes(2)
+    keyboardRender.unmount()
+
+    vi.mocked(waitForReadiness).mockResolvedValueOnce('timeout').mockResolvedValueOnce(null)
+    const pointerRender = render(<StartupBoundary><main id="main"><h1>Pointer workspace</h1></main></StartupBoundary>)
+    await user.click(await screen.findByRole('button', { name: /try again/i }))
+    await screen.findByRole('heading', { name: /pointer workspace/i })
+    expect(screen.getByRole('heading', { name: /pointer workspace/i })).not.toHaveFocus()
+    pointerRender.unmount()
   })
 
-  it('exposes semantic step state, a concise status, and focuses terminal failure', async () => {
+  it('exposes semantic step state, a concise status, explicit list semantics, and does not force focus on terminal failure', async () => {
     vi.mocked(waitForReadiness).mockResolvedValue('offline')
     render(<StartupBoundary><span>Application content</span></StartupBoundary>)
     const heading = await screen.findByRole('heading', { name: /could not get ready/i })
-    expect(heading).toHaveFocus()
+    expect(heading).not.toHaveFocus()
+    expect(screen.getByRole('list', { name: /startup checklist/i })).toHaveAttribute('role', 'list')
     expect(screen.getByRole('listitem', { name: /connecting to the service: active/i })).toHaveAttribute('aria-current', 'step')
     expect(screen.getByRole('status')).toHaveTextContent(/offline/i)
     expect(screen.getByRole('status').closest('[aria-busy]')).toBeNull()
+  })
+
+  it('uses an opaque, defined three-pixel retry focus treatment', () => {
+    expect(authBootstrapShellCss).toMatch(/\.retryButton:focus-visible\s*\{[^}]*outline:\s*3px solid var\(--color-primary\);[^}]*outline-offset:\s*4px;/s)
+    expect(authBootstrapShellCss).not.toContain('--color-focus-ring')
   })
 })
