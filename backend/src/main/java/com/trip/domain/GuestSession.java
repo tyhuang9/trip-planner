@@ -1,5 +1,6 @@
 package com.trip.domain;
 
+import java.time.Duration;
 import java.time.OffsetDateTime;
 
 import jakarta.persistence.Column;
@@ -14,6 +15,8 @@ import jakarta.persistence.Table;
 @Table(name = "guest_sessions")
 public class GuestSession {
 
+    private static final Duration LEGACY_CONSTRUCTOR_TTL = Duration.ofDays(14);
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -21,7 +24,7 @@ public class GuestSession {
     @Column(name = "share_link_id", nullable = false)
     private Long shareLinkId;
 
-    @Column(name = "token_hash", length = 64, updatable = false)
+    @Column(name = "token_hash", length = 64)
     private String tokenHash;
 
     @Column(name = "display_name", nullable = false, length = 200)
@@ -33,6 +36,12 @@ public class GuestSession {
     @Column(name = "last_seen_at", nullable = false)
     private OffsetDateTime lastSeenAt;
 
+    @Column(name = "expires_at", nullable = false)
+    private OffsetDateTime expiresAt;
+
+    @Column(name = "claimed_at")
+    private OffsetDateTime claimedAt;
+
     protected GuestSession() {
         // JPA
     }
@@ -42,9 +51,16 @@ public class GuestSession {
     }
 
     public GuestSession(Long shareLinkId, String tokenHash, String displayName) {
+        this(shareLinkId, tokenHash, displayName,
+            OffsetDateTime.now().plus(LEGACY_CONSTRUCTOR_TTL));
+    }
+
+    public GuestSession(Long shareLinkId, String tokenHash, String displayName,
+                        OffsetDateTime expiresAt) {
         this.shareLinkId = shareLinkId;
         this.tokenHash = tokenHash;
         this.displayName = displayName;
+        this.expiresAt = expiresAt;
     }
 
     public Long getId() {
@@ -73,6 +89,27 @@ public class GuestSession {
 
     public OffsetDateTime getLastSeenAt() {
         return lastSeenAt;
+    }
+
+    public OffsetDateTime getExpiresAt() {
+        return expiresAt;
+    }
+
+    public OffsetDateTime getClaimedAt() {
+        return claimedAt;
+    }
+
+    public boolean isExpiredAt(OffsetDateTime when) {
+        return expiresAt == null || !expiresAt.isAfter(when);
+    }
+
+    public boolean isClaimed() {
+        return claimedAt != null || tokenHash == null;
+    }
+
+    public void invalidateCredential(OffsetDateTime when) {
+        tokenHash = null;
+        claimedAt = when;
     }
 
     public void touch(OffsetDateTime when) {

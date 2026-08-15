@@ -77,9 +77,11 @@ const COASTAL_TRIP: Trip = {
 
 function makeAuth(overrides: Partial<AuthContextValue> = {}): AuthContextValue {
   return {
+    authStatus: 'authenticated',
     user: { id: 1, email: 'a@b.com', displayName: 'A', emailVerified: true },
     isAuthenticated: true,
     isInitializing: false,
+    retryAuthResolution: vi.fn(async () => {}),
     login: vi.fn(async () => ({
       id: 1,
       email: 'a@b.com',
@@ -279,11 +281,10 @@ describe('<TripsPage>', () => {
       screen.getByText(/no trips match your filters/i),
     ).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: /clear filters/i }))
+    const clearFiltersButton = screen.getByRole('button', { name: /clear filters/i })
+    await userEvent.click(clearFiltersButton)
 
-    await waitFor(() => {
-      expect(searchInput).toHaveFocus()
-    })
+    expect(searchInput).not.toHaveFocus()
     expect(
       screen.getByRole('link', { name: /open coastal reset/i }),
     ).toBeInTheDocument()
@@ -470,7 +471,7 @@ describe('<TripsPage>', () => {
     })
   })
 
-  it('requires typing delete before deleting the account and returning to login', async () => {
+  it('requires confirmation and current password before deleting and returning to login', async () => {
     apiMock.onGet('/trips').reply(200, [])
     const auth = makeAuth()
 
@@ -486,11 +487,15 @@ describe('<TripsPage>', () => {
     expect(confirmButton).toBeDisabled()
 
     await userEvent.type(within(dialog).getByLabelText(/confirmation/i), 'delete')
+    expect(confirmButton).toBeDisabled()
+    await userEvent.type(within(dialog).getByLabelText(/current password/i), 'current-secret')
     expect(confirmButton).toBeEnabled()
     await userEvent.click(confirmButton)
 
     await waitFor(() => {
-      expect(auth.deleteAccount).toHaveBeenCalledTimes(1)
+      expect(auth.deleteAccount).toHaveBeenCalledWith({
+        currentPassword: 'current-secret',
+      })
     })
     expect(screen.getByTestId('login')).toBeInTheDocument()
   })

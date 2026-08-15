@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - mobile
   pull_request:
   workflow_dispatch:
 
@@ -18,6 +19,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Set up Java
         uses: actions/setup-java@v5
@@ -71,10 +74,28 @@ jobs:
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: web-development
+            command: build:web:development
+          - profile: web-staging
+            command: build:web:staging
+          - profile: web-production
+            command: build:web:production
+          - profile: native-development
+            command: build:native:development
+          - profile: native-staging
+            command: build:native:staging
+          - profile: native-production
+            command: build:native:production
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@v5
@@ -95,9 +116,15 @@ jobs:
         working-directory: frontend
         run: npm run test
 
-      - name: Build
+      - name: Build ${{ matrix.profile }}
         working-directory: frontend
-        run: npm run build
+        env:
+          # Safe build-only values. Production native builds also prove that
+          # browser Maps and app-wall configuration stay absent.
+          VITE_BACKEND_API_URL: https://api.dupert.test
+          VITE_GOOGLE_MAPS_API_KEY: ''
+          VITE_APP_ACCESS_PASSWORD: ''
+        run: npm run ${{ matrix.command }}
 
       - name: Enforce bundle budgets
         working-directory: frontend
@@ -108,3 +135,45 @@ jobs:
       - name: Audit production dependencies
         working-directory: frontend
         run: npm audit --omit=dev
+
+  native-sync:
+    name: Native Capacitor sync
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Check mobile release-readiness preflight
+        working-directory: frontend
+        run: npm run check:mobile-release-readiness
+
+      - name: Build and sync native staging bundle
+        working-directory: frontend
+        env:
+          # Non-secret CI-only endpoint. Production builds in a real profile
+          # still fail clearly if VITE_BACKEND_API_URL is absent or unsafe.
+          VITE_BACKEND_API_URL: https://api.dupert.test
+          VITE_GOOGLE_MAPS_API_KEY: ''
+          VITE_APP_ACCESS_PASSWORD: ''
+        run: npm run sync:native:staging
+
+      - name: Verify generated project inputs remain deterministic
+        working-directory: frontend
+        run: |
+          test -f ios/App/App/capacitor.config.json
+          test -f android/app/src/main/assets/capacitor.config.json
+          git diff --exit-code -- ios android capacitor.config.ts

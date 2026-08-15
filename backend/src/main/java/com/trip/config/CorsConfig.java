@@ -16,12 +16,14 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import com.trip.web.auth.AuthCookieAction;
 import com.trip.web.auth.GuestAuthenticationFilter;
+import com.trip.web.TripStreamController;
 
 /**
- * Exact-origin CORS allowlist. The list comes from the {@code ALLOWED_ORIGINS}
- * environment variable (comma-separated); no wildcards, no runtime reflection of the
- * {@code Origin} header. If the env var is unset we fall back to an empty allowlist —
- * preflights from any origin will be rejected, which fails safely.
+ * Exact-origin CORS allowlist. Browser origins come from {@code ALLOWED_ORIGINS}; native
+ * WebView origins come from {@code NATIVE_ALLOWED_ORIGINS}. Both are comma-separated,
+ * never use wildcards, and never reflect the request {@code Origin} header. If both env
+ * vars are unset we fall back to an empty allowlist — preflights from any origin fail
+ * safely.
  */
 @Configuration
 public class CorsConfig {
@@ -43,6 +45,7 @@ public class CorsConfig {
             "Content-Type",
             AuthCookieAction.HEADER,
             GuestAuthenticationFilter.GUEST_WRITE_HEADER,
+            TripStreamController.STREAM_CLIENT_HEADER,
             "X-Requested-With",
             "Accept",
             "Origin"
@@ -68,21 +71,43 @@ public class CorsConfig {
     }
 
     static List<String> allowedOrigins(AppProperties props, Environment environment) {
-        List<String> configuredOrigins = Arrays.stream(props.getFrontendOrigin().split(","))
-            .map(String::trim)
-            .filter(s -> !s.isEmpty())
-            .toList();
+        List<String> configuredBrowserOrigins = configuredOrigins(
+            props.getFrontendOrigin(), "ALLOWED_ORIGINS");
+        List<String> configuredNativeOrigins = configuredOrigins(
+            props.getNativeAllowedOrigins(), "NATIVE_ALLOWED_ORIGINS");
 
         boolean expandLocalAliases = environment.acceptsProfiles(Profiles.of("local", "dev", "test"));
         Set<String> origins = new LinkedHashSet<>();
-        for (String origin : configuredOrigins) {
+        for (String origin : configuredBrowserOrigins) {
             origins.add(origin);
             if (expandLocalAliases) {
                 addLocalDevAliases(origins, origin);
             }
         }
+        // Native origins are not browser dev hosts: keep them exactly as deployed,
+        // including capacitor://localhost on iOS and https://localhost on Android.
+        origins.addAll(configuredNativeOrigins);
 
         return List.copyOf(origins);
+    }
+
+    private static List<String> configuredOrigins(String rawOrigins, String variableName) {
+        if (rawOrigins == null || rawOrigins.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(rawOrigins.split(","))
+            .map(String::trim)
+            .filter(s -> !s.isEmpty())
+            .map(origin -> requireExactOrigin(origin, variableName))
+            .toList();
+    }
+
+    private static String requireExactOrigin(String origin, String variableName) {
+        if (origin.contains("*")) {
+            throw new IllegalArgumentException(
+                variableName + " must contain exact origins; wildcards are not allowed");
+        }
+        return origin;
     }
 
     private static void addLocalDevAliases(Set<String> origins, String origin) {

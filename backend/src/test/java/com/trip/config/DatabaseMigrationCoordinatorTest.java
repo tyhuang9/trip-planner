@@ -11,16 +11,23 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import javax.sql.DataSource;
 
+import com.zaxxer.hikari.HikariDataSource;
+import com.zaxxer.hikari.HikariPoolMXBean;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.Mockito;
+import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -91,7 +98,7 @@ class DatabaseMigrationCoordinatorTest {
     }
 
     @Test
-    void startsWithoutWaitingForABlockedDatabaseCheck() throws Exception {
+    void startsWithoutWaitingForABlockedDatabaseCheck(CapturedOutput output) throws Exception {
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         DataSource dataSource = mock(DataSource.class);
@@ -109,6 +116,7 @@ class DatabaseMigrationCoordinatorTest {
         assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
         assertThat(coordinator.health().getStatus().getCode()).isEqualTo("DOWN");
         release.countDown();
+        awaitOutputContains(output, "event=startup_db_unavailable");
     }
 
     @Test
@@ -129,6 +137,60 @@ class DatabaseMigrationCoordinatorTest {
         calls.verify(connection).close();
         calls.verify(flyway).migrate();
         assertThat(coordinator.health().getStatus().getCode()).isEqualTo("UP");
+    }
+
+    @Test
+    @Timeout(6)
+    void waitsForHikariConnectionTimeoutThenReturnsDownWhenPoolIsSaturated() throws Exception {
+        DataSource physicalDataSource = mock(DataSource.class);
+        Connection physicalConnection = mock(Connection.class);
+        when(physicalConnection.isValid(Mockito.anyInt())).thenReturn(true);
+        when(physicalDataSource.getConnection()).thenReturn(physicalConnection);
+
+        try (HikariDataSource pool = new HikariDataSource()) {
+            pool.setDataSource(physicalDataSource);
+            pool.setMaximumPoolSize(1);
+            pool.setMinimumIdle(0);
+            pool.setConnectionTimeout(500L);
+            pool.setValidationTimeout(250L);
+            coordinator = new DatabaseMigrationCoordinator(
+                pool, mock(Flyway.class), Duration.ofSeconds(1));
+
+            coordinator.refresh();
+            assertThat(coordinator.health().getStatus().getCode()).isEqualTo("UP");
+
+            HikariPoolMXBean poolMetrics = pool.getHikariPoolMXBean();
+            try (Connection heldConnection = pool.getConnection()) {
+                assertThat(poolMetrics.getActiveConnections()).isEqualTo(1);
+                assertThat(poolMetrics.getIdleConnections()).isZero();
+                assertThat(poolMetrics.getTotalConnections()).isEqualTo(1);
+
+                ExecutorService healthExecutor = Executors.newSingleThreadExecutor();
+                Future<Health> health = null;
+                try {
+                    health = healthExecutor.submit(coordinator::health);
+
+                    long waiterDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+                    awaitConnectionWaiter(poolMetrics, health, waiterDeadline);
+
+                    long completionDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+                    Health result = health.get(
+                        remainingNanos(completionDeadline), TimeUnit.NANOSECONDS);
+
+                    assertThat(result.getStatus().getCode()).isEqualTo("DOWN");
+                    long resetDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+                    awaitNoConnectionWaiters(poolMetrics, resetDeadline);
+                } finally {
+                    if (health != null && !health.isDone()) {
+                        health.cancel(true);
+                    }
+                    healthExecutor.shutdownNow();
+                    assertThat(healthExecutor.awaitTermination(1, TimeUnit.SECONDS))
+                        .as("health executor terminated")
+                        .isTrue();
+                }
+            }
+        }
     }
 
     @Test
@@ -254,5 +316,37 @@ class DatabaseMigrationCoordinatorTest {
 
     private static int occurrences(String text, String value) {
         return (text.length() - text.replace(value, "").length()) / value.length();
+    }
+
+    private static void awaitOutputContains(CapturedOutput output, String value)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+        while (!output.getAll().contains(value) && System.nanoTime() < deadline) {
+            Thread.sleep(10L);
+        }
+        assertThat(output.getAll()).contains(value);
+    }
+
+    private static void awaitConnectionWaiter(HikariPoolMXBean poolMetrics,
+                                              Future<?> health,
+                                              long deadline) throws InterruptedException {
+        while (poolMetrics.getThreadsAwaitingConnection() != 1 && System.nanoTime() < deadline) {
+            assertThat(health).as("health check completed before waiting for a pooled connection")
+                .isNotDone();
+            Thread.sleep(5L);
+        }
+        assertThat(poolMetrics.getThreadsAwaitingConnection()).isEqualTo(1);
+    }
+
+    private static void awaitNoConnectionWaiters(HikariPoolMXBean poolMetrics, long deadline)
+            throws InterruptedException {
+        while (poolMetrics.getThreadsAwaitingConnection() != 0 && System.nanoTime() < deadline) {
+            Thread.sleep(5L);
+        }
+        assertThat(poolMetrics.getThreadsAwaitingConnection()).isZero();
+    }
+
+    private static long remainingNanos(long deadline) {
+        return Math.max(1L, deadline - System.nanoTime());
     }
 }

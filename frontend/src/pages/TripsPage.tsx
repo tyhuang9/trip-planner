@@ -106,7 +106,6 @@ export function TripsPage() {
 
   const { logout, user } = useAuth()
   const navigate = useNavigate()
-  const searchInputRef = useRef<HTMLInputElement>(null)
   const accountMenuTriggerRef = useRef<HTMLButtonElement>(null)
   const accountMenuRef = useRef<HTMLDivElement>(null)
   const accountMenuFirstActionRef = useRef<HTMLButtonElement>(null)
@@ -185,7 +184,6 @@ export function TripsPage() {
   function clearFilters() {
     setSearchTerm('')
     setRoleFilter('ALL')
-    requestAnimationFrame(() => searchInputRef.current?.focus())
   }
 
   async function onLogout() {
@@ -336,7 +334,6 @@ export function TripsPage() {
               <span className="sr-only">Search trips</span>
               <Search aria-hidden="true" size={18} />
               <input
-                ref={searchInputRef}
                 type="search"
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}

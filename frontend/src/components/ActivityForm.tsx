@@ -4,6 +4,7 @@ import {
   useEffect,
   useId,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -122,6 +123,7 @@ export const ActivityForm = forwardRef<ActivityFormHandle, ActivityFormProps>(fu
   const notesId = useId()
   const categoryMenuId = useId()
   const notesPanelId = useId()
+  const titleInputRef = useRef<HTMLInputElement>(null)
   const initialFormState = formStateFromInitialValues(initialValues)
   const [category, setCategory] = useState<ActivityCategory>(initialFormState.category)
   const [title, setTitle] = useState(initialFormState.title)
@@ -137,6 +139,11 @@ export const ActivityForm = forwardRef<ActivityFormHandle, ActivityFormProps>(fu
   const [notesOpen, setNotesOpen] = useState(Boolean(initialValues?.notes))
   const [autosaveState, setAutosaveState] = useState<AutosaveState>({ status: 'saved' })
   const [changeDayPending, setChangeDayPending] = useState(false)
+
+  useLayoutEffect(() => {
+    if (!autoFocusTitle) return
+    titleInputRef.current?.focus({ preventScroll: true })
+  }, [autoFocusTitle])
 
   const reset = () => {
     setCategory('OTHER')
@@ -447,7 +454,7 @@ export const ActivityForm = forwardRef<ActivityFormHandle, ActivityFormProps>(fu
             <label className={styles.label} htmlFor={titleId}>
               <span className="sr-only">Activity name</span>
               <input
-                autoFocus={autoFocusTitle}
+                ref={titleInputRef}
                 id={titleId}
                 className={`${styles.input} ${styles.compactInput}`}
                 value={title}
@@ -544,7 +551,7 @@ export const ActivityForm = forwardRef<ActivityFormHandle, ActivityFormProps>(fu
         <label className={styles.label}>
           Title
           <input
-            autoFocus={autoFocusTitle}
+            ref={titleInputRef}
             className={styles.input}
             value={title}
             onChange={(event) => setTitle(event.target.value)}

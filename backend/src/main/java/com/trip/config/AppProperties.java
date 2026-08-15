@@ -16,6 +16,9 @@ public class AppProperties {
     /** Comma-separated list of exact origins allowed by CORS. */
     private String frontendOrigin = "";
 
+    /** Comma-separated native WebView origins allowed by CORS. */
+    private String nativeAllowedOrigins = "";
+
     /** Public frontend origin used to build links sent in transactional emails. */
     private String publicFrontendUrl = "";
 
@@ -27,6 +30,9 @@ public class AppProperties {
 
     /** Cookie-related toggles. */
     private Cookies cookies = new Cookies();
+
+    /** Anonymous guest-session credential lifecycle. */
+    private GuestSession guestSession = new GuestSession();
 
     /** Enables open signup. Prod should keep this true only when email is configured. */
     private boolean signupEnabled = true;
@@ -43,6 +49,9 @@ public class AppProperties {
     /** Server-side Google Maps cache configuration. */
     private GoogleMapsCache googleMapsCache = new GoogleMapsCache();
 
+    /** Realtime stream lifecycle configuration. */
+    private Realtime realtime = new Realtime();
+
     /**
      * If {@code true}, trust {@code X-Forwarded-For} for client-IP resolution. Default
      * {@code false}: when the app is exposed directly (no reverse proxy in front), an
@@ -58,6 +67,14 @@ public class AppProperties {
 
     public void setFrontendOrigin(String frontendOrigin) {
         this.frontendOrigin = frontendOrigin == null ? "" : frontendOrigin;
+    }
+
+    public String getNativeAllowedOrigins() {
+        return nativeAllowedOrigins;
+    }
+
+    public void setNativeAllowedOrigins(String nativeAllowedOrigins) {
+        this.nativeAllowedOrigins = nativeAllowedOrigins == null ? "" : nativeAllowedOrigins;
     }
 
     public String getPublicFrontendUrl() {
@@ -90,6 +107,14 @@ public class AppProperties {
 
     public void setCookies(Cookies cookies) {
         this.cookies = cookies == null ? new Cookies() : cookies;
+    }
+
+    public GuestSession getGuestSession() {
+        return guestSession;
+    }
+
+    public void setGuestSession(GuestSession guestSession) {
+        this.guestSession = guestSession == null ? new GuestSession() : guestSession;
     }
 
     public boolean isSignupEnabled() {
@@ -130,6 +155,14 @@ public class AppProperties {
 
     public void setGoogleMapsCache(GoogleMapsCache googleMapsCache) {
         this.googleMapsCache = googleMapsCache == null ? new GoogleMapsCache() : googleMapsCache;
+    }
+
+    public Realtime getRealtime() {
+        return realtime;
+    }
+
+    public void setRealtime(Realtime realtime) {
+        this.realtime = realtime == null ? new Realtime() : realtime;
     }
 
     public boolean isTrustProxy() {
@@ -230,6 +263,54 @@ public class AppProperties {
 
         public void setPhotoTtl(Duration photoTtl) {
             this.photoTtl = photoTtl == null ? Duration.ofDays(1) : photoTtl;
+        }
+    }
+
+    /** Heartbeat, stale-detection, and forced-renewal intervals for SSE streams. */
+    public static class Realtime {
+        private Duration heartbeatInterval = Duration.ofSeconds(15);
+        private Duration staleAfter = Duration.ofSeconds(30);
+        private Duration maxLifetime = Duration.ofMinutes(2);
+
+        public Duration getHeartbeatInterval() {
+            return heartbeatInterval;
+        }
+
+        public void setHeartbeatInterval(Duration heartbeatInterval) {
+            this.heartbeatInterval = heartbeatInterval == null
+                ? Duration.ofSeconds(15)
+                : heartbeatInterval;
+        }
+
+        public Duration getStaleAfter() {
+            return staleAfter;
+        }
+
+        public void setStaleAfter(Duration staleAfter) {
+            this.staleAfter = staleAfter == null ? Duration.ofSeconds(30) : staleAfter;
+        }
+
+        public Duration getMaxLifetime() {
+            return maxLifetime;
+        }
+
+        public void setMaxLifetime(Duration maxLifetime) {
+            this.maxLifetime = maxLifetime == null ? Duration.ofMinutes(2) : maxLifetime;
+        }
+    }
+
+    /** Lifetime shared by persisted guest credentials and their browser cookie. */
+    public static class GuestSession {
+        private Duration ttl = Duration.ofDays(14);
+
+        public Duration getTtl() {
+            return ttl;
+        }
+
+        public void setTtl(Duration ttl) {
+            this.ttl = ttl == null || ttl.isZero() || ttl.isNegative()
+                ? Duration.ofDays(14)
+                : ttl;
         }
     }
 

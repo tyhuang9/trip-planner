@@ -53,4 +53,12 @@ describe('TripsPage layout contract', () => {
     expect(listActionBlock).toMatch(/min-height:\s*44px/)
     expect(tripsCss).toMatch(/\.accountMenuPanel\s*\{[\s\S]*position:\s*absolute/)
   })
+
+  it('uses a full-width trip track and an iOS-safe search font on handsets', () => {
+    const mobileBlocks = cssBlocks(tripsCss, '.tripGrid')
+    const searchInputBlocks = cssBlocks(tripsCss, '.searchField input')
+
+    expect(mobileBlocks.at(-1)).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\)/)
+    expect(searchInputBlocks.at(-1)).toMatch(/font-size:\s*var\(--font-size-base\)/)
+  })
 })

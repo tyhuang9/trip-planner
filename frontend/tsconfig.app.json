@@ -4,11 +4,15 @@
     "target": "es2023",
     "lib": ["ES2023", "DOM"],
     "module": "esnext",
-    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom", "node", "google.maps"],
+    "types": ["vite/client", "vite-plugin-pwa/client", "vitest/globals", "@testing-library/jest-dom", "node", "google.maps"],
     "skipLibCheck": true,
 
     /* Bundler mode */
     "moduleResolution": "bundler",
+    "paths": {
+      "@dupert/platform-integrations": ["./src/platform/PlatformIntegrations.web.tsx"],
+      "@dupert/trip-map-surface": ["./src/components/TripMapSurface.web.tsx"]
+    },
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",

@@ -17,6 +17,8 @@ import org.springframework.transaction.annotation.Transactional;
 import com.trip.domain.RefreshToken;
 import com.trip.domain.User;
 import com.trip.repo.RefreshTokenRepository;
+import com.trip.repo.RefreshTokenRepository.TokenObservation;
+import com.trip.repo.UserRepository;
 
 /**
  * Owns the lifecycle of opaque refresh tokens: minting, hashing, validating, rotating,
@@ -46,16 +48,20 @@ public class RefreshTokenService {
     private static final int RAW_TOKEN_BYTES = 32;
 
     private final RefreshTokenRepository repo;
+    private final UserRepository userRepository;
     private final SecureRandom random;
 
     @Autowired
-    public RefreshTokenService(RefreshTokenRepository repo) {
-        this(repo, new SecureRandom());
+    public RefreshTokenService(RefreshTokenRepository repo, UserRepository userRepository) {
+        this(repo, userRepository, new SecureRandom());
     }
 
     /** Test seam — lets unit tests inject a deterministic random source. */
-    RefreshTokenService(RefreshTokenRepository repo, SecureRandom random) {
+    RefreshTokenService(RefreshTokenRepository repo,
+                        UserRepository userRepository,
+                        SecureRandom random) {
         this.repo = repo;
+        this.userRepository = userRepository;
         this.random = random;
     }
 
@@ -100,9 +106,11 @@ public class RefreshTokenService {
      *       stamp the old row's {@code revoked_at}, return the new token.</li>
      * </ul>
      *
-     * <p>The lookup is a {@code SELECT ... FOR UPDATE} repository method. The parent
-     * token row must be locked before minting a child so two concurrent refresh calls
-     * cannot both observe the parent as active and commit multiple descendants.
+     * <p>A scalar token observation identifies the user without caching token state.
+     * Rotation then locks the user row before re-reading the token {@code FOR UPDATE},
+     * matching the user → token order used by account deletion and password mutation.
+     * The locked token identity and user must still match the observation before a child
+     * is minted.
      */
     @Transactional
     public Optional<IssuedRefreshToken> rotate(String rawToken) {
@@ -111,11 +119,24 @@ public class RefreshTokenService {
         }
         OffsetDateTime now = OffsetDateTime.now();
         String hash = sha256Hex(rawToken);
+        Optional<TokenObservation> maybeObservation = repo.findObservationByTokenHash(hash);
+        if (maybeObservation.isEmpty()) {
+            return Optional.empty();
+        }
+        TokenObservation observation = maybeObservation.get();
+        if (userRepository.findByIdForUpdate(observation.getUserId()).isEmpty()) {
+            return Optional.empty();
+        }
+
         Optional<RefreshToken> maybe = repo.findByTokenHashForUpdate(hash);
         if (maybe.isEmpty()) {
             return Optional.empty();
         }
         RefreshToken existing = maybe.get();
+        if (!observation.getId().equals(existing.getId())
+            || !observation.getUserId().equals(existing.getUserId())) {
+            return Optional.empty();
+        }
 
         if (existing.getRevokedAt() != null) {
             // Reuse-detection: the caller is presenting a token we already retired. Treat

@@ -18,14 +18,15 @@ public class GuestSessionCookie {
 
     public static final String COOKIE_NAME = "guest_session";
     static final String COOKIE_PATH = "/api";
-    static final Duration COOKIE_MAX_AGE = Duration.ofDays(14);
 
     private final boolean secure;
     private final String sameSite;
+    private final Duration maxAge;
 
     public GuestSessionCookie(AppProperties props) {
         this.secure = props.getCookies().isSecure();
         this.sameSite = props.getCookies().getSameSite();
+        this.maxAge = props.getGuestSession().getTtl();
     }
 
     public void addToResponse(HttpServletResponse response, String rawGuestToken) {
@@ -34,7 +35,7 @@ public class GuestSessionCookie {
             .secure(secure)
             .sameSite(sameSite)
             .path(COOKIE_PATH)
-            .maxAge(COOKIE_MAX_AGE)
+            .maxAge(maxAge)
             .build();
         response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
     }

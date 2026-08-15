@@ -10,7 +10,7 @@ import { AuthBootstrapShell } from './AuthBootstrapShell'
  * surface instead of a blank page.
  */
 export function RequireAuth() {
-  const { isAuthenticated, isInitializing } = useAuth()
+  const { isInitializing, isAuthenticated } = useAuth()
   const location = useLocation()
 
   if (isInitializing) {

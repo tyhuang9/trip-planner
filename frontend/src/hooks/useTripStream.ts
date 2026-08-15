@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { EventStreamContentType, fetchEventSource } from '@microsoft/fetch-event-source'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAuthStore, useAccessToken } from '../auth/authStore'
@@ -7,6 +7,8 @@ import { refreshSession } from '../api/client'
 import { shareKeys } from './useShareLinks'
 import { activityKeys } from './useActivities'
 import { tripKeys } from './useTrips'
+import { platformRuntime, subscribeToAppLifecycle } from '../platform/runtime'
+import { getOrCreateStreamClientId } from '../realtime/streamClientId'
 
 export interface TripStreamEvent {
   type: string
@@ -32,8 +34,10 @@ function isActivityEvent(event: TripStreamEvent): boolean {
   return event.type.startsWith('activity.') || event.type === 'day.reordered'
 }
 
-function documentIsVisible(): boolean {
-  return typeof document === 'undefined' || document.visibilityState !== 'hidden'
+function appIsForeground(): boolean {
+  return platformRuntime.target === 'native' ||
+    typeof document === 'undefined' ||
+    document.visibilityState !== 'hidden'
 }
 
 function retryDelayWithJitter(attempt: number): number {
@@ -64,12 +68,15 @@ export function useTripStream(
   const queryClient = useQueryClient()
   const bufferActivityEvents = options.bufferActivityEvents ?? false
   const enabled = options.enabled ?? true
-  const [isVisible, setIsVisible] = useState(documentIsVisible)
+  const streamClientId = useMemo(() => getOrCreateStreamClientId(), [])
+  const [isForeground, setIsForeground] = useState(appIsForeground)
+  const lifecycleStateRef = useRef(isForeground ? 'foreground' : 'background')
   const bufferActivityEventsRef = useRef(bufferActivityEvents)
   const bufferedActivityInvalidationRef = useRef(false)
   const activityInvalidationTimerRef = useRef<number | null>(null)
   const retryAttemptRef = useRef(0)
-  const resyncAfterVisibilityRef = useRef(false)
+  const resyncAfterLifecycleRef = useRef(false)
+  const resyncAfterReconnectRef = useRef(false)
 
   const invalidateActivities = useCallback((streamPublicId: string) => {
     void queryClient.invalidateQueries({ queryKey: activityKeys.list(streamPublicId) })
@@ -93,17 +100,15 @@ export function useTripStream(
   }, [queryClient, scheduleActivityInvalidation])
 
   useEffect(() => {
-    const handleVisibilityChange = () => {
-      const visible = documentIsVisible()
-      if (visible && !isVisible) {
-        resyncAfterVisibilityRef.current = true
+    return subscribeToAppLifecycle((state) => {
+      if (state === lifecycleStateRef.current) return
+      if (state === 'foreground') {
+        resyncAfterLifecycleRef.current = true
       }
-      setIsVisible(visible)
-    }
-
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
-  }, [isVisible])
+      lifecycleStateRef.current = state
+      setIsForeground(state === 'foreground')
+    })
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -125,7 +130,7 @@ export function useTripStream(
   }, [bufferActivityEvents, publicId, scheduleActivityInvalidation])
 
   useEffect(() => {
-    if (!publicId || !enabled || !isVisible) return
+    if (!publicId || !enabled || !isForeground) return
 
     const streamPublicId = publicId
     const controller = new AbortController()
@@ -139,18 +144,25 @@ export function useTripStream(
       }
 
       const token = useAuthStore.getState().getAccessToken()
+      const headers: Record<string, string> = {
+        'X-Dupert-Stream-Client': streamClientId,
+      }
+      if (token) {
+        headers.Authorization = `Bearer ${token}`
+      }
       await fetchEventSource(
         buildApiUrl(`/trips/${encodeURIComponent(streamPublicId)}/stream`),
         {
           credentials: 'include',
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          headers,
           openWhenHidden: false,
           signal: controller.signal,
           onopen: async (response) => {
             assertStreamResponse(response)
             retryAttemptRef.current = 0
-            if (resyncAfterVisibilityRef.current) {
-              resyncAfterVisibilityRef.current = false
+            if (resyncAfterLifecycleRef.current || resyncAfterReconnectRef.current) {
+              resyncAfterLifecycleRef.current = false
+              resyncAfterReconnectRef.current = false
               resynchronize(streamPublicId)
             }
           },
@@ -158,12 +170,13 @@ export function useTripStream(
             if (error instanceof FatalTripStreamError) {
               throw error
             }
+            resyncAfterReconnectRef.current = true
             const delay = retryDelayWithJitter(retryAttemptRef.current)
             retryAttemptRef.current += 1
             return delay
           },
           onmessage: (message) => {
-            if (message.event === 'connected') return
+            if (message.event === 'connected' || message.event === 'heartbeat') return
             const event = parseTripStreamEvent(message.data)
             if (!event || event.publicId !== streamPublicId) return
 
@@ -196,7 +209,7 @@ export function useTripStream(
     })
 
     return () => controller.abort()
-  }, [accessToken, enabled, isVisible, publicId, queryClient, resynchronize, scheduleActivityInvalidation])
+  }, [accessToken, enabled, isForeground, publicId, queryClient, resynchronize, scheduleActivityInvalidation, streamClientId])
 }
 
 async function refreshedStaleUserToken(signal: AbortSignal): Promise<boolean> {

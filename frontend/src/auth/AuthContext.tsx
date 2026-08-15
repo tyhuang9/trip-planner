@@ -7,24 +7,79 @@ import {
   type ReactNode,
 } from 'react'
 import * as authApi from '../api/auth'
-import { refreshSession } from '../api/client'
+import {
+  beginTerminalAuthMutation,
+  AuthCoordinationUnavailableError,
+  isConfirmedUnauthenticated,
+  refreshSession,
+  waitForRefreshToSettle,
+  withAuthSessionLock,
+} from '../api/client'
+import { useQueryClient } from '@tanstack/react-query'
 import { useAuthStore, useIsAuthenticated, useUser } from './authStore'
-import { AuthContext, type AuthContextValue } from './authContextValue'
+import {
+  AuthContext,
+  type AuthContextValue,
+  type AuthResolutionFailure,
+} from './authContextValue'
 import { markPerformance } from '../performance/timing'
 import type {
+  DeleteAccountRequest,
   EmailVerificationResendRequest,
   LoginRequest,
   RegisterRequest,
 } from '../types/auth'
+import {
+  clearPendingLogoutIntent,
+  hasPendingLogoutIntent,
+  PENDING_LOGOUT_CHANGED_EVENT,
+  PENDING_LOGOUT_STORAGE_KEY,
+  persistPendingLogoutIntent,
+} from './logoutIntent'
 
 interface AuthProviderProps {
   children: ReactNode
 }
 
 const PROACTIVE_REFRESH_LEAD_MS = 60_000
+let logoutRevocationPromise: Promise<void> | null = null
 
 function shouldRefreshSessionSoon(expiresAt: number): boolean {
   return Date.now() >= expiresAt - PROACTIVE_REFRESH_LEAD_MS
+}
+
+function classifyAuthResolutionFailure(
+  error: unknown,
+): Exclude<AuthResolutionFailure, null> {
+  const cause = error instanceof Error && error.cause !== undefined
+    ? error.cause
+    : error
+  return cause instanceof AuthCoordinationUnavailableError
+    ? 'coordination-unsupported'
+    : 'connectivity'
+}
+
+function revokePendingLogout(): Promise<void> {
+  if (!hasPendingLogoutIntent()) return Promise.resolve()
+  if (logoutRevocationPromise !== null) return logoutRevocationPromise
+
+  logoutRevocationPromise = (async () => {
+    await waitForRefreshToSettle()
+    await withAuthSessionLock(async () => {
+      try {
+        await authApi.logout()
+      } catch (error) {
+        if (!isConfirmedUnauthenticated(error)) throw error
+      }
+    })
+    if (!clearPendingLogoutIntent()) {
+      throw new Error('Could not clear the pending logout marker.')
+    }
+  })().finally(() => {
+    logoutRevocationPromise = null
+  })
+
+  return logoutRevocationPromise
 }
 
 /**
@@ -35,20 +90,45 @@ function shouldRefreshSessionSoon(expiresAt: number): boolean {
  * surfaced because "no prior session" looks identical to "expired".
  */
 export function AuthProvider({ children }: AuthProviderProps) {
+  const queryClient = useQueryClient()
   const user = useUser()
   const isAuthenticated = useIsAuthenticated()
+  const authStatus = useAuthStore((s) => s.authStatus)
   const expiresAt = useAuthStore((s) => s.expiresAt)
   const setSession = useAuthStore((s) => s.setSession)
   const setUser = useAuthStore((s) => s.setUser)
+  const setAuthStatus = useAuthStore((s) => s.setAuthStatus)
   const clearSession = useAuthStore((s) => s.clearSession)
-
-  // Skip the probe (and the initializing-window) if a session was
-  // pre-seeded — e.g. tests, or a hypothetical SSR rehydration. Reading
-  // the store synchronously in the lazy initializer is safe and keeps us
-  // off the "set state synchronously inside an effect" lint.
-  const [isInitializing, setIsInitializing] = useState<boolean>(
-    () => useAuthStore.getState().accessToken === null,
-  )
+  const [authResolutionFailure, setAuthResolutionFailure] =
+    useState<AuthResolutionFailure>(null)
+  const isInitializing =
+    authStatus === 'restoring' ||
+    authStatus === 'clearing-session' ||
+    authStatus === 'offline-unknown'
+  const identityCacheSnapshot = useMemo(() => {
+    if (
+      authStatus !== 'clearing-session' &&
+      authStatus !== 'offline-unknown' &&
+      authStatus !== 'unauthenticated'
+    ) {
+      return null
+    }
+    return {
+      queryHashes: new Set(
+        queryClient
+          .getQueryCache()
+          .getAll()
+          .filter(
+            (query) =>
+              query.state.data !== undefined ||
+              query.state.fetchStatus === 'fetching' ||
+              query.state.status === 'error',
+          )
+          .map((query) => query.queryHash),
+      ),
+      mutations: queryClient.getMutationCache().getAll(),
+    }
+  }, [authStatus, queryClient])
   // Guard against StrictMode double-invoke: useEffect runs twice in dev,
   // we don't want two refresh probes on cold start. `probedRef` blocks
   // the second run; `cancelledRef` is shared across both runs so that
@@ -57,15 +137,38 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const probedRef = useRef(false)
   const cancelledRef = useRef(false)
 
+  const syncPendingLogout = useCallback(async () => {
+    if (!hasPendingLogoutIntent()) return
+    clearSession('offline-unknown')
+    try {
+      await revokePendingLogout()
+      clearSession('unauthenticated')
+    } catch (error) {
+      clearSession('offline-unknown')
+      throw new Error('Logout revocation is still pending.', { cause: error })
+    }
+  }, [clearSession])
+
   useEffect(() => {
     if (probedRef.current) return
     probedRef.current = true
 
-    if (useAuthStore.getState().accessToken !== null) {
-      // Session was pre-seeded; nothing to probe. `isInitializing` was
-      // already initialized to false in that case.
+    if (hasPendingLogoutIntent()) {
+      void syncPendingLogout().then(
+        () => setAuthResolutionFailure(null),
+        (error) => setAuthResolutionFailure(
+          classifyAuthResolutionFailure(error),
+        ),
+      )
       return
     }
+
+    if (useAuthStore.getState().accessToken !== null) {
+      // Session was pre-seeded; setSession already marked it authenticated.
+      return
+    }
+
+    setAuthStatus('restoring')
 
     // `refreshSession()` is the single funnel for `/auth/refresh` calls
     // — same code path the response interceptor uses on 401, deduped by
@@ -75,26 +178,81 @@ export function AuthProvider({ children }: AuthProviderProps) {
     refreshSession()
       .then((res) => {
         if (cancelledRef.current) return
+        setAuthResolutionFailure(null)
         setSession({
           accessToken: res.accessToken,
           expiresInSeconds: res.expiresInSeconds,
           user: res.user,
         })
       })
-      .catch(() => {
-        // No prior session, expired cookie, or revoked chain — all the
-        // same outcome from the user's perspective.
+      .catch((error) => {
+        // refreshSession classifies 401 as confirmed unauthenticated and
+        // ambiguous transport/server failures as offline-unknown.
+        if (!cancelledRef.current && !isConfirmedUnauthenticated(error)) {
+          setAuthResolutionFailure(classifyAuthResolutionFailure(error))
+        }
       })
-      .finally(() => {
-        if (!cancelledRef.current) setIsInitializing(false)
-      })
-  }, [setSession])
+  }, [setAuthStatus, setSession, syncPendingLogout])
 
   useEffect(() => {
-    if (!isInitializing) {
+    const retryPendingLogout = () => {
+      if (hasPendingLogoutIntent()) {
+        void syncPendingLogout().then(
+          () => setAuthResolutionFailure(null),
+          (error) => setAuthResolutionFailure(
+            classifyAuthResolutionFailure(error),
+          ),
+        )
+      }
+    }
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== PENDING_LOGOUT_STORAGE_KEY) return
+      if (hasPendingLogoutIntent()) {
+        retryPendingLogout()
+      } else {
+        clearSession('unauthenticated')
+      }
+    }
+    const handleFocus = () => {
+      if (navigator.onLine !== false) retryPendingLogout()
+    }
+
+    window.addEventListener('online', retryPendingLogout)
+    window.addEventListener('focus', handleFocus)
+    window.addEventListener('storage', handleStorage)
+    window.addEventListener(PENDING_LOGOUT_CHANGED_EVENT, retryPendingLogout)
+    return () => {
+      window.removeEventListener('online', retryPendingLogout)
+      window.removeEventListener('focus', handleFocus)
+      window.removeEventListener('storage', handleStorage)
+      window.removeEventListener(PENDING_LOGOUT_CHANGED_EVENT, retryPendingLogout)
+    }
+  }, [clearSession, syncPendingLogout])
+
+  useEffect(() => {
+    if (identityCacheSnapshot === null) return
+
+    // Existing query keys are not partitioned by identity. Remove the queries
+    // and mutations captured before children rendered this auth boundary, so a
+    // prior member's protected workspace cannot remain visible offline while
+    // a newly enabled guest query is allowed to start normally.
+    queryClient.removeQueries({
+      predicate: (query) =>
+        identityCacheSnapshot.queryHashes.has(query.queryHash),
+    })
+    for (const mutation of identityCacheSnapshot.mutations) {
+      queryClient.getMutationCache().remove(mutation)
+    }
+    if (authStatus === 'clearing-session') {
+      clearSession('unauthenticated')
+    }
+  }, [authStatus, clearSession, identityCacheSnapshot, queryClient])
+
+  useEffect(() => {
+    if (authStatus === 'authenticated' || authStatus === 'unauthenticated') {
       markPerformance('auth-restored')
     }
-  }, [isInitializing])
+  }, [authStatus])
 
   // Real-unmount guard: flip cancel only on a true unmount. StrictMode
   // dev double-invokes ALL effects (mount → cleanup → mount); resetting
@@ -160,6 +318,27 @@ export function AuthProvider({ children }: AuthProviderProps) {
     [setSession],
   )
 
+  const retryAuthResolution = useCallback(async () => {
+    if (hasPendingLogoutIntent()) {
+      try {
+        await syncPendingLogout()
+        setAuthResolutionFailure(null)
+      } catch (error) {
+        // Keep the explicit pending-logout state visible.
+        setAuthResolutionFailure(classifyAuthResolutionFailure(error))
+      }
+      return
+    }
+    setAuthResolutionFailure(null)
+    setAuthStatus('restoring')
+    try {
+      await refreshSession()
+    } catch (error) {
+      // refreshSession owns the resulting unauthenticated/offline state.
+      setAuthResolutionFailure(classifyAuthResolutionFailure(error))
+    }
+  }, [setAuthStatus, syncPendingLogout])
+
   const register = useCallback(
     async (body: RegisterRequest) => {
       return authApi.register(body)
@@ -168,16 +347,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
   )
 
   const logout = useCallback(async () => {
+    persistPendingLogoutIntent()
+    clearSession('offline-unknown')
     try {
-      await authApi.logout()
-    } catch {
-      // Always clear local state, even if the network call fails — a
-      // user who clicks "log out" must end up logged out from this tab
-      // regardless of server reachability.
-    } finally {
-      clearSession()
+      await syncPendingLogout()
+      setAuthResolutionFailure(null)
+    } catch (error) {
+      // The tombstone keeps this device locally signed out and blocks
+      // restoration until reconnect can finish server-side revocation.
+      setAuthResolutionFailure(classifyAuthResolutionFailure(error))
     }
-  }, [clearSession])
+  }, [clearSession, syncPendingLogout])
 
   const updateProfile = useCallback(
     async (body: { displayName: string }) => {
@@ -209,16 +389,25 @@ export function AuthProvider({ children }: AuthProviderProps) {
     [],
   )
 
-  const deleteAccount = useCallback(async () => {
-    await authApi.deleteMe()
-    clearSession()
+  const deleteAccount = useCallback(async (body: DeleteAccountRequest) => {
+    const releaseTerminalMutation = beginTerminalAuthMutation()
+    try {
+      await waitForRefreshToSettle()
+      await withAuthSessionLock(() => authApi.deleteMe(body))
+      clearSession('clearing-session')
+    } finally {
+      releaseTerminalMutation()
+    }
   }, [clearSession])
 
   const value = useMemo<AuthContextValue>(
     () => ({
+      authStatus,
       user,
       isAuthenticated,
       isInitializing,
+      authResolutionFailure,
+      retryAuthResolution,
       login,
       register,
       updateProfile,
@@ -230,8 +419,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }),
     [
       user,
+      authStatus,
       isAuthenticated,
       isInitializing,
+      authResolutionFailure,
+      retryAuthResolution,
       login,
       register,
       updateProfile,

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { TripDateRangePicker } from './TripDateRangePicker'
@@ -154,6 +154,25 @@ describe('<TripDateRangePicker>', () => {
     expect(onChange).toHaveBeenCalledWith({ endDate: '2026-05-03' })
   })
 
+  it('focuses the first calendar date instead of month navigation for an empty range', async () => {
+    render(
+      <TripDateRangePicker
+        startDate=""
+        endDate=""
+        onChange={vi.fn()}
+      />,
+    )
+    mockFieldRect()
+
+    await userEvent.click(screen.getByRole('button', { name: /trip dates/i }))
+
+    const dialog = screen.getByRole('dialog', { name: /trip dates/i })
+    const firstDate = within(within(dialog).getAllByRole('grid')[0]).getAllByRole('button')[0]
+    expect(firstDate).toHaveFocus()
+    expect(within(dialog).getByRole('button', { name: /previous month/i })).not.toHaveFocus()
+    expect(within(dialog).getByRole('button', { name: /next month/i })).not.toHaveFocus()
+  })
+
   it('starts a new range when reopening an existing range from the trigger', async () => {
     const onChange = vi.fn()
 
@@ -225,11 +244,16 @@ describe('<TripDateRangePicker>', () => {
     )
     mockFieldRect()
 
-    await userEvent.click(screen.getByRole('button', { name: /trip dates/i }))
+    const trigger = screen.getByRole('button', { name: /trip dates/i })
+    await userEvent.click(trigger)
     expect(screen.getByRole('dialog', { name: /trip dates/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /choose friday, may 1, 2026/i })).toHaveFocus()
 
-    fireEvent.keyDown(document, { key: 'Escape' })
+    await userEvent.keyboard('{Escape}')
 
-    expect(screen.queryByRole('dialog', { name: /trip dates/i })).not.toBeInTheDocument()
+    await vi.waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /trip dates/i })).not.toBeInTheDocument()
+      expect(trigger).toHaveFocus()
+    })
   })
 })

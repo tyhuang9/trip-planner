@@ -7,12 +7,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.trip.config.AppProperties;
-import com.trip.domain.GuestSession;
 import com.trip.domain.ShareLink;
 import com.trip.domain.Trip;
 import com.trip.domain.TripMember;
 import com.trip.domain.TripRole;
-import com.trip.repo.GuestSessionRepository;
 import com.trip.repo.ShareLinkRepository;
 import com.trip.repo.TripMemberRepository;
 import com.trip.repo.TripRepository;
@@ -34,9 +32,8 @@ import com.trip.web.auth.DisplayNameSanitizer;
  * Share-link write/read operations for Piece 5.
  *
  * <p>Authenticated trip members with at least EDITOR privileges can manage links.
- * Accepting a link is public at the HTTP routing layer, but this first slice only
- * accepts into an authenticated user account. Anonymous guest sessions are added in
- * the next Piece 5 slice.
+ * Public acceptance supports either direct member enrollment or an anonymous guest
+ * credential that can later be claimed by an authenticated account.
  */
 @Service
 public class ShareLinkService {
@@ -44,29 +41,29 @@ public class ShareLinkService {
     static final int TOKEN_GENERATION_ATTEMPTS = 5;
 
     private final ShareLinkRepository shareLinkRepository;
-    private final GuestSessionRepository guestSessionRepository;
     private final TripRepository tripRepository;
     private final TripMemberRepository tripMemberRepository;
     private final TripAccessGuard tripAccessGuard;
     private final ShareTokenService shareTokenService;
     private final TripEventPublisher tripEventPublisher;
+    private final GuestSessionAccessService guestSessionAccessService;
     private final String shareUrlOrigin;
 
     public ShareLinkService(ShareLinkRepository shareLinkRepository,
-                            GuestSessionRepository guestSessionRepository,
                             TripRepository tripRepository,
                             TripMemberRepository tripMemberRepository,
                             TripAccessGuard tripAccessGuard,
                             ShareTokenService shareTokenService,
                             TripEventPublisher tripEventPublisher,
+                            GuestSessionAccessService guestSessionAccessService,
                             AppProperties appProperties) {
         this.shareLinkRepository = shareLinkRepository;
-        this.guestSessionRepository = guestSessionRepository;
         this.tripRepository = tripRepository;
         this.tripMemberRepository = tripMemberRepository;
         this.tripAccessGuard = tripAccessGuard;
         this.shareTokenService = shareTokenService;
         this.tripEventPublisher = tripEventPublisher;
+        this.guestSessionAccessService = guestSessionAccessService;
         this.shareUrlOrigin = shareUrlOrigin(appProperties);
     }
 
@@ -137,30 +134,20 @@ public class ShareLinkService {
         Trip trip = tripRepository.findById(link.getTripId())
             .orElseThrow(() -> new NotFoundException("trip not found for share link: id=" + link.getId()));
         String displayName = sanitizeGuestDisplayName(requestedDisplayName);
-        GeneratedToken guestToken = generateUniqueGuestSessionToken();
-        GuestSession guestSession = new GuestSession(link.getId(), guestToken.hash(), displayName);
-        guestSessionRepository.save(guestSession);
+        GuestSessionAccessService.IssuedGuestSession guestSession =
+            guestSessionAccessService.issue(link.getId(), displayName);
         return new AcceptedGuestSession(
-            guestToken.raw(),
+            guestSession.rawGuestToken(),
             new AcceptGuestShareLinkResponse(trip.getPublicId(), link.getRole(), displayName));
     }
 
     @Transactional
     public TripResponse claimGuestSession(String rawGuestToken, Long userId) {
-        if (rawGuestToken == null || rawGuestToken.isBlank()) {
-            throw new NotFoundException("guest session not found");
-        }
-        String hash = shareTokenService.sha256Hex(rawGuestToken.trim());
-        GuestSession guestSession = guestSessionRepository.findByTokenHash(hash)
-            .orElseThrow(() -> new NotFoundException("guest session not found"));
-        ShareLink link = shareLinkRepository.findById(guestSession.getShareLinkId())
-            .orElseThrow(() -> new NotFoundException("share link not found for guest session"));
-        requireUsableLink(link);
-        Trip trip = tripRepository.findById(link.getTripId())
-            .orElseThrow(() -> new NotFoundException("trip not found for share link: id=" + link.getId()));
-
-        TripRole effectiveRole = upsertMembership(trip.getId(), userId, link.getRole());
-        return TripResponse.of(trip, effectiveRole);
+        GuestSessionAccessService.ClaimedGuestSession claimed =
+            guestSessionAccessService.claim(rawGuestToken, userId);
+        tripEventPublisher.publishAndDisconnectAfterCommit(
+            claimed.trip().getId(), TripEvent.membersChanged(claimed.trip().getPublicId()));
+        return TripResponse.of(claimed.trip(), claimed.effectiveRole());
     }
 
     private TripRole upsertMembership(Long tripId, Long userId, TripRole invitedRole) {
@@ -223,17 +210,6 @@ public class ShareLinkService {
             }
         }
         throw new IllegalStateException("exhausted share token generation retries");
-    }
-
-    private GeneratedToken generateUniqueGuestSessionToken() {
-        for (int attempt = 0; attempt < TOKEN_GENERATION_ATTEMPTS; attempt++) {
-            String raw = shareTokenService.generateRawToken();
-            String hash = shareTokenService.sha256Hex(raw);
-            if (guestSessionRepository.findByTokenHash(hash).isEmpty()) {
-                return new GeneratedToken(raw, hash);
-            }
-        }
-        throw new IllegalStateException("exhausted guest token generation retries");
     }
 
     private static String sanitizeGuestDisplayName(String displayName) {

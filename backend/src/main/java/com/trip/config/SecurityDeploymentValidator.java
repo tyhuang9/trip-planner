@@ -1,6 +1,7 @@
 package com.trip.config;
 
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -47,16 +48,15 @@ public class SecurityDeploymentValidator implements ApplicationRunner {
         if (environment.acceptsProfiles(Profiles.of("prod"))) {
             return true;
         }
-        List<String> origins = configuredOrigins();
-        if (origins.isEmpty()) {
-            return false;
-        }
-        for (String origin : origins) {
+        for (String origin : configuredBrowserOrigins()) {
             if (!isLocalOrigin(origin)) {
                 return true;
             }
         }
-        return false;
+        // Bundled WebViews have localhost-like origins even when they call a public backend.
+        // Treat a native allowlist as a deployment signal unless this is explicitly local/test.
+        return !configuredNativeOrigins().isEmpty()
+            && !hasOnlyLocalOrTestProfiles();
     }
 
     private void validateTransportHardening() {
@@ -64,20 +64,27 @@ public class SecurityDeploymentValidator implements ApplicationRunner {
             throw new IllegalStateException(
                 "Production-like deployments require app.cookies.secure=true and secure.hsts.enabled=true");
         }
-        if (!appProperties.isTrustProxy()) {
+        if (requiresTrustedProxy() && !appProperties.isTrustProxy()) {
             throw new IllegalStateException(
                 "Production-like deployments require app.trust-proxy=true behind the platform proxy");
         }
     }
 
+    boolean requiresTrustedProxy() {
+        if (environment.acceptsProfiles(Profiles.of("prod"))) {
+            return true;
+        }
+        return configuredBrowserOrigins().stream().anyMatch(origin -> !isLocalOrigin(origin));
+    }
+
     private void validateCorsOrigins() {
-        List<String> origins = configuredOrigins();
+        List<String> origins = configuredCorsOrigins();
         boolean hasWildcard = origins.stream().anyMatch(origin -> origin.contains("*"));
         if (hasWildcard) {
             throw new IllegalStateException(
-                "Production-like deployments require exact ALLOWED_ORIGINS values; wildcards are not allowed");
+                "Production-like deployments require exact ALLOWED_ORIGINS and NATIVE_ALLOWED_ORIGINS values; wildcards are not allowed");
         }
-        if (environment.acceptsProfiles(Profiles.of("prod")) && origins.isEmpty()) {
+        if (environment.acceptsProfiles(Profiles.of("prod")) && configuredBrowserOrigins().isEmpty()) {
             throw new IllegalStateException(
                 "Production deployments require ALLOWED_ORIGINS to be set to the exact frontend origin");
         }
@@ -107,6 +114,13 @@ public class SecurityDeploymentValidator implements ApplicationRunner {
             && !environment.acceptsProfiles(Profiles.of("local", "test"));
     }
 
+    private boolean hasOnlyLocalOrTestProfiles() {
+        String[] activeProfiles = environment.getActiveProfiles();
+        return activeProfiles.length > 0
+            && Arrays.stream(activeProfiles)
+                .allMatch(profile -> "local".equals(profile) || "test".equals(profile));
+    }
+
     private void validateEmailConfig() {
         if (appProperties.getPublicFrontendUrl().isBlank()) {
             throw new IllegalStateException(
@@ -120,8 +134,21 @@ public class SecurityDeploymentValidator implements ApplicationRunner {
         }
     }
 
-    private List<String> configuredOrigins() {
-        String origins = appProperties.getFrontendOrigin();
+    private List<String> configuredBrowserOrigins() {
+        return configuredOrigins(appProperties.getFrontendOrigin());
+    }
+
+    private List<String> configuredNativeOrigins() {
+        return configuredOrigins(appProperties.getNativeAllowedOrigins());
+    }
+
+    private List<String> configuredCorsOrigins() {
+        List<String> origins = new ArrayList<>(configuredBrowserOrigins());
+        origins.addAll(configuredNativeOrigins());
+        return List.copyOf(origins);
+    }
+
+    private static List<String> configuredOrigins(String origins) {
         if (origins == null || origins.isBlank()) {
             return List.of();
         }

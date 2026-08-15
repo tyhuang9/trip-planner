@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AppAccessGate } from './AppAccessGate'
+import { StartupBoundary } from '../startup/StartupBoundary'
 import {
   APP_ACCESS_DURATION_MS,
   APP_ACCESS_STORAGE_KEY,
@@ -85,5 +86,23 @@ describe('<AppAccessGate>', () => {
 
     expect(screen.getByTestId('app-content')).toBeInTheDocument()
     expect(screen.queryByLabelText(/access password/i)).not.toBeInTheDocument()
+  })
+
+  it('performs no startup probes before the access wall is unlocked', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'UP' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'UP' }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(
+      <AppAccessGate>
+        <StartupBoundary><div>Trip app</div></StartupBoundary>
+      </AppAccessGate>,
+    )
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    await userEvent.type(screen.getByLabelText(/access password/i), 'let-me-in')
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }))
+    await screen.findByText('Trip app')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })

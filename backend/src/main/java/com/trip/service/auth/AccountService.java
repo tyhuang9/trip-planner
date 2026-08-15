@@ -23,6 +23,12 @@ import com.trip.web.exception.ValidationException;
 @Service
 public class AccountService {
 
+    public enum DeleteAccountResult {
+        DELETED,
+        USER_NOT_FOUND,
+        REAUTHENTICATION_FAILED
+    }
+
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final RefreshTokenService refreshTokenService;
@@ -57,27 +63,57 @@ public class AccountService {
 
     @Transactional
     public boolean changePassword(Long userId, String currentPassword, String newPassword) {
-        Optional<User> maybeUser = userRepository.findById(userId);
-        if (maybeUser.isEmpty()) {
+        Optional<String> maybeAuthenticatedHash = userRepository.findPasswordHashById(userId);
+        if (maybeAuthenticatedHash.isEmpty()) {
             return false;
         }
-        User user = maybeUser.get();
-        if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
+        String authenticatedHash = maybeAuthenticatedHash.get();
+        if (!passwordEncoder.matches(currentPassword, authenticatedHash)) {
             throw new ValidationException("invalid_current_password", "currentPassword is incorrect");
         }
-        user.setPasswordHash(passwordEncoder.encode(newPassword));
+
+        String newPasswordHash = passwordEncoder.encode(newPassword);
+        Optional<User> maybeLockedUser = userRepository.findByIdForUpdate(userId);
+        if (maybeLockedUser.isEmpty()) {
+            return false;
+        }
+        User user = maybeLockedUser.get();
+        if (!authenticatedHash.equals(user.getPasswordHash())
+            && !passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
+            throw new ValidationException("invalid_current_password", "currentPassword is incorrect");
+        }
+
+        user.setPasswordHash(newPasswordHash);
         userRepository.save(user);
         refreshTokenService.revokeAllForUser(user.getId());
         return true;
     }
 
     @Transactional
-    public void deleteAccount(Long userId) {
-        refreshTokenService.revokeAllForUser(userId);
-        Optional<User> maybeUser = userRepository.findById(userId);
-        if (maybeUser.isEmpty()) {
-            return;
+    public DeleteAccountResult deleteAccount(Long userId, String currentPassword) {
+        Optional<String> maybeAuthenticatedHash = userRepository.findPasswordHashById(userId);
+        if (maybeAuthenticatedHash.isEmpty()) {
+            return DeleteAccountResult.USER_NOT_FOUND;
         }
+
+        String authenticatedHash = maybeAuthenticatedHash.get();
+        if (!passwordEncoder.matches(currentPassword, authenticatedHash)) {
+            return DeleteAccountResult.REAUTHENTICATION_FAILED;
+        }
+
+        // The scalar read keeps BCrypt outside the lock without caching a stale User.
+        // From here onward, every password mutation takes the user lock before child rows.
+        Optional<User> maybeLockedUser = userRepository.findByIdForUpdate(userId);
+        if (maybeLockedUser.isEmpty()) {
+            return DeleteAccountResult.USER_NOT_FOUND;
+        }
+        User user = maybeLockedUser.get();
+        if (!authenticatedHash.equals(user.getPasswordHash())
+            && !passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
+            return DeleteAccountResult.REAUTHENTICATION_FAILED;
+        }
+
+        refreshTokenService.revokeAllForUser(userId);
 
         for (Trip ownedTrip : tripRepository.findAllByOwnerId(userId)) {
             List<TripMember> remainingMembers = tripMemberRepository
@@ -100,7 +136,8 @@ public class AccountService {
             }
         }
 
-        userRepository.delete(maybeUser.get());
+        userRepository.delete(user);
+        return DeleteAccountResult.DELETED;
     }
 
     private static UserSummary summary(User user) {
