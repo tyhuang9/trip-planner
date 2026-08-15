@@ -25,12 +25,12 @@ createRoot(document.getElementById('root')!).render(
         <AppAccessGate>
           <StartupBoundary>
             <OutageBoundary>
-            <AuthProvider>
-              <StartupAuthGate>
-                <App />
-                <SpeedInsights />
-              </StartupAuthGate>
-            </AuthProvider>
+              <AuthProvider>
+                <StartupAuthGate>
+                  <App />
+                  <SpeedInsights />
+                </StartupAuthGate>
+              </AuthProvider>
             </OutageBoundary>
           </StartupBoundary>
         </AppAccessGate>
