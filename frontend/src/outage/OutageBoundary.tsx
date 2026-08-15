@@ -16,22 +16,22 @@ const COPY: Record<OutageKind, {
 }> = {
   server: {
     title: 'Our server ran out of road-trip snacks',
-    body: 'Dupert has used up its monthly Render free-tier allowance, so the trip planner is parked on the shoulder. Your browser is online; our server is the one taking the scenic route.',
-    service: 'Render app service',
+    body: 'The trip planner is parked on the shoulder for a moment. Your browser is online; our service is the one taking the scenic route.',
+    service: 'Trip planning service',
     tone: 'server',
     Icon: CloudOff,
   },
   'server-unreachable': {
     title: 'Our server wandered off the map',
-    body: 'We can’t reach Dupert’s Render service. Its monthly free-tier allowance may be empty—or the server may be sightseeing without us. Your browser is online.',
-    service: 'Render app service',
+    body: 'We can’t reach Dupert’s service. It may be sightseeing without us. Your browser is online.',
+    service: 'Trip planning service',
     tone: 'server',
     Icon: CloudOff,
   },
   database: {
     title: 'The database sat on the suitcase',
-    body: 'Dupert has used up its monthly Neon free-tier allowance. The planner is awake, but the database zipped up the trip details and refuses to hand them over.',
-    service: 'Neon database',
+    body: 'The planner is awake, but the database zipped up the trip details and is not handing them over yet.',
+    service: 'Trip database',
     tone: 'database',
     Icon: DatabaseZap,
   },

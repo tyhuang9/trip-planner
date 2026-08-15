@@ -34,7 +34,16 @@ function StartupRun({ children, onRetry }: { children: ReactNode; onRetry: () =>
 export function StartupAuthGate({ children }: { children: ReactNode }) {
   const { isInitializing } = useAuth()
   if (!isInitializing) return <>{children}</>
-  return <StartupChecklist phase="session" failure={null} slow={false} />
+  return <StartupAuthLoading />
+}
+
+function StartupAuthLoading() {
+  const [slow, setSlow] = useState(false)
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSlow(true), 8_000)
+    return () => window.clearTimeout(timer)
+  }, [])
+  return <StartupChecklist phase="session" failure={null} slow={slow} />
 }
 
 function StartupChecklist({ phase, failure, slow, onRetry }: { phase: StartupPhase; failure: StartupFailure | null; slow: boolean; onRetry?: () => void }) {

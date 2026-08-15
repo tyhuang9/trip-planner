@@ -25,6 +25,7 @@ afterEach(() => {
   useAuthStore.getState().clearSession()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('<StartupBoundary>', () => {
@@ -65,15 +66,35 @@ describe('<StartupBoundary>', () => {
   })
 
   it('cancels an in-flight run on unmount without rendering afterward', async () => {
+    vi.useFakeTimers()
     let complete: ((value: null) => void) | undefined
-    vi.mocked(waitForReadiness).mockImplementation(() => new Promise((resolve) => { complete = resolve }))
+    let suppliedSignal: AbortSignal | undefined
+    vi.mocked(waitForReadiness).mockImplementation((signal) => { suppliedSignal = signal; return new Promise((resolve) => { complete = resolve }) })
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const { unmount } = render(<StartupBoundary><span>Application content</span></StartupBoundary>)
-    await waitFor(() => expect(waitForReadiness).toHaveBeenCalledTimes(1))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(waitForReadiness).toHaveBeenCalledTimes(1)
     unmount()
+    expect(suppliedSignal?.aborted).toBe(true)
+    await vi.advanceTimersByTimeAsync(0)
+    await act(async () => { await vi.advanceTimersByTimeAsync(8_000) })
     await act(async () => { complete?.(null) })
     expect(screen.queryByText('Application content')).not.toBeInTheDocument()
     expect(errorSpy).not.toHaveBeenCalled()
+  })
+
+  it('shows and cleans the auth-gate slow note without a late update', async () => {
+    vi.useFakeTimers()
+    const refreshMock = new MockAdapter(axios)
+    let finish: ((value: [number, object]) => void) | undefined
+    refreshMock.onPost('/api/auth/refresh').reply(() => new Promise((resolve) => { finish = resolve }))
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { unmount } = render(<AuthProvider><StartupAuthGate><span>Application content</span></StartupAuthGate></AuthProvider>)
+    await act(async () => { await vi.advanceTimersByTimeAsync(8_000) })
+    expect(screen.getAllByText(/taking a little longer/i)).toHaveLength(2)
+    unmount(); finish?.([401, {}]); await Promise.resolve()
+    expect(errorSpy).not.toHaveBeenCalled()
+    refreshMock.restore()
   })
 
   it('starts a fresh readiness run after a terminal retry', async () => {
