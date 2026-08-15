@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
-import { StrictMode } from 'react'
+import { StrictMode, type ReactNode } from 'react'
 import userEvent from '@testing-library/user-event'
 import MockAdapter from 'axios-mock-adapter'
 import axios from 'axios'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { StartupBoundary, StartupAuthGate } from './StartupBoundary'
 import { AuthProvider } from '../auth/AuthContext'
 import { __resetRefreshSingletonForTests } from '../api/client'
@@ -15,6 +16,17 @@ vi.mock('./readiness', async (importOriginal) => ({
 }))
 
 import { waitForReadiness } from './readiness'
+
+function withQueryClient(children: ReactNode) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  return (
+    <QueryClientProvider client={queryClient}>
+      {children}
+    </QueryClientProvider>
+  )
+}
 
 beforeEach(() => {
   vi.mocked(waitForReadiness).mockReset()
@@ -43,7 +55,7 @@ describe('<StartupBoundary>', () => {
       completeRefresh = resolve
     }))
 
-    render(<StartupBoundary><AuthProvider><StartupAuthGate><span>Application content</span></StartupAuthGate></AuthProvider></StartupBoundary>)
+    render(withQueryClient(<StartupBoundary><AuthProvider><StartupAuthGate><span>Application content</span></StartupAuthGate></AuthProvider></StartupBoundary>))
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
     expect(screen.getByRole('list', { name: /startup checklist/i })).toHaveTextContent(/connecting to the service/i)
     expect(screen.getByRole('list')).toHaveTextContent(/preparing trip data/i)
@@ -89,12 +101,69 @@ describe('<StartupBoundary>', () => {
     let finish: ((value: [number, object]) => void) | undefined
     refreshMock.onPost('/api/auth/refresh').reply(() => new Promise((resolve) => { finish = resolve }))
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    const { unmount } = render(<AuthProvider><StartupAuthGate><span>Application content</span></StartupAuthGate></AuthProvider>)
+    const { unmount } = render(withQueryClient(<AuthProvider><StartupAuthGate><span>Application content</span></StartupAuthGate></AuthProvider>))
     await act(async () => { await vi.advanceTimersByTimeAsync(8_000) })
     expect(screen.getAllByText(/taking a little longer/i)).toHaveLength(2)
     unmount(); finish?.([401, {}]); await Promise.resolve()
     expect(errorSpy).not.toHaveBeenCalled()
     refreshMock.restore()
+  })
+
+  it('turns a lock deadline into a retryable auth shell and recovers', async () => {
+    const originalLocks = Object.getOwnPropertyDescriptor(
+      globalThis.navigator,
+      'locks',
+    )
+    let lockRequests = 0
+    Object.defineProperty(globalThis.navigator, 'locks', {
+      configurable: true,
+      value: {
+        request: vi.fn(
+          (
+            _name: string,
+            _options: unknown,
+            callback: () => Promise<unknown>,
+          ) => {
+            lockRequests += 1
+            return lockRequests === 1
+              ? Promise.reject(
+                  new DOMException('Lock acquisition timed out', 'TimeoutError'),
+                )
+              : Promise.resolve().then(callback)
+          },
+        ),
+      },
+    })
+    const refreshMock = new MockAdapter(axios)
+    refreshMock.onPost('/api/auth/refresh').reply(401, {
+      error: 'unauthenticated',
+    })
+    const rendered = render(withQueryClient(
+      <AuthProvider>
+        <StartupAuthGate><span>Application content</span></StartupAuthGate>
+      </AuthProvider>,
+    ))
+
+    try {
+      expect(
+        await screen.findByRole('heading', {
+          name: /could not confirm your session/i,
+        }),
+      ).toBeInTheDocument()
+      await userEvent.click(screen.getByRole('button', { name: /try again/i }))
+
+      expect(await screen.findByText('Application content')).toBeInTheDocument()
+      expect(lockRequests).toBe(2)
+      expect(refreshMock.history.post).toHaveLength(1)
+    } finally {
+      rendered.unmount()
+      refreshMock.restore()
+      if (originalLocks) {
+        Object.defineProperty(globalThis.navigator, 'locks', originalLocks)
+      } else {
+        Reflect.deleteProperty(globalThis.navigator, 'locks')
+      }
+    }
   })
 
   it('starts a fresh readiness run after a terminal retry', async () => {

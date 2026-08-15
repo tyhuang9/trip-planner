@@ -5,7 +5,10 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
+import jakarta.persistence.LockModeType;
+
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -31,6 +34,18 @@ import com.trip.domain.User;
  * bound parameter.
  */
 public interface UserRepository extends JpaRepository<User, Long> {
+
+    @Query("SELECT u.passwordHash FROM User u WHERE u.id = :userId")
+    Optional<String> findPasswordHashById(@Param("userId") Long userId);
+
+    /**
+     * First pessimistic lock for password mutation and account deletion flows.
+     * Keeping the lock order user row → token/session rows avoids inversion with
+     * the user's cascading token deletes.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT u FROM User u WHERE u.id = :userId")
+    Optional<User> findByIdForUpdate(@Param("userId") Long userId);
 
     @Query("SELECT u FROM User u WHERE LOWER(u.email) = :email")
     Optional<User> findByEmailIgnoreCase(@Param("email") String email);

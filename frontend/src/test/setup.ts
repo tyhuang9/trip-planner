@@ -37,3 +37,26 @@ Object.defineProperty(window, 'localStorage', {
   configurable: true,
   value: testStorage,
 })
+
+// jsdom does not implement the browser Web Locks API. Provide the same
+// exclusive, promise-based semantics production auth requires; individual
+// coordination tests can replace or remove it to exercise queueing/fail-closed
+// behavior.
+let webLockTail = Promise.resolve<unknown>(undefined)
+Object.defineProperty(globalThis.navigator, 'locks', {
+  configurable: true,
+  value: {
+    request<T>(
+      _name: string,
+      _options: { mode: 'exclusive' },
+      callback: () => T | Promise<T>,
+    ): Promise<T> {
+      const run = webLockTail.then(callback)
+      webLockTail = run.then(
+        () => undefined,
+        () => undefined,
+      )
+      return run
+    },
+  },
+})

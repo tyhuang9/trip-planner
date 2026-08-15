@@ -58,6 +58,21 @@ a {
   color: var(--color-primary-text);
 }
 
+/*
+ * iOS Safari zooms focused form controls below 16px. Keep editable controls
+ * at or above that threshold on handset widths. The #root scope plus
+ * !important intentionally wins over component-level !important font sizes;
+ * pinch zoom remains enabled because this does not change viewport settings.
+ */
+@media (max-width: 820px) {
+  #root
+    input:not([type='button']):not([type='checkbox']):not([type='color']):not([type='file']):not([type='hidden']):not([type='image']):not([type='radio']):not([type='range']):not([type='reset']):not([type='submit']),
+  #root textarea,
+  #root select {
+    font-size: max(16px, 1em) !important;
+  }
+}
+
 h1,
 h2,
 h3,

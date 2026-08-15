@@ -6,6 +6,7 @@ import {
 import type {
   AuthResponse,
   ChangePasswordRequest,
+  DeleteAccountRequest,
   EmailVerificationRequest,
   EmailVerificationResendRequest,
   LoginRequest,
@@ -83,6 +84,9 @@ export async function resendEmailVerification(
   await apiClient.post('/auth/email/resend', body)
 }
 
-export async function deleteMe(): Promise<void> {
-  await apiClient.delete('/auth/me')
+export async function deleteMe(body: DeleteAccountRequest): Promise<void> {
+  const response = await apiClient.delete('/auth/me', { data: body })
+  if (response.status !== 204) {
+    throw new Error('Account deletion was not confirmed.')
+  }
 }

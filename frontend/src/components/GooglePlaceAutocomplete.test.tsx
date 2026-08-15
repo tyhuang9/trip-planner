@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import MockAdapter from 'axios-mock-adapter'
 import { useState } from 'react'
@@ -339,11 +339,15 @@ describe('<GooglePlaceAutocomplete>', () => {
   })
 
   it('does not show pending suggestions after blur but can show cached suggestions on refocus', async () => {
+    let resolveAutocomplete:
+      | ((response: [number, { suggestions: typeof tokyoTowerPrediction[] }]) => void)
+      | undefined
     apiMock.resetHandlers()
-    apiMock.onPost('/places/autocomplete').reply(async () => {
-      await new Promise((resolve) => window.setTimeout(resolve, 80))
-      return [200, { suggestions: [tokyoTowerPrediction] }]
-    })
+    apiMock.onPost('/places/autocomplete').reply(
+      () => new Promise((resolve) => {
+        resolveAutocomplete = resolve
+      }),
+    )
 
     render(<Harness />)
 
@@ -351,10 +355,13 @@ describe('<GooglePlaceAutocomplete>', () => {
     await userEvent.type(input, 'Tokyo')
     await waitFor(() => {
       expect(autocompleteRequestFor('Tokyo')).toBeDefined()
+      expect(resolveAutocomplete).toBeDefined()
     })
 
     fireEvent.blur(input)
-    await new Promise((resolve) => window.setTimeout(resolve, 120))
+    await act(async () => {
+      resolveAutocomplete?.([200, { suggestions: [tokyoTowerPrediction] }])
+    })
 
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
 
@@ -368,7 +375,7 @@ describe('<GooglePlaceAutocomplete>', () => {
     render(<Harness initialValue="160 Piccadilly" selectOnFocus />)
 
     const input = screen.getByLabelText(/destination/i) as HTMLInputElement
-    input.focus()
+    await userEvent.click(input)
 
     await waitFor(() => {
       expect(input.selectionStart).toBe(0)

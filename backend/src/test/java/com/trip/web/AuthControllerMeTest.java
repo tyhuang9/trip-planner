@@ -1,7 +1,10 @@
 package com.trip.web;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -11,6 +14,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.cookie;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -28,6 +32,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -35,6 +41,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.trip.config.RateLimitFilter;
 import com.trip.domain.RefreshToken;
 import com.trip.domain.User;
 import com.trip.repo.ActivityRepository;
@@ -48,7 +55,11 @@ import com.trip.service.auth.JwtService;
 import com.trip.service.auth.RefreshTokenService;
 import com.trip.service.auth.RefreshTokenService.IssuedRefreshToken;
 import com.trip.web.auth.AuthCookieAction;
+import com.trip.web.auth.GuestSessionCookie;
 import com.trip.web.auth.RefreshCookie;
+import com.trip.web.dto.DeleteAccountRequest;
+
+import io.micrometer.core.instrument.MeterRegistry;
 
 /**
  * MockMvc tests for the chunk-2c auth endpoints: {@code GET/DELETE /api/auth/me},
@@ -64,6 +75,9 @@ import com.trip.web.auth.RefreshCookie;
 @ActiveProfiles("test")
 class AuthControllerMeTest {
 
+    private static final String ACCOUNT_DELETION_COUNTER =
+        "dupert.auth.account.deletion.attempts";
+
     @Autowired
     MockMvc mvc;
 
@@ -72,6 +86,12 @@ class AuthControllerMeTest {
 
     @Autowired
     JwtService realJwtService;
+
+    @Autowired
+    AuthController authController;
+
+    @Autowired
+    MeterRegistry meterRegistry;
 
     @MockitoBean
     UserRepository userRepository;
@@ -193,7 +213,8 @@ class AuthControllerMeTest {
     void changePasswordVerifiesCurrentPasswordUpdatesHashAndRevokesRefreshTokens() throws Exception {
         User user = userWith(42L, "alice@example.com", "Alice");
         user.setPasswordHash("old-hash");
-        when(userRepository.findById(42L)).thenReturn(Optional.of(user));
+        when(userRepository.findPasswordHashById(42L)).thenReturn(Optional.of("old-hash"));
+        when(userRepository.findByIdForUpdate(42L)).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("old-password", "old-hash")).thenReturn(true);
         when(passwordEncoder.encode("new-password-123")).thenReturn("new-hash");
         String token = realJwtService.issueAccessToken(42L);
@@ -213,9 +234,7 @@ class AuthControllerMeTest {
 
     @Test
     void changePasswordRejectsWrongCurrentPassword() throws Exception {
-        User user = userWith(42L, "alice@example.com", "Alice");
-        user.setPasswordHash("old-hash");
-        when(userRepository.findById(42L)).thenReturn(Optional.of(user));
+        when(userRepository.findPasswordHashById(42L)).thenReturn(Optional.of("old-hash"));
         when(passwordEncoder.matches("wrong-password", "old-hash")).thenReturn(false);
         String token = realJwtService.issueAccessToken(42L);
 
@@ -362,41 +381,219 @@ class AuthControllerMeTest {
 
     @Test
     void deleteMeHappyPathRevokesTokensDeletesUserAndClearsCookie() throws Exception {
+        double outcomeBefore = accountDeletionCount("success");
+        double totalBefore = totalAccountDeletionCount();
         User user = userWith(42L, "alice@example.com", "Alice");
-        when(userRepository.findById(42L)).thenReturn(Optional.of(user));
+        when(userRepository.findPasswordHashById(42L))
+            .thenReturn(Optional.of("ignored-hash"));
+        when(userRepository.findByIdForUpdate(42L)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("current-secret", "ignored-hash")).thenReturn(true);
         String token = realJwtService.issueAccessToken(42L);
 
-        mvc.perform(delete("/api/auth/me").header("Authorization", "Bearer " + token))
+        mvc.perform(delete("/api/auth/me")
+                .header("Authorization", "Bearer " + token)
+                .contentType("application/json")
+                .content(objectMapper.writeValueAsString(
+                    Map.of("currentPassword", "current-secret"))))
             .andExpect(status().isNoContent())
             .andExpect(cookie().maxAge("refresh_token", 0));
 
+        verify(passwordEncoder).matches("current-secret", "ignored-hash");
         verify(refreshTokenService, times(1)).revokeAllForUser(42L);
         verify(userRepository, times(1)).delete(user);
+        assertThatSingleOutcomeIncreased("success", outcomeBefore, totalBefore);
     }
 
     @Test
     void deleteMeWithoutBearerReturns401() throws Exception {
-        mvc.perform(delete("/api/auth/me"))
+        mvc.perform(delete("/api/auth/me")
+                .contentType("application/json")
+                .content(objectMapper.writeValueAsString(
+                    Map.of("currentPassword", "current-secret"))))
             .andExpect(status().isUnauthorized());
         verify(refreshTokenService, never()).revokeAllForUser(any());
         verify(userRepository, never()).delete(any(User.class));
     }
 
     @Test
-    void deleteMeWhenUserAlreadyGoneReturns204Idempotent() throws Exception {
-        when(userRepository.findById(42L)).thenReturn(Optional.empty());
+    void deleteMeWithGuestCookieReturns401() throws Exception {
+        mvc.perform(delete("/api/auth/me")
+                .cookie(new Cookie(GuestSessionCookie.COOKIE_NAME, "guest-session-token"))
+                .contentType("application/json")
+                .content(objectMapper.writeValueAsString(
+                    Map.of("currentPassword", "current-secret"))))
+            .andExpect(status().isUnauthorized());
+
+        verify(refreshTokenService, never()).revokeAllForUser(any());
+        verify(userRepository, never()).delete(any(User.class));
+    }
+
+    @Test
+    void deleteMeWhenUserAlreadyGoneReturns401WithoutClearingCookie() throws Exception {
+        double outcomeBefore = accountDeletionCount("user_missing");
+        double totalBefore = totalAccountDeletionCount();
+        when(userRepository.findPasswordHashById(42L)).thenReturn(Optional.empty());
         String token = realJwtService.issueAccessToken(42L);
 
-        mvc.perform(delete("/api/auth/me").header("Authorization", "Bearer " + token))
-            .andExpect(status().isNoContent())
-            .andExpect(cookie().maxAge("refresh_token", 0));
+        mvc.perform(delete("/api/auth/me")
+                .header("Authorization", "Bearer " + token)
+                .cookie(new Cookie("refresh_token", "existing-session"))
+                .contentType("application/json")
+                .content(objectMapper.writeValueAsString(
+                    Map.of("currentPassword", "current-secret"))))
+            .andExpect(status().isUnauthorized())
+            .andExpect(jsonPath("$.error").value("unauthenticated"))
+            .andExpect(header().doesNotExist("Set-Cookie"));
 
+        verify(passwordEncoder, never()).matches(anyString(), anyString());
+        verify(refreshTokenService, never()).revokeAllForUser(any());
         verify(userRepository, never()).delete(any(User.class));
+        assertThatSingleOutcomeIncreased("user_missing", outcomeBefore, totalBefore);
+    }
+
+    @Test
+    void deleteMeWithWrongPasswordReturns403AndPreservesAccountAndSession() throws Exception {
+        double outcomeBefore = accountDeletionCount("fresh_auth_rejected");
+        double totalBefore = totalAccountDeletionCount();
+        when(userRepository.findPasswordHashById(43L))
+            .thenReturn(Optional.of("ignored-hash"));
+        when(passwordEncoder.matches("incorrect-secret", "ignored-hash")).thenReturn(false);
+        String token = realJwtService.issueAccessToken(43L);
+
+        mvc.perform(delete("/api/auth/me")
+                .header("Authorization", "Bearer " + token)
+                .cookie(new Cookie("refresh_token", "existing-session"))
+                .contentType("application/json")
+                .content(objectMapper.writeValueAsString(
+                    Map.of("currentPassword", "incorrect-secret"))))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.error").value("reauthentication_failed"))
+            .andExpect(header().doesNotExist("Set-Cookie"));
+
+        verify(refreshTokenService, never()).revokeAllForUser(any());
+        verify(tripRepository, never()).findAllByOwnerId(any());
+        verify(userRepository, never()).delete(any(User.class));
+        assertThatSingleOutcomeIncreased("fresh_auth_rejected", outcomeBefore, totalBefore);
+    }
+
+    @Test
+    void deleteMeRejectsBlankPasswordBody() throws Exception {
+        String token = realJwtService.issueAccessToken(44L);
+
+        mvc.perform(delete("/api/auth/me")
+                .header("Authorization", "Bearer " + token)
+                .contentType("application/json")
+                .content(objectMapper.writeValueAsString(Map.of("currentPassword", ""))))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error").value("validation_failed"));
+
+        verify(userRepository, never()).findPasswordHashById(44L);
+        verify(passwordEncoder, never()).matches(anyString(), anyString());
+    }
+
+    @Test
+    void deleteMeRejectsOversizedPasswordBody() throws Exception {
+        String token = realJwtService.issueAccessToken(45L);
+
+        mvc.perform(delete("/api/auth/me")
+                .header("Authorization", "Bearer " + token)
+                .contentType("application/json")
+                .content(objectMapper.writeValueAsString(
+                    Map.of("currentPassword", "x".repeat(129)))))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error").value("validation_failed"));
+
+        verify(userRepository, never()).findPasswordHashById(45L);
+        verify(passwordEncoder, never()).matches(anyString(), anyString());
+    }
+
+    @Test
+    void deleteMeRateLimitsPerUserBeforeAdditionalPasswordVerification() throws Exception {
+        double rejectedBefore = accountDeletionCount("fresh_auth_rejected");
+        double throttledBefore = accountDeletionCount("user_throttled");
+        double totalBefore = totalAccountDeletionCount();
+        when(userRepository.findPasswordHashById(88L))
+            .thenReturn(Optional.of("ignored-hash"));
+        when(passwordEncoder.matches(anyString(), anyString())).thenReturn(false);
+        String token = realJwtService.issueAccessToken(88L);
+
+        for (int attempt = 0; attempt < 5; attempt++) {
+            mvc.perform(delete("/api/auth/me")
+                    .with(remoteAddress("203.0.113.88"))
+                    .header("Authorization", "Bearer " + token)
+                    .contentType("application/json")
+                    .content(objectMapper.writeValueAsString(
+                        Map.of("currentPassword", "incorrect-secret"))))
+                .andExpect(status().isForbidden());
+        }
+
+        mvc.perform(delete("/api/auth/me")
+                .with(remoteAddress("203.0.113.88"))
+                .header("Authorization", "Bearer " + token)
+                .contentType("application/json")
+                .content(objectMapper.writeValueAsString(
+                    Map.of("currentPassword", "incorrect-secret"))))
+            .andExpect(status().isTooManyRequests())
+            .andExpect(header().exists("Retry-After"))
+            .andExpect(content().string(RateLimitFilter.RATE_LIMITED_BODY));
+
+        verify(passwordEncoder, times(5)).matches("incorrect-secret", "ignored-hash");
+        verify(refreshTokenService, never()).revokeAllForUser(any());
+        verify(userRepository, never()).delete(any(User.class));
+        assertThat(accountDeletionCount("fresh_auth_rejected"))
+            .isEqualTo(rejectedBefore + 5.0);
+        assertThat(accountDeletionCount("user_throttled"))
+            .isEqualTo(throttledBefore + 1.0);
+        assertThat(totalAccountDeletionCount())
+            .isEqualTo(totalBefore + 6.0);
+    }
+
+    @Test
+    void deleteMeRecordsTransactionFailureAndRethrowsTheSameException() {
+        double outcomeBefore = accountDeletionCount("transaction_failed");
+        double totalBefore = totalAccountDeletionCount();
+        IllegalStateException failure = new IllegalStateException("simulated transaction failure");
+        when(userRepository.findPasswordHashById(46L)).thenThrow(failure);
+        Authentication authentication = mock(Authentication.class);
+        when(authentication.isAuthenticated()).thenReturn(true);
+        when(authentication.getPrincipal()).thenReturn(46L);
+
+        assertThatThrownBy(() -> authController.deleteMe(
+            new DeleteAccountRequest("current-secret"),
+            authentication,
+            new MockHttpServletResponse()))
+            .isSameAs(failure);
+
+        assertThatSingleOutcomeIncreased("transaction_failed", outcomeBefore, totalBefore);
     }
 
     // ------------------------------------------------------------------
     // helpers
     // ------------------------------------------------------------------
+
+    private double accountDeletionCount(String outcome) {
+        return meterRegistry.get(ACCOUNT_DELETION_COUNTER)
+            .tag("outcome", outcome)
+            .counter()
+            .count();
+    }
+
+    private double totalAccountDeletionCount() {
+        return meterRegistry.get(ACCOUNT_DELETION_COUNTER)
+            .counters()
+            .stream()
+            .mapToDouble(counter -> counter.count())
+            .sum();
+    }
+
+    private void assertThatSingleOutcomeIncreased(String outcome,
+                                                   double outcomeBefore,
+                                                   double totalBefore) {
+        assertThat(accountDeletionCount(outcome))
+            .isEqualTo(outcomeBefore + 1.0);
+        assertThat(totalAccountDeletionCount())
+            .isEqualTo(totalBefore + 1.0);
+    }
 
     private static User userWith(long id, String email, String displayName) {
         User u = new User(email, "ignored-hash", displayName);
@@ -413,6 +610,13 @@ class AuthControllerMeTest {
     private static RequestPostProcessor authCookieAction() {
         return request -> {
             request.addHeader(AuthCookieAction.HEADER, AuthCookieAction.VALUE);
+            return request;
+        };
+    }
+
+    private static RequestPostProcessor remoteAddress(String address) {
+        return request -> {
+            request.setRemoteAddr(address);
             return request;
         };
     }

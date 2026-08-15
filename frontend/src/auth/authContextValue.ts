@@ -1,12 +1,14 @@
 import { createContext } from 'react'
 import type {
   LoginRequest,
+  DeleteAccountRequest,
   EmailVerificationResendRequest,
   RegisterRequest,
   RegisterResponse,
   UpdateProfileRequest,
   UserSummary,
 } from '../types/auth'
+import type { AuthStatus } from './authStore'
 
 /**
  * Auth context shape exposed to the rest of the app. The state fields
@@ -19,6 +21,7 @@ import type {
  * that for HMR to work cleanly.
  */
 export interface AuthContextValue {
+  authStatus: AuthStatus
   user: UserSummary | null
   isAuthenticated: boolean
   /**
@@ -28,6 +31,7 @@ export interface AuthContextValue {
    * /login on every cold load.
    */
   isInitializing: boolean
+  retryAuthResolution: () => Promise<void>
   login: (body: LoginRequest) => Promise<UserSummary>
   register: (body: RegisterRequest) => Promise<RegisterResponse>
   updateProfile: (body: UpdateProfileRequest) => Promise<UserSummary>
@@ -35,7 +39,7 @@ export interface AuthContextValue {
   requestPasswordReset: (body: { email: string }) => Promise<void>
   resendEmailVerification: (body: EmailVerificationResendRequest) => Promise<void>
   logout: () => Promise<void>
-  deleteAccount: () => Promise<void>
+  deleteAccount: (body: DeleteAccountRequest) => Promise<void>
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null)

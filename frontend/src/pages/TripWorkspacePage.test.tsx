@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import MockAdapter from 'axios-mock-adapter'
 import {
@@ -386,12 +386,8 @@ vi.mock('../components/PlaceSearch', () => ({
     }
   }) => {
     const inputRef = useRef<HTMLInputElement | null>(null)
-    const previousFocusKeyRef = useRef(focusKey)
     useEffect(() => {
-      if (previousFocusKeyRef.current !== focusKey) {
-        inputRef.current?.focus()
-      }
-      previousFocusKeyRef.current = focusKey
+      if (focusKey !== undefined) inputRef.current?.focus()
     }, [focusKey])
     placeSearchMockState.searchOptions = searchOptions ?? null
     const place = {
@@ -543,10 +539,31 @@ function mockWorkspace(
   apiMock.onGet('/trips/abc234def567/activities').reply(200, activities)
 }
 
+function authenticateUser() {
+  useAuthStore.getState().setSession({
+    accessToken: 'jwt-access-token',
+    expiresInSeconds: 900,
+    user: {
+      id: 200,
+      email: 'bob@example.com',
+      displayName: 'Bob',
+      emailVerified: true,
+    },
+  })
+}
+
 function renderWorkspace(path: string) {
   function LocationProbe() {
     const location = useLocation()
-    return <div data-testid="current-location">{location.pathname}{location.search}</div>
+    return (
+      <div
+        data-testid="current-location"
+        data-location-hash={location.hash}
+        data-location-key={location.key}
+      >
+        {location.pathname}{location.search}
+      </div>
+    )
   }
 
   return render(
@@ -556,6 +573,8 @@ function renderWorkspace(path: string) {
         <Routes>
           <Route path="/trips/:publicId" element={<TripWorkspacePage />} />
           <Route path="/trips/:publicId/d/:day" element={<TripWorkspacePage />} />
+          <Route path="/trips/:publicId/members" element={<TripWorkspacePage />} />
+          <Route path="/trips/:publicId/archive/members" element={<TripWorkspacePage />} />
         </Routes>
       </MemoryRouter>
     </Providers>,
@@ -781,6 +800,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  cleanup()
   apiMock.restore()
   queryClient.clear()
   useAuthStore.getState().clearSession()
@@ -789,6 +809,29 @@ afterEach(() => {
 })
 
 describe('<TripWorkspacePage>', () => {
+  it('resets stale document scrolling when a mobile workspace opens', () => {
+    mockViewport(true)
+    mockWorkspace()
+    const originalScrollY = Object.getOwnPropertyDescriptor(window, 'scrollY')
+    const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined)
+    Object.defineProperty(window, 'scrollY', {
+      configurable: true,
+      value: 64,
+    })
+
+    try {
+      renderWorkspace('/trips/abc234def567/d/2026-05-03')
+      expect(scrollTo).toHaveBeenCalledWith(0, 0)
+    } finally {
+      scrollTo.mockRestore()
+      if (originalScrollY) {
+        Object.defineProperty(window, 'scrollY', originalScrollY)
+      } else {
+        Reflect.deleteProperty(window, 'scrollY')
+      }
+    }
+  })
+
   it('uses the mobile bottom bar and mounts the map only for the Map tab', async () => {
     mockViewport(true)
     mockWorkspace()
@@ -803,10 +846,12 @@ describe('<TripWorkspacePage>', () => {
     await userEvent.click(screen.getByRole('button', { name: /^map$/i }))
     expect(await screen.findByTestId('trip-map')).toBeInTheDocument()
     expect(screen.getAllByTestId('trip-map')).toHaveLength(1)
+    expect(screen.getByRole('textbox', { name: /map place search/i })).not.toHaveFocus()
 
     await userEvent.click(screen.getByRole('button', { name: /^timeline$/i }))
     expect(screen.queryByTestId('trip-map')).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: /full trip timeline/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /^timeline$/i })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /full trip timeline/i })).not.toBeInTheDocument()
 
     const menuButton = screen.getByRole('button', { name: /open trip menu/i })
     await userEvent.click(menuButton)
@@ -945,7 +990,7 @@ describe('<TripWorkspacePage>', () => {
     expect(within(dayNavigator).getByRole('button', { name: /next day/i })).toBeDisabled()
   })
 
-  it('shows the mobile add action only in Plan and hides it while composing', async () => {
+  it('keeps matching add actions in Plan and Ideas, and hides them while composing', async () => {
     mockViewport(true)
     mockWorkspace()
 
@@ -957,15 +1002,64 @@ describe('<TripWorkspacePage>', () => {
     expect(screen.queryByLabelText(/^add activity$/i, { selector: 'button' })).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }))
-    await screen.findByLabelText(/^add activity$/i, { selector: 'button' })
+    const restoredAddActivity = await screen.findByLabelText(/^add activity$/i, {
+      selector: 'button',
+    })
+    await waitFor(() => expect(restoredAddActivity).toHaveFocus())
 
     await userEvent.click(screen.getByRole('button', { name: /^map$/i }))
     await screen.findByTestId('trip-map')
     expect(screen.queryByLabelText(/^add activity$/i, { selector: 'button' })).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: /^timeline$/i }))
-    expect(await screen.findByRole('heading', { name: /full trip timeline/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /^timeline$/i })).toBeInTheDocument()
     expect(screen.queryByLabelText(/^add activity$/i, { selector: 'button' })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /^ideas$/i }))
+    const addIdea = await screen.findByLabelText(/^add idea$/i, { selector: 'button' })
+    expect(screen.getAllByText(/^0 ideas$/i)).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: /^add idea$/i })).toHaveLength(1)
+    expect(addIdea).toHaveAttribute('title', 'Add Idea')
+    expect(addIdea.querySelector('svg')).toBeInTheDocument()
+    await userEvent.click(addIdea)
+    await screen.findByRole('textbox', { name: /activity name/i })
+    expect(screen.queryByLabelText(/^add idea$/i, { selector: 'button' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }))
+    const restoredAddIdea = await screen.findByLabelText(/^add idea$/i, { selector: 'button' })
+    await waitFor(() => expect(restoredAddIdea).toHaveFocus())
+  })
+
+  it('uses the compact mobile timeline summary and guides empty trips into Plan', async () => {
+    mockViewport(true)
+    mockWorkspace()
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+
+    await userEvent.click(await screen.findByRole('button', { name: /^timeline$/i }))
+
+    expect(screen.getByRole('heading', { level: 2, name: /^timeline$/i })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /full trip timeline/i })).not.toBeInTheDocument()
+    expect(screen.getByText(/^0 activities · 0 days$/i)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /no activities yet/i })).toBeInTheDocument()
+    expect(screen.getByText(/plan an activity or save an idea/i)).toBeInTheDocument()
+    expect(screen.getByText(/^0 days planned$/i)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /^add activity$/i }))
+    expect(screen.getByRole('button', { name: /^plan$/i })).toHaveAttribute('aria-current', 'page')
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: /activity name/i })).toHaveFocus()
+    })
+  })
+
+  it('keeps empty mobile timeline guidance read-only for viewers', async () => {
+    mockViewport(true)
+    mockWorkspace([], { ...SAMPLE_TRIP, role: 'VIEWER' })
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+
+    await userEvent.click(await screen.findByRole('button', { name: /^timeline$/i }))
+    expect(screen.getByRole('heading', { name: /no activities yet/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^add activity$/i })).not.toBeInTheDocument()
   })
 
   it('keeps the desktop day heading and compact add action', async () => {
@@ -1002,6 +1096,264 @@ describe('<TripWorkspacePage>', () => {
     expect(apiMock.history.get.map(({ url }) => url)).not.toContain('/trips/abc234def567/members')
   })
 
+  it('renders the authenticated Members deep link as a contained workspace overlay', async () => {
+    authenticateUser()
+    mockWorkspace()
+    apiMock.onGet('/trips/abc234def567/members').reply(200, [
+      {
+        userId: 42,
+        email: 'alice@example.com',
+        displayName: 'Alice',
+        role: 'OWNER',
+      },
+      {
+        userId: 84,
+        email: 'bob@example.com',
+        displayName: 'Bob',
+        role: 'EDITOR',
+      },
+    ])
+
+    renderWorkspace('/trips/abc234def567/members')
+
+    expect(await screen.findByRole('heading', { level: 1, name: /tokyo 2026/i })).toBeInTheDocument()
+    const membersDialog = await screen.findByRole('dialog', { name: /^members$/i })
+    expect(await within(membersDialog).findByText('Alice')).toBeInTheDocument()
+    expect(within(membersDialog).getByRole('button', { name: 'Remove Bob' })).toBeInTheDocument()
+    expect(within(membersDialog).queryByRole('button', { name: 'Remove Alice' })).not.toBeInTheDocument()
+    expect(apiMock.history.get.map(({ url }) => url)).not.toContain('/trips/abc234def567/share-links')
+
+    await userEvent.click(within(membersDialog).getByRole('button', { name: /close members/i }))
+    await waitFor(() => {
+      expect(screen.getByTestId('current-location')).toHaveTextContent('/trips/abc234def567')
+      expect(screen.queryByRole('dialog', { name: /^members$/i })).not.toBeInTheDocument()
+    })
+  })
+
+  it('treats the trailing-slash Members route as canonical with query and hash state', async () => {
+    authenticateUser()
+    mockWorkspace([], { ...SAMPLE_TRIP, role: 'VIEWER' })
+    apiMock.onGet('/trips/abc234def567/members').reply(200, [
+      {
+        userId: 42,
+        email: 'alice@example.com',
+        displayName: 'Alice',
+        role: 'OWNER',
+      },
+      {
+        userId: 84,
+        email: 'bob@example.com',
+        displayName: 'Bob',
+        role: 'EDITOR',
+      },
+    ])
+
+    renderWorkspace('/trips/abc234def567/members/?tab=people#members')
+
+    const membersDialog = await screen.findByRole('dialog', { name: /^members$/i })
+    expect(screen.getByTestId('current-location')).toHaveTextContent(
+      '/trips/abc234def567/members/?tab=people',
+    )
+    expect(screen.getByTestId('current-location')).toHaveAttribute('data-location-hash', '#members')
+    expect(await within(membersDialog).findByText('Alice')).toBeInTheDocument()
+    expect(within(membersDialog).queryByRole('button', { name: 'Remove Bob' })).not.toBeInTheDocument()
+
+    await userEvent.click(within(membersDialog).getByRole('button', { name: /close members/i }))
+    await waitFor(() => {
+      expect(screen.getByTestId('current-location')).toHaveTextContent('/trips/abc234def567')
+      expect(screen.queryByRole('dialog', { name: /^members$/i })).not.toBeInTheDocument()
+    })
+  })
+
+  it('does not classify another nested path ending in members as the Members overlay', async () => {
+    authenticateUser()
+    mockWorkspace()
+
+    renderWorkspace('/trips/abc234def567/archive/members')
+
+    await screen.findByRole('heading', { level: 1, name: /tokyo 2026/i })
+    await waitFor(() => {
+      expect(screen.getByTestId('current-location')).toHaveTextContent(
+        '/trips/abc234def567/d/2026-05-01',
+      )
+    })
+    expect(screen.queryByRole('dialog', { name: /^members$/i })).not.toBeInTheDocument()
+  })
+
+  it('keeps the members retry state inside the workspace overlay', async () => {
+    authenticateUser()
+    mockWorkspace()
+    apiMock.onGet('/trips/abc234def567/members').reply(500, { error: 'internal_error' })
+
+    renderWorkspace('/trips/abc234def567/members')
+
+    const membersDialog = await screen.findByRole('dialog', { name: /^members$/i })
+    expect(await within(membersDialog).findByRole('button', { name: /retry members/i })).toBeInTheDocument()
+    expect(within(membersDialog).queryByText('No members found.')).not.toBeInTheDocument()
+  })
+
+  it('returns to the originating trip day when Members opens from the mobile menu', async () => {
+    authenticateUser()
+    mockViewport(true)
+    mockWorkspace()
+    apiMock.onGet('/trips/abc234def567/members').reply(200, [
+      {
+        userId: 42,
+        email: 'alice@example.com',
+        displayName: 'Alice',
+        role: 'OWNER',
+      },
+    ])
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+    const originatingLocationKey = screen.getByTestId('current-location').dataset.locationKey
+
+    await userEvent.click(await screen.findByRole('button', { name: /open trip menu/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^members$/i }))
+    const membersDialog = await screen.findByRole('dialog', { name: /^members$/i })
+    await userEvent.click(within(membersDialog).getByRole('button', { name: /close members/i }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('current-location')).toHaveTextContent('/trips/abc234def567/d/2026-05-01')
+      expect(screen.getByTestId('current-location')).toHaveAttribute(
+        'data-location-key',
+        originatingLocationKey,
+      )
+      expect(screen.queryByRole('dialog', { name: /^members$/i })).not.toBeInTheDocument()
+    })
+  })
+
+  it('removes a member and restores focus inside the members overlay', async () => {
+    authenticateUser()
+    mockWorkspace()
+    const removalResponse = createDeferred<[number]>()
+    const owner = {
+      userId: 42,
+      email: 'alice@example.com',
+      displayName: 'Alice',
+      role: 'OWNER',
+    }
+    const member = {
+      userId: 84,
+      email: 'bob@example.com',
+      displayName: 'Bob',
+      role: 'EDITOR',
+    }
+    apiMock.onGet('/trips/abc234def567/members').replyOnce(200, [owner, member])
+    apiMock.onGet('/trips/abc234def567/members').reply(200, [owner])
+    apiMock.onDelete('/trips/abc234def567/members/84').reply(() => removalResponse.promise)
+
+    renderWorkspace('/trips/abc234def567/members')
+
+    const membersDialog = await screen.findByRole('dialog', { name: /^members$/i })
+    const closeMembers = within(membersDialog).getByRole('button', { name: /close members/i })
+    await userEvent.click(await within(membersDialog).findByRole('button', { name: 'Remove Bob' }))
+    const confirmation = await screen.findByRole('alertdialog', { name: 'Remove member?' })
+    await userEvent.click(within(confirmation).getByRole('button', { name: 'Remove member' }))
+
+    expect(within(confirmation).getByRole('button', { name: /^cancel$/i })).toBeDisabled()
+    expect(within(confirmation).getByRole('button', { name: 'Removing...' })).toBeDisabled()
+    await waitFor(() => expect(confirmation).toHaveFocus())
+    await userEvent.tab()
+    expect(confirmation).toHaveFocus()
+    await userEvent.click(within(confirmation).getByRole('button', { name: /^cancel$/i }))
+    fireEvent.keyDown(document, { key: 'Escape' })
+    fireEvent.mouseDown(confirmation.parentElement!)
+
+    expect(screen.getByRole('alertdialog', { name: 'Remove member?' })).toBeInTheDocument()
+    expect(within(membersDialog).getByText('Bob')).toBeInTheDocument()
+    act(() => removalResponse.resolve([204]))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog', { name: 'Remove member?' })).not.toBeInTheDocument()
+      expect(within(membersDialog).queryByText('Bob')).not.toBeInTheDocument()
+      expect(closeMembers).toHaveFocus()
+    })
+  })
+
+  it('keeps member removal confirmation and errors within the members overlay', async () => {
+    authenticateUser()
+    mockWorkspace()
+    apiMock.onGet('/trips/abc234def567/members').reply(200, [
+      {
+        userId: 42,
+        email: 'alice@example.com',
+        displayName: 'Alice',
+        role: 'OWNER',
+      },
+      {
+        userId: 84,
+        email: 'bob@example.com',
+        displayName: 'Bob',
+        role: 'EDITOR',
+      },
+    ])
+    apiMock.onDelete('/trips/abc234def567/members/84').reply(500, {
+      error: 'internal_error',
+    })
+
+    renderWorkspace('/trips/abc234def567/members')
+
+    const membersDialog = await screen.findByRole('dialog', { name: /^members$/i })
+    await userEvent.click(await within(membersDialog).findByRole('button', { name: 'Remove Bob' }))
+    const confirmation = await screen.findByRole('alertdialog', { name: 'Remove member?' })
+    const cancelRemoval = within(confirmation).getByRole('button', { name: /^cancel$/i })
+    await waitFor(() => expect(cancelRemoval).toHaveFocus())
+    await userEvent.tab({ shift: true })
+    expect(within(confirmation).getByRole('button', { name: 'Remove member' })).toHaveFocus()
+    await userEvent.tab()
+    expect(cancelRemoval).toHaveFocus()
+    await userEvent.click(within(confirmation).getByRole('button', { name: 'Remove member' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The server ran into a problem. Please try again.',
+    )
+    expect(screen.getByRole('alertdialog', { name: 'Remove member?' })).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog', { name: 'Remove member?' })).not.toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: /^members$/i })).toBeInTheDocument()
+    })
+  })
+
+  it('focuses, traps, closes, and restores focus for workspace dialogs', async () => {
+    mockWorkspace()
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+
+    const settingsTrigger = await screen.findByRole('button', { name: /^settings$/i })
+    settingsTrigger.focus()
+    await userEvent.click(settingsTrigger)
+    const settingsDialog = await screen.findByRole('dialog', { name: /trip settings/i })
+    const closeButton = within(settingsDialog).getByRole('button', { name: /close trip settings/i })
+
+    await waitFor(() => expect(closeButton).toHaveFocus())
+    await userEvent.tab({ shift: true })
+    expect(within(settingsDialog).getByRole('button', { name: /save changes/i })).toHaveFocus()
+
+    const dateTrigger = within(settingsDialog).getByRole('button', { name: /trip dates/i })
+    await userEvent.click(dateTrigger)
+    const dateDialog = await screen.findByRole('dialog', { name: /trip dates/i })
+    expect(within(dateDialog).getByRole('button', {
+      name: /choose friday, may 1, 2026/i,
+    })).toHaveFocus()
+    await userEvent.tab()
+    expect(dateDialog).toContainElement(document.activeElement as HTMLElement)
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /trip dates/i })).not.toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: /trip settings/i })).toBeInTheDocument()
+      expect(dateTrigger).toHaveFocus()
+    })
+
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /trip settings/i })).not.toBeInTheDocument()
+      expect(settingsTrigger).toHaveFocus()
+    })
+  })
+
   it('edits and moves a mobile activity by selecting its card', async () => {
     mockViewport(true)
     mockWorkspace([SAMPLE_ACTIVITY])
@@ -1020,7 +1372,8 @@ describe('<TripWorkspacePage>', () => {
     expect(screen.queryByRole('button', { name: /move to day/i })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /reorder tsukiji sushi/i })).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('article', { name: /expand tsukiji sushi/i }))
+    const activityCard = screen.getByRole('article', { name: /expand tsukiji sushi/i })
+    await userEvent.click(activityCard)
     const editorHeader = screen.getByText(/^edit activity$/i).parentElement
     expect(editorHeader).not.toBeNull()
     expect(within(editorHeader as HTMLElement).getByRole('button', { name: /^close activity editor$/i }))
@@ -1028,12 +1381,16 @@ describe('<TripWorkspacePage>', () => {
     expect(within(editorHeader as HTMLElement).queryByRole('button', { name: /^change day$/i }))
       .not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^done$/i })).not.toBeInTheDocument()
+    expect(within(activityCard).getByRole('heading', { name: /tsukiji sushi/i })).toBeInTheDocument()
     const firstChangeDay = screen.getByRole('button', { name: /^change day$/i })
     const editFooter = firstChangeDay.parentElement
     expect(editFooter).not.toBeNull()
     expect(within(editFooter as HTMLElement).getByRole('button', { name: /^delete$/i }))
       .toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: /^close activity editor$/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('article', { name: /expand tsukiji sushi/i })).toHaveFocus()
+    })
 
     await userEvent.click(screen.getByRole('article', { name: /expand tsukiji sushi/i }))
     expect(screen.getByText(/^edit activity$/i)).toBeInTheDocument()
@@ -3867,6 +4224,45 @@ describe('<TripWorkspacePage>', () => {
       expectedVersion: 0,
     })
     expect(await screen.findByRole('heading', { level: 2, name: /sunday, may 3/i })).toBeInTheDocument()
+  })
+
+  it('keeps a trip settings field focused when its initial dialog focus frame runs late', async () => {
+    const queuedFrames = new Map<number, FrameRequestCallback>()
+    let nextFrameId = 0
+    const requestAnimationFrameSpy = vi.spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        nextFrameId += 1
+        queuedFrames.set(nextFrameId, callback)
+        return nextFrameId
+      })
+
+    try {
+      mockWorkspace()
+      renderWorkspace('/trips/abc234def567')
+
+      await screen.findByRole('heading', { level: 1, name: /tokyo 2026/i })
+      const framesBeforeOpeningSettings = new Set(queuedFrames.keys())
+      await userEvent.click(screen.getByRole('button', { name: /^settings$/i }))
+
+      const nameInput = screen.getByLabelText(/trip name/i)
+      await userEvent.clear(nameInput)
+      const focusFrames = [...queuedFrames.entries()]
+        .filter(([frameId]) => !framesBeforeOpeningSettings.has(frameId))
+        .map(([, callback]) => callback)
+      expect(focusFrames).not.toHaveLength(0)
+
+      act(() => {
+        focusFrames.forEach((callback) => callback(0))
+      })
+      await userEvent.type(nameInput, 'Keep my draft', { skipClick: true })
+
+      expect(nameInput).toHaveFocus()
+      expect(nameInput).toHaveValue('Keep my draft')
+      expect(screen.getByRole('dialog', { name: /trip settings/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument()
+    } finally {
+      requestAnimationFrameSpy.mockRestore()
+    }
   })
 
   it('keeps the settings draft and reloads the trip after an edit conflict', async () => {

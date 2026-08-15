@@ -52,6 +52,8 @@ import com.trip.service.realtime.TripEventPublisher;
 import com.trip.service.share.ShareTokenService;
 import com.trip.service.trip.ReflectionIds;
 import com.trip.web.auth.GuestSessionCookie;
+import com.trip.web.dto.share.AcceptGuestShareLinkBodyRequest;
+import com.trip.web.dto.share.AcceptShareLinkRequest;
 
 import jakarta.servlet.http.Cookie;
 
@@ -322,8 +324,11 @@ class ShareLinkControllerTest {
         when(tripMemberRepository.findByIdTripIdAndIdUserId(TRIP_PK, BOB_ID))
             .thenReturn(Optional.empty());
 
-        mvc.perform(post("/api/share/" + RAW_TOKEN + "/accept")
-                .header("Authorization", bearerFor(BOB_ID)))
+        mvc.perform(post("/api/share/accept")
+                .with(remoteAddr("203.0.113.31"))
+                .header("Authorization", bearerFor(BOB_ID))
+                .contentType("application/json")
+                .content(objectMapper.writeValueAsString(Map.of("token", RAW_TOKEN))))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.publicId").value(TRIP_PUBLIC_ID))
             .andExpect(jsonPath("$.role").value("EDITOR"));
@@ -395,8 +400,86 @@ class ShareLinkControllerTest {
 
     @Test
     void acceptWithoutBearerReturns401() throws Exception {
-        mvc.perform(post("/api/share/" + RAW_TOKEN + "/accept"))
+        mvc.perform(post("/api/share/" + RAW_TOKEN + "/accept")
+                .with(remoteAddr("203.0.113.32")))
             .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void legacyAcceptWithoutBearerReturns401EvenWithGuestCookie() throws Exception {
+        mvc.perform(post("/api/share/" + RAW_TOKEN + "/accept")
+                .with(remoteAddr("203.0.113.37"))
+                .cookie(guestCookie()))
+            .andExpect(status().isUnauthorized());
+
+        verify(shareLinkRepository, never()).findByTokenHash(any());
+    }
+
+    @Test
+    void bodyAcceptWithoutBearerReturns401EvenWithGuestCookie() throws Exception {
+        mvc.perform(post("/api/share/accept")
+                .with(remoteAddr("203.0.113.33"))
+                .cookie(guestCookie())
+                .contentType("application/json")
+                .content(objectMapper.writeValueAsString(Map.of("token", RAW_TOKEN))))
+            .andExpect(status().isUnauthorized());
+
+        verify(shareLinkRepository, never()).findByTokenHash(any());
+    }
+
+    @Test
+    void bodyAcceptRejectsInvalidTokenWithoutReflectingIt() throws Exception {
+        String invalidToken = "invalid.token-value-123456789";
+
+        String response = mvc.perform(post("/api/share/accept")
+                .with(remoteAddr("203.0.113.34"))
+                .header("Authorization", bearerFor(BOB_ID))
+                .contentType("application/json")
+                .content(objectMapper.writeValueAsString(Map.of("token", invalidToken))))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error").value("validation_failed"))
+            .andReturn().getResponse().getContentAsString();
+
+        assertThat(response).doesNotContain(invalidToken);
+        assertThat(new AcceptShareLinkRequest(invalidToken).toString()).doesNotContain(invalidToken);
+        verify(shareLinkRepository, never()).findByTokenHash(any());
+    }
+
+    @Test
+    void bodyRoutesRejectMissingBlankAndOversizedTokensWithoutReflection() throws Exception {
+        String oversizedToken = "a".repeat(201);
+        int requestNumber = 40;
+
+        for (String route : List.of("/api/share/accept", "/api/share/guest")) {
+            List<Map<String, String>> bodies = route.endsWith("/guest")
+                ? List.of(
+                    Map.of("displayName", "Guest Alice"),
+                    Map.of("token", "   ", "displayName", "Guest Alice"),
+                    Map.of("token", oversizedToken, "displayName", "Guest Alice"))
+                : List.of(
+                    Map.of(),
+                    Map.of("token", "   "),
+                    Map.of("token", oversizedToken));
+
+            for (Map<String, String> body : bodies) {
+                var request = post(route)
+                    .with(remoteAddr("203.0.113." + requestNumber++))
+                    .contentType("application/json")
+                    .content(objectMapper.writeValueAsString(body));
+                if (route.endsWith("/accept")) {
+                    request.header("Authorization", bearerFor(BOB_ID));
+                }
+
+                String response = mvc.perform(request)
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.error").value("validation_failed"))
+                    .andReturn().getResponse().getContentAsString();
+                assertThat(response).doesNotContain(oversizedToken);
+            }
+        }
+
+        verify(shareLinkRepository, never()).findByTokenHash(any());
+        verify(guestSessionRepository, never()).save(any(GuestSession.class));
     }
 
     @Test
@@ -407,15 +490,18 @@ class ShareLinkControllerTest {
             .thenReturn(Optional.of(shareLink));
         when(tripRepository.findById(TRIP_PK)).thenReturn(Optional.of(trip));
 
-        mvc.perform(post("/api/share/" + RAW_TOKEN + "/guest")
+        mvc.perform(post("/api/share/guest")
+                .with(remoteAddr("203.0.113.35"))
                 .contentType("application/json")
                 .content(objectMapper.writeValueAsString(Map.of(
+                    "token", RAW_TOKEN,
                     "displayName", "  Guest\u202E\nAlice  "))))
             .andExpect(status().isOk())
             .andExpect(header().string("Set-Cookie", org.hamcrest.Matchers.allOf(
                 org.hamcrest.Matchers.containsString("guest_session="),
                 org.hamcrest.Matchers.containsString("HttpOnly"),
                 org.hamcrest.Matchers.containsString("Path=/api"),
+                org.hamcrest.Matchers.containsString("Max-Age=1209600"),
                 org.hamcrest.Matchers.containsString("SameSite=Strict"))))
             .andExpect(jsonPath("$.publicId").value(TRIP_PUBLIC_ID))
             .andExpect(jsonPath("$.role").value("VIEWER"))
@@ -426,6 +512,26 @@ class ShareLinkControllerTest {
         assertThat(guest.getValue().getShareLinkId()).isEqualTo(501L);
         assertThat(guest.getValue().getDisplayName()).isEqualTo("GuestAlice");
         assertThat(guest.getValue().getTokenHash()).hasSize(64);
+    }
+
+    @Test
+    void bodyGuestAcceptRejectsInvalidTokenWithoutReflectingIt() throws Exception {
+        String invalidToken = "invalid.token-value-123456789";
+
+        String response = mvc.perform(post("/api/share/guest")
+                .with(remoteAddr("203.0.113.36"))
+                .contentType("application/json")
+                .content(objectMapper.writeValueAsString(Map.of(
+                    "token", invalidToken,
+                    "displayName", "Guest Alice"))))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error").value("validation_failed"))
+            .andReturn().getResponse().getContentAsString();
+
+        assertThat(response).doesNotContain(invalidToken);
+        assertThat(new AcceptGuestShareLinkBodyRequest(invalidToken, "Guest Alice").toString())
+            .doesNotContain(invalidToken);
+        verify(guestSessionRepository, never()).save(any(GuestSession.class));
     }
 
     @Test
@@ -476,7 +582,7 @@ class ShareLinkControllerTest {
     void claimGuestSessionCreatesMembershipReturnsTripAndClearsCookie() throws Exception {
         ShareLink shareLink = link(501L, TRIP_PK, "share-hash", TripRole.VIEWER, true, ALICE_ID, null);
         GuestSession guestSession = guestSession(501L, RAW_GUEST_TOKEN);
-        when(guestSessionRepository.findByTokenHash(shareTokenService.sha256Hex(RAW_GUEST_TOKEN)))
+        when(guestSessionRepository.findByTokenHashForUpdate(shareTokenService.sha256Hex(RAW_GUEST_TOKEN)))
             .thenReturn(Optional.of(guestSession));
         when(shareLinkRepository.findById(501L)).thenReturn(Optional.of(shareLink));
         when(tripRepository.findById(TRIP_PK)).thenReturn(Optional.of(trip));
@@ -501,14 +607,46 @@ class ShareLinkControllerTest {
         assertThat(member.getValue().getId().getTripId()).isEqualTo(TRIP_PK);
         assertThat(member.getValue().getId().getUserId()).isEqualTo(BOB_ID);
         assertThat(member.getValue().getRole()).isEqualTo(TripRole.VIEWER);
+        assertThat(guestSession.getTokenHash()).isNull();
+        assertThat(guestSession.getClaimedAt()).isNotNull();
+        verify(guestSessionRepository).save(guestSession);
         verify(guestSessionRepository, never()).delete(any(GuestSession.class));
+        verify(tripEventPublisher).publishAndDisconnectAfterCommit(eq(TRIP_PK), argThat(event ->
+            event.type().equals("members.changed")
+                && event.publicId().equals(TRIP_PUBLIC_ID)));
     }
 
     @Test
-    void claimGuestSessionUpgradesLowerRoleButDoesNotDowngradeOwner() throws Exception {
+    void claimedGuestCredentialCannotBeReplayed() throws Exception {
+        ShareLink shareLink = link(501L, TRIP_PK, "share-hash", TripRole.VIEWER, true, ALICE_ID, null);
+        GuestSession guestSession = guestSession(501L, RAW_GUEST_TOKEN);
+        when(guestSessionRepository.findByTokenHashForUpdate(shareTokenService.sha256Hex(RAW_GUEST_TOKEN)))
+            .thenReturn(Optional.of(guestSession));
+        when(shareLinkRepository.findById(501L)).thenReturn(Optional.of(shareLink));
+        when(tripRepository.findById(TRIP_PK)).thenReturn(Optional.of(trip));
+        when(tripMemberRepository.findByIdTripIdAndIdUserId(TRIP_PK, BOB_ID))
+            .thenReturn(Optional.empty());
+
+        mvc.perform(post("/api/guest-session/claim")
+                .header("Authorization", bearerFor(BOB_ID))
+                .cookie(guestCookie()))
+            .andExpect(status().isOk());
+
+        mvc.perform(post("/api/guest-session/claim")
+                .header("Authorization", bearerFor(BOB_ID))
+                .cookie(guestCookie()))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.error").value("not_found"));
+
+        verify(tripMemberRepository).save(any(TripMember.class));
+        verify(guestSessionRepository).save(guestSession);
+    }
+
+    @Test
+    void claimGuestSessionUpgradesLowerRole() throws Exception {
         ShareLink shareLink = link(501L, TRIP_PK, "share-hash", TripRole.EDITOR, true, ALICE_ID, null);
         GuestSession guestSession = guestSession(501L, RAW_GUEST_TOKEN);
-        when(guestSessionRepository.findByTokenHash(shareTokenService.sha256Hex(RAW_GUEST_TOKEN)))
+        when(guestSessionRepository.findByTokenHashForUpdate(shareTokenService.sha256Hex(RAW_GUEST_TOKEN)))
             .thenReturn(Optional.of(guestSession));
         when(shareLinkRepository.findById(501L)).thenReturn(Optional.of(shareLink));
         when(tripRepository.findById(TRIP_PK)).thenReturn(Optional.of(trip));
@@ -525,6 +663,16 @@ class ShareLinkControllerTest {
 
         assertThat(viewer.getRole()).isEqualTo(TripRole.EDITOR);
         verify(tripMemberRepository).save(viewer);
+    }
+
+    @Test
+    void claimGuestSessionDoesNotDowngradeOwner() throws Exception {
+        ShareLink shareLink = link(501L, TRIP_PK, "share-hash", TripRole.EDITOR, true, ALICE_ID, null);
+        GuestSession guestSession = guestSession(501L, RAW_GUEST_TOKEN);
+        when(guestSessionRepository.findByTokenHashForUpdate(shareTokenService.sha256Hex(RAW_GUEST_TOKEN)))
+            .thenReturn(Optional.of(guestSession));
+        when(shareLinkRepository.findById(501L)).thenReturn(Optional.of(shareLink));
+        when(tripRepository.findById(TRIP_PK)).thenReturn(Optional.of(trip));
 
         TripMember owner = new TripMember(TRIP_PK, ALICE_ID, TripRole.OWNER);
         when(tripMemberRepository.findByIdTripIdAndIdUserId(TRIP_PK, ALICE_ID))
@@ -542,7 +690,7 @@ class ShareLinkControllerTest {
     @Test
     void claimGuestSessionRejectsRevokedOrExpiredLinkWithoutSavingMembership() throws Exception {
         GuestSession guestSession = guestSession(501L, RAW_GUEST_TOKEN);
-        when(guestSessionRepository.findByTokenHash(shareTokenService.sha256Hex(RAW_GUEST_TOKEN)))
+        when(guestSessionRepository.findByTokenHashForUpdate(shareTokenService.sha256Hex(RAW_GUEST_TOKEN)))
             .thenReturn(Optional.of(guestSession));
 
         ShareLink revoked = link(501L, TRIP_PK, "share-hash", TripRole.VIEWER, true, ALICE_ID, null);

@@ -295,13 +295,25 @@
   }
 
   .cardExpanded {
+    overflow: visible;
+    /* A transformed parent turns the fixed editor into a card-anchored sheet. */
+    transform: none;
+    animation: none;
+  }
+
+  /* Keep the existing list card in place while its editor uses a fixed sheet.
+     This prevents an expanded activity from leaving an empty timeline marker. */
+  .cardExpanded .editorPanel {
     position: fixed;
-    inset: auto 0 calc(64px + env(safe-area-inset-bottom));
+    inset: auto 0 var(--mobile-bottom-nav-height, calc(56px + env(safe-area-inset-bottom)));
     z-index: 190;
     max-height: min(78dvh, 42rem);
     display: grid;
     gap: var(--space-3);
+    width: 100%;
+    max-width: none;
     overflow-y: auto;
+    margin: 0;
     padding: var(--space-5);
     border: 1px solid var(--color-surface-border);
     border-right: 0;
@@ -313,25 +325,6 @@
     box-shadow: 0 -12px 34px rgb(26 33 31 / 24%);
     opacity: 1;
     isolation: isolate;
-    animation: none;
-  }
-
-  /* The generic card hover treatment is a translucent color mix. A tap keeps
-     :hover active on touch browsers, so override it for the full-screen editor
-     instead of letting the day plan show through the editing surface. */
-  .cardExpanded:hover,
-  .cardExpanded:focus-within,
-  .cardExpanded:focus-visible {
-    background: var(--color-surface);
-    background-color: var(--color-surface);
-  }
-
-  .cardExpanded .editorPanel {
-    width: 100%;
-    max-width: none;
-    margin: 0;
-    background-color: var(--color-surface);
-    opacity: 1;
     animation: none;
   }
 

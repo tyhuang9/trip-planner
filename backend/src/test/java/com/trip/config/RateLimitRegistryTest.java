@@ -102,4 +102,16 @@ class RateLimitRegistryTest {
         assertThat(overflow).isNotSameAs(first);
         assertThat(overflow).isNotSameAs(second);
     }
+
+    @Test
+    void accountDeletionBucketsHaveIndependentApprovedCapacities() {
+        RateLimitRegistry registry = new RateLimitRegistry();
+        Bucket perIp = registry.resolve(
+            RateLimitRegistry.Named.AUTH_ACCOUNT_DELETE, "203.0.113.41");
+        Bucket perUser = registry.resolve(
+            RateLimitRegistry.Named.AUTH_ACCOUNT_DELETE_PER_USER, "42");
+
+        assertThat(perIp.getAvailableTokens()).isEqualTo(10);
+        assertThat(perUser.getAvailableTokens()).isEqualTo(5);
+    }
 }

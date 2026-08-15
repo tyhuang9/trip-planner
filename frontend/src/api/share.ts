@@ -1,3 +1,4 @@
+import axios from 'axios'
 import { apiClient } from './client'
 import type {
   AcceptGuestShareLinkRequest,
@@ -69,21 +70,37 @@ export async function renameShareLink(
 export async function acceptShareLink(
   token: string,
 ): Promise<AcceptShareLinkResponse> {
-  const { data } = await apiClient.post<AcceptShareLinkResponse>(
-    `/share/${encodeURIComponent(token)}/accept`,
-  )
-  return data
+  try {
+    const { data } = await apiClient.post<AcceptShareLinkResponse>(
+      '/share/accept',
+      { token },
+    )
+    return data
+  } catch (error) {
+    throw sanitizeShareRequestError(error)
+  }
 }
 
 export async function acceptGuestShareLink(
   token: string,
   body: AcceptGuestShareLinkRequest,
 ): Promise<AcceptGuestShareLinkResponse> {
-  const { data } = await apiClient.post<AcceptGuestShareLinkResponse>(
-    `/share/${encodeURIComponent(token)}/guest`,
-    body,
-  )
-  return data
+  try {
+    const { data } = await apiClient.post<AcceptGuestShareLinkResponse>(
+      '/share/guest',
+      { token, ...body },
+    )
+    return data
+  } catch (error) {
+    throw sanitizeShareRequestError(error)
+  }
+}
+
+function sanitizeShareRequestError(error: unknown): unknown {
+  if (axios.isAxiosError(error) && error.config) {
+    error.config.data = undefined
+  }
+  return error
 }
 
 export async function claimGuestSession(): Promise<Trip> {

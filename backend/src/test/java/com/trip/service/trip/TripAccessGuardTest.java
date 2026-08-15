@@ -16,12 +16,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.authentication.AuthenticationCredentialsNotFoundException;
 
 import com.trip.domain.Trip;
 import com.trip.domain.TripMember;
 import com.trip.domain.TripRole;
 import com.trip.repo.TripMemberRepository;
 import com.trip.repo.TripRepository;
+import com.trip.service.share.GuestSessionAccessService;
 import com.trip.web.exception.NotFoundException;
 
 @ExtendWith(MockitoExtension.class)
@@ -36,6 +38,9 @@ class TripAccessGuardTest {
 
     @Mock
     private TripMemberRepository tripMemberRepository;
+
+    @Mock
+    private GuestSessionAccessService guestSessionAccessService;
 
     @InjectMocks
     private TripAccessGuard guard;
@@ -144,5 +149,37 @@ class TripAccessGuardTest {
 
         assertThatThrownBy(() -> guard.resolveForUserAtLeast(PUBLIC_ID, USER_ID, TripRole.VIEWER))
             .isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void resolveForGuestTranslatesLifecycleMissToAuthenticationFailure() {
+        when(guestSessionAccessService.resolve("bad-token"))
+            .thenThrow(new NotFoundException("guest session not found"));
+
+        assertThatThrownBy(() -> guard.resolveForGuest(PUBLIC_ID, "bad-token"))
+            .isInstanceOf(AuthenticationCredentialsNotFoundException.class);
+    }
+
+    @Test
+    void resolveForGuestKeepsTripMismatchAsNotFound() {
+        when(guestSessionAccessService.resolve("guest-token"))
+            .thenReturn(new GuestSessionAccessService.ResolvedGuestSession(
+                10L, TRIP_ID, "anothertrip1", TripRole.VIEWER, "Guest Alex"));
+
+        assertThatThrownBy(() -> guard.resolveForGuest(PUBLIC_ID, "guest-token"))
+            .isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void resolveForGuestReturnsCanonicalValidatedIdentity() {
+        when(guestSessionAccessService.resolve("guest-token"))
+            .thenReturn(new GuestSessionAccessService.ResolvedGuestSession(
+                10L, TRIP_ID, PUBLIC_ID, TripRole.EDITOR, "Guest Alex"));
+
+        ResolvedTrip resolved = guard.resolveForGuest(PUBLIC_ID, "guest-token");
+
+        assertThat(resolved.trip()).isSameAs(trip);
+        assertThat(resolved.role()).isEqualTo(TripRole.EDITOR);
+        assertThat(resolved.guestSessionId()).isEqualTo(10L);
     }
 }

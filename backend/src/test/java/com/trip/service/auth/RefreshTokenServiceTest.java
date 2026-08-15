@@ -5,6 +5,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -21,10 +23,13 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 
 import com.trip.domain.RefreshToken;
 import com.trip.domain.User;
 import com.trip.repo.RefreshTokenRepository;
+import com.trip.repo.RefreshTokenRepository.TokenObservation;
+import com.trip.repo.UserRepository;
 import com.trip.service.auth.RefreshTokenService.IssuedRefreshToken;
 
 /**
@@ -47,6 +52,7 @@ import com.trip.service.auth.RefreshTokenService.IssuedRefreshToken;
 class RefreshTokenServiceTest {
 
     private RefreshTokenRepository repo;
+    private UserRepository userRepository;
     private RefreshTokenService service;
 
     /** Fake DB: maps id -> entity, mimics save assigning ids and find-by-hash/replaced-by. */
@@ -57,6 +63,7 @@ class RefreshTokenServiceTest {
     @BeforeEach
     void setUp() {
         repo = org.mockito.Mockito.mock(RefreshTokenRepository.class);
+        userRepository = org.mockito.Mockito.mock(UserRepository.class);
         store = new HashMap<>();
         byHash = new HashMap<>();
         idSeq = new AtomicLong(1);
@@ -72,6 +79,9 @@ class RefreshTokenServiceTest {
         });
         when(repo.findByTokenHash(any())).thenAnswer(inv ->
             Optional.ofNullable(byHash.get(inv.<String>getArgument(0))));
+        when(repo.findObservationByTokenHash(any())).thenAnswer(inv ->
+            Optional.ofNullable(byHash.get(inv.<String>getArgument(0)))
+                .map(RefreshTokenServiceTest::observation));
         when(repo.findByTokenHashForUpdate(any())).thenAnswer(inv ->
             Optional.ofNullable(byHash.get(inv.<String>getArgument(0))));
         when(repo.findById(anyLong())).thenAnswer(inv ->
@@ -82,8 +92,10 @@ class RefreshTokenServiceTest {
                 .filter(rt -> target.equals(rt.getReplacedBy()))
                 .findFirst();
         });
+        when(userRepository.findByIdForUpdate(anyLong())).thenAnswer(inv ->
+            Optional.of(userWithId(inv.getArgument(0))));
 
-        service = new RefreshTokenService(repo, new SecureRandom());
+        service = new RefreshTokenService(repo, userRepository, new SecureRandom());
     }
 
     private static void setId(RefreshToken rt, long id) {
@@ -106,6 +118,20 @@ class RefreshTokenServiceTest {
             throw new RuntimeException(e);
         }
         return u;
+    }
+
+    private static TokenObservation observation(RefreshToken token) {
+        return new TokenObservation() {
+            @Override
+            public Long getId() {
+                return token.getId();
+            }
+
+            @Override
+            public Long getUserId() {
+                return token.getUserId();
+            }
+        };
     }
 
     // ------------------------------------------------------------------
@@ -203,14 +229,50 @@ class RefreshTokenServiceTest {
     }
 
     @Test
-    void rotateUsesLockedLookupBeforeMintingSuccessor() {
+    void rotateLocksUserBeforeTokenAndMintingSuccessor() {
         IssuedRefreshToken first = service.issueFor(userWithId(1L));
         String originalHash = first.entity().getTokenHash();
 
         service.rotate(first.rawToken()).orElseThrow();
 
+        verify(repo).findObservationByTokenHash(originalHash);
         verify(repo).findByTokenHashForUpdate(originalHash);
         verify(repo, never()).findByTokenHash(originalHash);
+        InOrder lockOrder = inOrder(userRepository, repo);
+        lockOrder.verify(userRepository).findByIdForUpdate(1L);
+        lockOrder.verify(repo).findByTokenHashForUpdate(originalHash);
+    }
+
+    @Test
+    void rotateFailsClosedWhenObservedTokenDisappearsBeforeLockedRead() {
+        IssuedRefreshToken first = service.issueFor(userWithId(1L));
+        String originalHash = first.entity().getTokenHash();
+        when(repo.findByTokenHashForUpdate(originalHash)).thenReturn(Optional.empty());
+        clearInvocations(repo);
+
+        assertThat(service.rotate(first.rawToken())).isEmpty();
+
+        verify(userRepository).findByIdForUpdate(1L);
+        verify(repo).findByTokenHashForUpdate(originalHash);
+        verify(repo, never()).save(any(RefreshToken.class));
+    }
+
+    @Test
+    void rotateFailsClosedWhenLockedTokenDiffersFromObservation() {
+        IssuedRefreshToken first = service.issueFor(userWithId(1L));
+        String originalHash = first.entity().getTokenHash();
+        RefreshToken replacement = new RefreshToken(
+            2L, originalHash, OffsetDateTime.now().plusDays(30));
+        setId(replacement, 99L);
+        when(repo.findByTokenHashForUpdate(originalHash))
+            .thenReturn(Optional.of(replacement));
+        clearInvocations(repo);
+
+        assertThat(service.rotate(first.rawToken())).isEmpty();
+
+        verify(userRepository).findByIdForUpdate(1L);
+        verify(repo).findByTokenHashForUpdate(originalHash);
+        verify(repo, never()).save(any(RefreshToken.class));
     }
 
     @Test
@@ -304,7 +366,7 @@ class RefreshTokenServiceTest {
     @Test
     void rotateInvokesSaveExactlyTwice() {
         IssuedRefreshToken first = service.issueFor(userWithId(1L));
-        org.mockito.Mockito.clearInvocations(repo);
+        clearInvocations(repo);
         service.rotate(first.rawToken());
         // One save for the new minted token, one for the old retired token.
         verify(repo, times(2)).save(any(RefreshToken.class));

@@ -2,6 +2,7 @@ package com.trip.config;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.regex.Pattern;
 
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -9,6 +10,9 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+
+import com.trip.observability.AccountDeletionMetrics;
+import com.trip.observability.AccountDeletionMetrics.Outcome;
 
 import io.github.bucket4j.Bucket;
 import io.github.bucket4j.ConsumptionProbe;
@@ -29,6 +33,8 @@ import jakarta.servlet.http.HttpServletResponse;
  *       outer cap here defeats email-rotation attacks where an attacker churns through
  *       random emails to evade the per-identity cap.</li>
  *   <li>{@code POST /api/auth/register} — 10 per hour per remote IP.</li>
+ *   <li>{@code DELETE /api/auth/me} — 10 attempts per 15 minutes per remote IP.
+ *       The controller adds an inner 5-per-15-minute authenticated-user limit.</li>
  * </ul>
  *
  * <p>On exhaustion the response is {@code 429 Too Many Requests} with body
@@ -57,10 +63,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private static final String EMAIL_VERIFICATION_RESEND_PATH = "/api/auth/email/resend";
     private static final String REFRESH_PATH = "/api/auth/refresh";
     private static final String LOGOUT_PATH = "/api/auth/logout";
+    private static final String ACCOUNT_DELETE_PATH = "/api/auth/me";
     private static final String DEV_LOGIN_AS_PATH = "/api/dev/auth/login-as";
     private static final String DEV_USERS_PATH = "/api/dev/users";
     private static final String DEV_USERS_RESEED_PATH = "/api/dev/users/reseed";
-    private static final String SHARE_PATH_PREFIX = "/api/share/";
+    private static final String SHARE_ACCEPT_PATH = "/api/share/accept";
+    private static final String SHARE_GUEST_PATH = "/api/share/guest";
+    private static final Pattern LEGACY_SHARE_ACCEPT_PATH = Pattern.compile(
+        "^/api/share/[^/]+/(?:accept|guest)$");
     private static final String PLACES_PATH_PREFIX = "/api/places/";
     private static final String MAPS_PATH_PREFIX = "/api/maps/";
     private static final String HEALTH_PATH = "/actuator/health";
@@ -73,10 +83,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
     public static final String RATE_LIMITED_BODY = "{\"error\":\"rate_limited\"}";
 
     private final RateLimitRegistry registry;
+    private final AccountDeletionMetrics accountDeletionMetrics;
     private final boolean trustProxy;
 
-    public RateLimitFilter(RateLimitRegistry registry, AppProperties appProperties) {
+    public RateLimitFilter(RateLimitRegistry registry,
+                           AppProperties appProperties,
+                           AccountDeletionMetrics accountDeletionMetrics) {
         this.registry = registry;
+        this.accountDeletionMetrics = accountDeletionMetrics;
         this.trustProxy = appProperties.isTrustProxy();
     }
 
@@ -144,6 +158,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
                     return;
                 }
             }
+        } else if ("DELETE".equalsIgnoreCase(request.getMethod())
+            && ACCOUNT_DELETE_PATH.equals(path)) {
+            if (!tryConsume(response, RateLimitRegistry.Named.AUTH_ACCOUNT_DELETE, clientIp)) {
+                accountDeletionMetrics.record(Outcome.IP_THROTTLED);
+                return;
+            }
         }
         chain.doFilter(request, response);
     }
@@ -166,16 +186,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     private static boolean isShareAcceptPath(String path) {
-        if (!path.startsWith(SHARE_PATH_PREFIX)) {
-            return false;
-        }
-        int tokenStart = SHARE_PATH_PREFIX.length();
-        int tokenEnd = path.indexOf('/', tokenStart);
-        if (tokenEnd <= tokenStart || tokenEnd == path.length() - 1) {
-            return false;
-        }
-        String action = path.substring(tokenEnd + 1);
-        return "accept".equals(action) || "guest".equals(action);
+        return SHARE_ACCEPT_PATH.equals(path)
+            || SHARE_GUEST_PATH.equals(path)
+            || LEGACY_SHARE_ACCEPT_PATH.matcher(path).matches();
     }
 
     private boolean tryConsume(HttpServletResponse response,

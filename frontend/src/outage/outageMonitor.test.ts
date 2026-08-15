@@ -5,7 +5,6 @@ import {
   checkStartupHealth,
   HEALTH_PROBE_TIMEOUT_MS,
   reportAmbiguousBackendFailure,
-  STARTUP_HEALTH_PROBE_TIMEOUT_MS,
   subscribeToOutage,
 } from './outageMonitor'
 
@@ -21,10 +20,63 @@ afterEach(() => {
 })
 
 describe('outage monitoring', () => {
-  it('shows a cautious server diagnosis when startup liveness cannot be reached', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('network')))
+  it('probes liveness and database concurrently during startup', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200))
+      .mockResolvedValueOnce(response(503))
+    vi.stubGlobal('fetch', fetchMock)
 
-    await expect(checkStartupHealth()).resolves.toBe('server-unreachable')
+    await expect(checkStartupHealth()).resolves.toBe('database')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[0][0]).toContain('/actuator/health/liveness')
+    expect(fetchMock.mock.calls[1][0]).toContain('/actuator/health/database')
+    expect(fetchMock.mock.calls[0][1].signal).toBe(fetchMock.mock.calls[1][1].signal)
+  })
+
+  it('returns healthy only when both probes are healthy', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(200)))
+
+    await expect(checkHealth()).resolves.toBeNull()
+  })
+
+  it('classifies liveness 5xx as a server outage', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response(503))
+      .mockResolvedValueOnce(response(503)))
+
+    await expect(checkHealth()).resolves.toBe('server')
+  })
+
+  it('classifies unreachable liveness as server-unreachable', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockRejectedValueOnce(new TypeError('network'))
+      .mockRejectedValueOnce(new TypeError('network')))
+
+    await expect(checkHealth()).resolves.toBe('server-unreachable')
+  })
+
+  it('classifies a database timeout after healthy liveness', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200))
+      .mockImplementationOnce((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        const signal = init.signal as AbortSignal
+        signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const probe = checkHealth()
+    await vi.advanceTimersByTimeAsync(HEALTH_PROBE_TIMEOUT_MS)
+
+    await expect(probe).resolves.toBe('database')
+  })
+
+  it('classifies an unexpected database response after healthy liveness as database', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response(200))
+      .mockResolvedValueOnce(response(429)))
+
+    await expect(checkHealth()).resolves.toBe('database')
   })
 
   it('classifies an offline browser as connectivity without probing', async () => {
@@ -36,280 +88,62 @@ describe('outage monitoring', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('uses the definitive server diagnosis only for a startup liveness 5xx', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(503)))
-
-    await expect(checkStartupHealth()).resolves.toBe('server')
-  })
-
-  it('uses the cautious server diagnosis for an unexpected liveness status', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(404)))
-
-    await expect(checkHealth()).resolves.toBe('server-unreachable')
-  })
-
-  it('does not request database during a healthy startup liveness check', async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(response(200)).mockResolvedValueOnce(response(503))
-    vi.stubGlobal('fetch', fetchMock)
-
-    await expect(checkStartupHealth()).resolves.toBeNull()
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(fetchMock.mock.calls[0][0]).toContain('/actuator/health/liveness')
-  })
-
-  it('identifies a database outage only from normal health after an API 500', async () => {
-    const listener = vi.fn()
-    const unsubscribe = subscribeToOutage(listener)
-    const fetchMock = vi.fn().mockResolvedValueOnce(response(200)).mockResolvedValueOnce(response(503))
-    vi.stubGlobal('fetch', fetchMock)
-
-    reportAmbiguousBackendFailure({ response: { status: 500 } } as never)
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
-
-    expect(fetchMock.mock.calls[0][0]).toContain('/actuator/health/liveness')
-    expect(fetchMock.mock.calls[1][0]).toContain('/actuator/health/database')
-    expect(listener).toHaveBeenLastCalledWith('database')
-    unsubscribe()
-  })
-
-  it.each([
-    ['rejects', () => Promise.reject(new TypeError('network'))],
-    ['returns an unexpected status', () => Promise.resolve(response(429))],
-  ])('fails open when a healthy server database probe %s', async (_label, databaseReply) => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(response(200)).mockImplementationOnce(databaseReply)
-    vi.stubGlobal('fetch', fetchMock)
-
-    await expect(checkHealth()).resolves.toBeNull()
-  })
-
-  it.each([
-    ['rejects', () => Promise.reject(new TypeError('network'))],
-    ['returns an unexpected status', () => Promise.resolve(response(429))],
-  ])('preserves a visible outage when a retry database probe %s', async (_label, databaseReply) => {
-    const listener = vi.fn()
-    subscribeToOutage(listener)
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(response(503))
-      .mockResolvedValueOnce(response(200))
-      .mockImplementationOnce(databaseReply)
-    vi.stubGlobal('fetch', fetchMock)
-
-    await expect(checkHealth()).resolves.toBe('server')
-    await expect(checkHealth()).resolves.toBe('server')
-    expect(listener).toHaveBeenLastCalledWith('server')
-  })
-
-  it('fails open on an initial database timeout and preserves an outage on retry timeout', async () => {
-    vi.useFakeTimers()
-    const hangingProbe = (_url: string, init: RequestInit) => {
-      const signal = init.signal as AbortSignal
-      return new Promise<Response>((_resolve, reject) => {
-        signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
-      })
-    }
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(response(200))
-      .mockImplementationOnce(hangingProbe)
-      .mockResolvedValueOnce(response(503))
-      .mockResolvedValueOnce(response(200))
-      .mockImplementationOnce(hangingProbe)
-    vi.stubGlobal('fetch', fetchMock)
-
-    const initial = checkHealth()
-    await vi.advanceTimersByTimeAsync(HEALTH_PROBE_TIMEOUT_MS)
-    await expect(initial).resolves.toBeNull()
-
-    await expect(checkHealth()).resolves.toBe('server')
-    const retry = checkHealth()
-    await vi.advanceTimersByTimeAsync(HEALTH_PROBE_TIMEOUT_MS)
-    await expect(retry).resolves.toBe('server')
-  })
-
-  it('times out a hanging probe and resets the shared promise for retry', async () => {
-    vi.useFakeTimers()
-    let firstSignal: AbortSignal | undefined
-    const fetchMock = vi.fn()
-      .mockImplementationOnce((_url, init: RequestInit) => {
-        firstSignal = init.signal as AbortSignal
-        return new Promise<Response>((_resolve, reject) => {
-          firstSignal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
-        })
-      })
-      .mockResolvedValueOnce(response(503))
-    vi.stubGlobal('fetch', fetchMock)
-
-    const timedOut = checkHealth()
-    await vi.advanceTimersByTimeAsync(HEALTH_PROBE_TIMEOUT_MS)
-
-    await expect(timedOut).resolves.toBe('server-unreachable')
-    expect(firstSignal?.aborted).toBe(true)
-    await expect(checkHealth()).resolves.toBe('server')
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-  })
-
-  it('keeps an in-flight normal check on its 10-second deadline while startup times out', async () => {
-    vi.useFakeTimers()
-    const signals: AbortSignal[] = []
-    const fetchMock = vi.fn().mockImplementation((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
-      const signal = init.signal as AbortSignal
-      signals.push(signal)
-      signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
-    }))
-    vi.stubGlobal('fetch', fetchMock)
-
-    const startup = checkStartupHealth()
-    const normal = checkHealth()
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-
-    await vi.advanceTimersByTimeAsync(STARTUP_HEALTH_PROBE_TIMEOUT_MS)
-    await expect(startup).resolves.toBe('server-unreachable')
-    expect(signals[1].aborted).toBe(false)
-
-    await vi.advanceTimersByTimeAsync(HEALTH_PROBE_TIMEOUT_MS - STARTUP_HEALTH_PROBE_TIMEOUT_MS - 1)
-    expect(signals[1].aborted).toBe(false)
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-    await vi.advanceTimersByTimeAsync(1)
-    await expect(normal).resolves.toBe('server-unreachable')
-  })
-
-  it('shares one startup probe across concurrent startup checks', async () => {
-    let resolveLiveness: ((value: Response) => void) | undefined
+  it('shares one dual probe across concurrent startup and runtime checks', async () => {
+    const resolveProbes: Array<(value: Response) => void> = []
     const fetchMock = vi.fn().mockImplementation(() => new Promise<Response>((resolve) => {
-      resolveLiveness = resolve
+      resolveProbes.push(resolve)
     }))
     vi.stubGlobal('fetch', fetchMock)
 
-    const first = checkStartupHealth()
-    const second = checkStartupHealth()
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    resolveLiveness?.(response(503))
+    const startup = checkStartupHealth()
+    const runtime = checkHealth()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    resolveProbes.forEach((resolve) => resolve(response(200)))
 
-    await expect(Promise.all([first, second])).resolves.toEqual(['server', 'server'])
+    await expect(Promise.all([startup, runtime])).resolves.toEqual([null, null])
   })
 
-  it('does not let a late healthy startup probe clear a normal database outage', async () => {
-    let resolveStartup: ((value: Response) => void) | undefined
+  it('publishes a changed diagnosis to subscribers', async () => {
     const listener = vi.fn()
     subscribeToOutage(listener)
-    const fetchMock = vi.fn()
-      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
-        resolveStartup = resolve
-      }))
+    vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(response(200))
-      .mockResolvedValueOnce(response(503))
-    vi.stubGlobal('fetch', fetchMock)
+      .mockResolvedValueOnce(response(503)))
 
-    const startup = checkStartupHealth()
-    await expect(checkHealth()).resolves.toBe('database')
-    resolveStartup?.(response(200))
-    await expect(startup).resolves.toBeNull()
+    await checkHealth()
 
+    expect(listener).toHaveBeenNthCalledWith(1, null)
     expect(listener).toHaveBeenLastCalledWith('database')
   })
 
-  it('does not let a late healthy startup probe clear a normal server outage', async () => {
-    let resolveStartup: ((value: Response) => void) | undefined
-    const listener = vi.fn()
-    subscribeToOutage(listener)
-    const fetchMock = vi.fn()
-      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
-        resolveStartup = resolve
-      }))
-      .mockResolvedValueOnce(response(503))
+  it('probes after an Axios server or network failure', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response(503))
     vi.stubGlobal('fetch', fetchMock)
 
-    const startup = checkStartupHealth()
-    await expect(checkHealth()).resolves.toBe('server')
-    resolveStartup?.(response(200))
-    await expect(startup).resolves.toBeNull()
-
-    expect(listener).toHaveBeenLastCalledWith('server')
+    reportAmbiguousBackendFailure({ isAxiosError: true, response: { status: 500 } })
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
   })
 
-  it('does not let a startup begun during normal health clear a database outage', async () => {
-    let resolveNormal: ((value: Response) => void) | undefined
-    let resolveStartup: ((value: Response) => void) | undefined
-    const listener = vi.fn()
-    subscribeToOutage(listener)
-    const fetchMock = vi.fn()
-      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
-        resolveNormal = resolve
-      }))
-      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
-        resolveStartup = resolve
-      }))
-      .mockResolvedValueOnce(response(503))
-    vi.stubGlobal('fetch', fetchMock)
-
-    const normal = checkHealth()
-    const startup = checkStartupHealth()
-    resolveNormal?.(response(200))
-    await expect(normal).resolves.toBe('database')
-    resolveStartup?.(response(200))
-    await expect(startup).resolves.toBeNull()
-
-    expect(listener).toHaveBeenLastCalledWith('database')
-  })
-
-  it('does not let a startup begun during normal health clear a server outage', async () => {
-    let resolveNormal: ((value: Response) => void) | undefined
-    let resolveStartup: ((value: Response) => void) | undefined
-    const listener = vi.fn()
-    subscribeToOutage(listener)
-    const fetchMock = vi.fn()
-      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
-        resolveNormal = resolve
-      }))
-      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
-        resolveStartup = resolve
-      }))
-    vi.stubGlobal('fetch', fetchMock)
-
-    const normal = checkHealth()
-    const startup = checkStartupHealth()
-    resolveNormal?.(response(503))
-    await expect(normal).resolves.toBe('server')
-    resolveStartup?.(response(200))
-    await expect(startup).resolves.toBeNull()
-
-    expect(listener).toHaveBeenLastCalledWith('server')
-  })
-
-  it.each([
-    ['database', [response(200), response(503), response(200)]],
-    ['server', [response(503), response(200)]],
-  ] as const)('does not let a healthy startup clear a completed normal %s outage', async (kind, replies) => {
-    const listener = vi.fn()
-    subscribeToOutage(listener)
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(replies[0]).mockResolvedValueOnce(replies[1]).mockResolvedValueOnce(replies[2]))
-
-    await expect(checkHealth()).resolves.toBe(kind)
-    await expect(checkStartupHealth()).resolves.toBeNull()
-
-    expect(listener).toHaveBeenLastCalledWith(kind)
-  })
-
-  it('does not promote client or business errors into outage probes', () => {
+  it('does not promote client errors or non-Axios failures into outage probes', () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
 
-    reportAmbiguousBackendFailure({ response: { status: 422 } } as never)
+    reportAmbiguousBackendFailure({ isAxiosError: true, response: { status: 422 } })
+    reportAmbiguousBackendFailure(new Error('local state changed'))
 
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('shares one health probe across concurrent backend failures', async () => {
-    let resolveLiveness: ((value: Response) => void) | undefined
-    const fetchMock = vi.fn().mockImplementation(() => new Promise<Response>((resolve) => {
-      resolveLiveness = resolve
-    }))
+  it('resets the shared probe after completion so recovery can be detected', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(503))
+      .mockResolvedValueOnce(response(503))
+      .mockResolvedValueOnce(response(200))
+      .mockResolvedValueOnce(response(200))
     vi.stubGlobal('fetch', fetchMock)
 
-    const first = checkHealth()
-    const second = checkHealth()
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    resolveLiveness?.(response(503))
-
-    await expect(Promise.all([first, second])).resolves.toEqual(['server', 'server'])
+    await expect(checkHealth()).resolves.toBe('server')
+    await expect(checkHealth()).resolves.toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(4)
   })
 })

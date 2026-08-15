@@ -1,0 +1,515 @@
+import { Capacitor, registerPlugin, type Plugin, type PluginListenerHandle } from '@capacitor/core'
+
+export interface NativeMapCoordinate {
+  lat: number
+  lng: number
+}
+
+export interface NativeMapBounds {
+  southwest: NativeMapCoordinate
+  center: NativeMapCoordinate
+  northeast: NativeMapCoordinate
+}
+
+export interface NativeMapMarker {
+  coordinate: NativeMapCoordinate
+  snippet?: string
+  tintColor?: {
+    a: number
+    b: number
+    g: number
+    r: number
+  }
+  title?: string
+  zIndex?: number
+}
+
+export interface NativeMapPolyline {
+  path: NativeMapCoordinate[]
+  strokeColor?: string
+  strokeOpacity?: number
+  strokeWeight?: number
+  zIndex?: number
+}
+
+export type NativeMapType = 'Normal' | 'Hybrid' | 'Satellite' | 'Terrain'
+
+interface NativeMapConfig {
+  center: NativeMapCoordinate
+  devicePixelRatio?: number
+  height?: number
+  mapTypeId?: string
+  width?: number
+  x?: number
+  y?: number
+  zoom: number
+}
+
+interface MapReadyEvent {
+  mapId: string
+}
+
+interface MapClickEvent {
+  latitude: number
+  longitude: number
+  mapId: string
+}
+
+interface MarkerClickEvent {
+  markerId: string
+  mapId: string
+}
+
+interface CameraIdleEvent {
+  bounds: NativeMapBounds
+  latitude: number
+  longitude: number
+  mapId: string
+  zoom: number
+}
+
+interface MapFocusEvent {
+  mapId: string
+  x: number
+  y: number
+}
+
+interface NativeGoogleMapsPlugin extends Plugin {
+  addMarkers(options: { id: string; markers: NativeMapMarker[] }): Promise<{ ids: string[] }>
+  addPolylines(options: { id: string; polylines: NativeMapPolyline[] }): Promise<{ ids: string[] }>
+  create(options: {
+    apiKey: string
+    config: NativeMapConfig
+    forceCreate?: boolean
+    id: string
+  }): Promise<void>
+  destroy(options: { id: string }): Promise<void>
+  dispatchMapEvent(options: { focus: boolean; id: string }): Promise<void>
+  fitBounds(options: { bounds: NativeMapBounds; id: string; padding?: number }): Promise<void>
+  onDisplay(options: { id: string; mapBounds: NativeMapElementBounds }): Promise<void>
+  onResize(options: { id: string; mapBounds: NativeMapElementBounds }): Promise<void>
+  onScroll(options: { id: string; mapBounds: NativeMapElementBounds }): Promise<void>
+  removeMarkers(options: { id: string; markerIds: string[] }): Promise<void>
+  removePolylines(options: { id: string; polylineIds: string[] }): Promise<void>
+  setCamera(options: {
+    config: { animate?: boolean; coordinate?: NativeMapCoordinate; zoom?: number }
+    id: string
+  }): Promise<void>
+  setMapType(options: { id: string; mapType: NativeMapType }): Promise<void>
+}
+
+interface NativeMapElementBounds {
+  height: number
+  width: number
+  x: number
+  y: number
+}
+
+type NativeMapBoundsUpdateMethod = 'onDisplay' | 'onResize' | 'onScroll'
+
+interface NativeMapBoundsUpdate {
+  mapBounds: NativeMapElementBounds
+  method: NativeMapBoundsUpdateMethod
+}
+
+const capacitorGoogleMaps = registerPlugin<NativeGoogleMapsPlugin>('CapacitorGoogleMaps')
+
+let focusListenerRegistration: Promise<void> | null = null
+
+function ensureMapElementDefinition() {
+  if (customElements.get('capacitor-google-map')) return
+
+  class CapacitorGoogleMapElement extends HTMLElement {
+    connectedCallback() {
+      this.innerHTML = ''
+      if (Capacitor.getPlatform() !== 'ios') return
+
+      // The native iOS plugin binds its GMSMapView to this child scroll view.
+      // This mirrors the package's element implementation without bundling its
+      // browser Maps fallback.
+      this.style.overflow = 'scroll'
+      this.style.setProperty('-webkit-overflow-scrolling', 'touch')
+      const overflowElement = document.createElement('div')
+      overflowElement.style.height = '200%'
+      this.appendChild(overflowElement)
+    }
+  }
+
+  customElements.define('capacitor-google-map', CapacitorGoogleMapElement)
+}
+
+function mapElementBounds(element: HTMLElement): NativeMapElementBounds {
+  const bounds = element.getBoundingClientRect()
+  return {
+    height: bounds.height,
+    width: bounds.width,
+    x: bounds.x,
+    y: bounds.y,
+  }
+}
+
+function registerFocusListener(): Promise<void> {
+  if (focusListenerRegistration) return focusListenerRegistration
+
+  const registration = capacitorGoogleMaps.addListener('isMapInFocus', (event) => {
+    const { mapId, x, y } = event as unknown as MapFocusEvent
+    const target = document.elementFromPoint(x, y) as HTMLElement | null
+    const mapElement = target?.closest('capacitor-google-map') as HTMLElement | null
+    void capacitorGoogleMaps.dispatchMapEvent({
+      focus: mapElement?.dataset.internalId === mapId,
+      id: mapId,
+    }).catch(() => undefined)
+  }).then(() => undefined)
+  focusListenerRegistration = registration
+  void registration.then(
+    () => undefined,
+    () => {
+      if (focusListenerRegistration === registration) {
+        focusListenerRegistration = null
+      }
+    })
+  return registration
+}
+
+export class NativeGoogleMap {
+  private readonly id: string
+  private readonly element: HTMLElement
+  private readonly listenerHandles = new Map<string, PluginListenerHandle>()
+  private readonly pendingListenerRegistrations = new Set<Promise<void>>()
+  private readonly handleScroll = () => {
+    this.queueMapBoundsUpdate('onScroll')
+  }
+  private readonly handleResize = () => {
+    this.queueMapBoundsUpdate('onResize')
+  }
+  private boundsAnimationFrame: number | null = null
+  private boundsUpdateInFlight = false
+  private boundsUpdatePromise: Promise<void> | null = null
+  private destroyCompleted = false
+  private destroyPromise: Promise<void> | null = null
+  private destroyRequested = false
+  private nativeMapDestroyed = false
+  private pendingBoundsUpdate: NativeMapBoundsUpdate | null = null
+  private resizeObserver: ResizeObserver | null = null
+
+  private constructor(id: string, element: HTMLElement) {
+    this.id = id
+    this.element = element
+  }
+
+  static async create(options: {
+    apiKey: string
+    config: Omit<NativeMapConfig, 'devicePixelRatio' | 'height' | 'width' | 'x' | 'y'>
+    element: HTMLElement
+    id: string
+    onReady?: () => void
+  }): Promise<NativeGoogleMap> {
+    ensureMapElementDefinition()
+    await registerFocusListener()
+
+    const map = new NativeGoogleMap(options.id, options.element)
+    map.element.dataset.internalId = options.id
+
+    if (options.onReady) {
+      await map.setListener<MapReadyEvent>('onMapReady', (event) => {
+        if (event.mapId === options.id) options.onReady?.()
+      })
+    }
+
+    // WKWebView needs one layout turn to create the scroll view the iOS plugin
+    // uses as its native map container.
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 200))
+    const bounds = mapElementBounds(map.element)
+    try {
+      await capacitorGoogleMaps.create({
+        apiKey: options.apiKey,
+        config: {
+          ...options.config,
+          ...bounds,
+          devicePixelRatio: window.devicePixelRatio,
+        },
+        forceCreate: true,
+        id: options.id,
+      })
+    } catch (error) {
+      try {
+        await map.removeBridgeListeners()
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          'Failed to create native map and clean up bridge listeners',
+          { cause: cleanupError },
+        )
+      }
+      throw error
+    }
+
+    map.observeBounds()
+    return map
+  }
+
+  async addMarkers(markers: NativeMapMarker[]): Promise<string[]> {
+    if (markers.length === 0) return []
+    const result = await capacitorGoogleMaps.addMarkers({ id: this.id, markers })
+    return result.ids
+  }
+
+  async addPolylines(polylines: NativeMapPolyline[]): Promise<string[]> {
+    if (polylines.length === 0) return []
+    const result = await capacitorGoogleMaps.addPolylines({ id: this.id, polylines })
+    return result.ids
+  }
+
+  destroy(): Promise<void> {
+    if (this.destroyCompleted) return Promise.resolve()
+    if (this.destroyPromise) return this.destroyPromise
+
+    const attempt = this.destroyInternal()
+    this.destroyPromise = attempt
+    void attempt.then(
+      () => {
+        this.destroyCompleted = true
+        if (this.destroyPromise === attempt) this.destroyPromise = null
+      },
+      () => {
+        if (this.destroyPromise === attempt) this.destroyPromise = null
+      },
+    )
+    return attempt
+  }
+
+  private async destroyInternal() {
+    this.destroyRequested = true
+    this.stopObservingBounds()
+    await this.waitForPendingListenerRegistrations()
+
+    let cleanupError: unknown
+    let cleanupFailed = false
+    try {
+      await this.removeBridgeListeners()
+    } catch (error) {
+      cleanupError = error
+      cleanupFailed = true
+    }
+
+    if (!this.nativeMapDestroyed) {
+      try {
+        await capacitorGoogleMaps.destroy({ id: this.id })
+        this.nativeMapDestroyed = true
+      } catch (destroyError) {
+        if (cleanupFailed) {
+          throw new AggregateError(
+            [cleanupError, destroyError],
+            'Failed to destroy native map after bridge cleanup failed',
+            { cause: destroyError },
+          )
+        }
+        throw destroyError
+      }
+    }
+
+    if (cleanupFailed) throw cleanupError
+  }
+
+  fitBounds(bounds: NativeMapBounds, padding?: number) {
+    return capacitorGoogleMaps.fitBounds({ bounds, id: this.id, padding })
+  }
+
+  removeMarkers(markerIds: string[]) {
+    return markerIds.length > 0
+      ? capacitorGoogleMaps.removeMarkers({ id: this.id, markerIds })
+      : Promise.resolve()
+  }
+
+  removePolylines(polylineIds: string[]) {
+    return polylineIds.length > 0
+      ? capacitorGoogleMaps.removePolylines({ id: this.id, polylineIds })
+      : Promise.resolve()
+  }
+
+  setCamera(config: { animate?: boolean; coordinate?: NativeMapCoordinate; zoom?: number }) {
+    return capacitorGoogleMaps.setCamera({ config, id: this.id })
+  }
+
+  setMapType(mapType: NativeMapType) {
+    return capacitorGoogleMaps.setMapType({ id: this.id, mapType })
+  }
+
+  setOnCameraIdleListener(callback?: (event: CameraIdleEvent) => void) {
+    return this.setListener('onCameraIdle', callback)
+  }
+
+  setOnMapClickListener(callback?: (event: MapClickEvent) => void) {
+    return this.setListener('onMapClick', callback)
+  }
+
+  setOnMarkerClickListener(callback?: (event: MarkerClickEvent) => void) {
+    return this.setListener('onMarkerClick', callback)
+  }
+
+  private observeBounds() {
+    const platform = Capacitor.getPlatform()
+    if ((platform !== 'ios' && platform !== 'android') || this.destroyRequested) return
+
+    let previous = mapElementBounds(this.element)
+    let wasHidden = previous.width === 0 || previous.height === 0
+    this.resizeObserver = new ResizeObserver(() => {
+      const bounds = mapElementBounds(this.element)
+      const isHidden = bounds.width === 0 || bounds.height === 0
+      if (!isHidden && wasHidden && Capacitor.getPlatform() === 'ios') {
+        this.queueMapBoundsUpdate('onDisplay', bounds)
+      } else if (!isHidden && !this.boundsMatch(previous, bounds)) {
+        this.queueMapBoundsUpdate('onResize', bounds)
+      }
+      previous = bounds
+      wasHidden = isHidden
+    })
+    this.resizeObserver.observe(this.element)
+    if (platform === 'android') {
+      window.addEventListener('scroll', this.handleScroll)
+    }
+    window.addEventListener('resize', this.handleResize)
+  }
+
+  private setListener<T extends { mapId: string }>(
+    eventName: string,
+    callback?: (event: T) => void,
+  ): Promise<void> {
+    if (this.destroyRequested) return Promise.resolve()
+
+    const registration = this.setListenerInternal(eventName, callback)
+    this.pendingListenerRegistrations.add(registration)
+    void registration.then(
+      () => this.pendingListenerRegistrations.delete(registration),
+      () => this.pendingListenerRegistrations.delete(registration),
+    )
+    return registration
+  }
+
+  private async setListenerInternal<T extends { mapId: string }>(
+    eventName: string,
+    callback?: (event: T) => void,
+  ) {
+    const existing = this.listenerHandles.get(eventName)
+    if (existing) {
+      await existing.remove()
+      if (this.listenerHandles.get(eventName) === existing) {
+        this.listenerHandles.delete(eventName)
+      }
+    }
+    if (!callback || this.destroyRequested) return
+
+    const handle = await capacitorGoogleMaps.addListener(eventName, (event) => {
+      const mapEvent = event as unknown as T
+      if (mapEvent.mapId === this.id) callback(mapEvent)
+    })
+    this.listenerHandles.set(eventName, handle)
+  }
+
+  private async removeBridgeListeners() {
+    this.stopObservingBounds()
+    const listenerEntries = Array.from(this.listenerHandles.entries())
+    const removals = await Promise.allSettled(
+      listenerEntries.map(([, handle]) => handle.remove()),
+    )
+    const errors = removals
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map((result) => result.reason)
+    listenerEntries.forEach(([eventName, handle], index) => {
+      if (removals[index]?.status === 'fulfilled' && this.listenerHandles.get(eventName) === handle) {
+        this.listenerHandles.delete(eventName)
+      }
+    })
+    if (errors.length > 0) {
+      const noun = errors.length === 1 ? 'listener' : 'listeners'
+      throw new AggregateError(errors, `Failed to remove ${errors.length} native map bridge ${noun}`)
+    }
+  }
+
+  private boundsMatch(left: NativeMapElementBounds, right: NativeMapElementBounds) {
+    return left.height === right.height
+      && left.width === right.width
+      && left.x === right.x
+      && left.y === right.y
+  }
+
+  private cancelPendingBoundsUpdate() {
+    if (this.boundsAnimationFrame !== null) {
+      window.cancelAnimationFrame(this.boundsAnimationFrame)
+      this.boundsAnimationFrame = null
+    }
+    this.pendingBoundsUpdate = null
+  }
+
+  private queueMapBoundsUpdate(
+    method: NativeMapBoundsUpdateMethod,
+    mapBounds = mapElementBounds(this.element),
+  ) {
+    const platform = Capacitor.getPlatform()
+    const isSupported = method === 'onResize'
+      ? platform === 'ios' || platform === 'android'
+      : method === 'onDisplay'
+        ? platform === 'ios'
+        : platform === 'android'
+    if (this.destroyRequested || !isSupported) return
+
+    this.pendingBoundsUpdate = {
+      mapBounds,
+      method: this.pendingBoundsUpdate?.method === 'onDisplay' ? 'onDisplay' : method,
+    }
+    this.scheduleBoundsUpdate()
+  }
+
+  private scheduleBoundsUpdate() {
+    if (
+      this.destroyRequested
+      || this.boundsAnimationFrame !== null
+      || this.boundsUpdateInFlight
+      || !this.pendingBoundsUpdate
+    ) return
+
+    this.boundsAnimationFrame = window.requestAnimationFrame(() => {
+      this.boundsAnimationFrame = null
+      this.flushBoundsUpdate()
+    })
+  }
+
+  private flushBoundsUpdate() {
+    if (this.destroyRequested || this.boundsUpdateInFlight) return
+
+    const update = this.pendingBoundsUpdate
+    this.pendingBoundsUpdate = null
+    if (!update) return
+
+    this.boundsUpdateInFlight = true
+    const updatePromise = capacitorGoogleMaps[update.method]({
+      id: this.id,
+      mapBounds: update.mapBounds,
+    }).catch(() => undefined)
+    this.boundsUpdatePromise = updatePromise
+    void updatePromise.then(() => {
+      if (this.boundsUpdatePromise !== updatePromise) return
+      this.boundsUpdatePromise = null
+      this.boundsUpdateInFlight = false
+      this.scheduleBoundsUpdate()
+    })
+  }
+
+  private stopObservingBounds() {
+    this.resizeObserver?.disconnect()
+    this.resizeObserver = null
+    window.removeEventListener('scroll', this.handleScroll)
+    window.removeEventListener('resize', this.handleResize)
+    this.cancelPendingBoundsUpdate()
+  }
+
+  private async waitForPendingListenerRegistrations() {
+    while (this.pendingListenerRegistrations.size > 0) {
+      await Promise.allSettled(this.pendingListenerRegistrations)
+    }
+
+    if (this.boundsUpdatePromise) {
+      await this.boundsUpdatePromise
+    }
+  }
+}

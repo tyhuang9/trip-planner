@@ -3,6 +3,7 @@ package com.trip.web.auth;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.regex.Pattern;
 
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -35,6 +36,8 @@ public class GuestAuthenticationFilter extends OncePerRequestFilter {
 
     public static final String GUEST_WRITE_HEADER = "X-Dupert-Guest-Write";
     private static final String AUTH_PATH_PREFIX = "/api/auth/";
+    private static final Pattern LEGACY_MEMBER_SHARE_ACCEPT_PATH = Pattern.compile(
+        "^/api/share/[^/]+/accept$");
 
     private final RateLimitRegistry rateLimitRegistry;
     private final boolean trustProxy;
@@ -55,7 +58,7 @@ public class GuestAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        if (isAuthPath(request)) {
+        if (isAuthPath(request) || isMemberShareAcceptPath(request)) {
             chain.doFilter(request, response);
             return;
         }
@@ -104,6 +107,15 @@ public class GuestAuthenticationFilter extends OncePerRequestFilter {
 
     private static boolean isAuthPath(HttpServletRequest request) {
         return request.getRequestURI().startsWith(AUTH_PATH_PREFIX);
+    }
+
+    private static boolean isMemberShareAcceptPath(HttpServletRequest request) {
+        if (!"POST".equals(request.getMethod())) {
+            return false;
+        }
+        String path = request.getRequestURI();
+        return "/api/share/accept".equals(path)
+            || LEGACY_MEMBER_SHARE_ACCEPT_PATH.matcher(path).matches();
     }
 
     private static boolean requiresGuestWriteProtection(HttpServletRequest request) {

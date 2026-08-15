@@ -33,6 +33,23 @@
   color: var(--color-text-muted);
 }
 
+.retryButton {
+  min-height: 2.75rem;
+  padding: 0 var(--space-5);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-primary);
+  color: var(--color-primary-fg);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.retryButton:focus-visible {
+  outline: 3px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
 .spinner {
   width: 1.5rem;
   height: 1.5rem;

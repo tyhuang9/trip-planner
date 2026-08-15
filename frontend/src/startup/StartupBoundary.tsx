@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { CheckCircle2, Database, KeyRound, LoaderCircle, RefreshCw, Server } from 'lucide-react'
+import { AuthBootstrapShell } from '../auth/AuthBootstrapShell'
 import { useAuth } from '../auth/useAuth'
 import { type StartupFailure, type StartupPhase, waitForReadiness } from './readiness'
 import styles from './StartupBoundary.module.css'
@@ -32,8 +33,9 @@ function StartupRun({ children, onRetry }: { children: ReactNode; onRetry: () =>
 
 /** Keeps application routes hidden while AuthProvider settles its one refresh probe. */
 export function StartupAuthGate({ children }: { children: ReactNode }) {
-  const { isInitializing } = useAuth()
+  const { authStatus, isInitializing } = useAuth()
   if (!isInitializing) return <>{children}</>
+  if (authStatus === 'offline-unknown') return <AuthBootstrapShell />
   return <StartupAuthLoading />
 }
 

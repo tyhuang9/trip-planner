@@ -1,4 +1,4 @@
-import type { AxiosError } from 'axios'
+import axios from 'axios'
 import { backendBaseUrl } from '../api/baseUrl'
 
 export type OutageKind =
@@ -7,18 +7,15 @@ export type OutageKind =
   | 'database'
   | 'connectivity'
 
-type ProbeResult = OutageKind | null | undefined
+type ProbeResult = OutageKind | null
 
 type Listener = (outage: OutageKind | null) => void
 
 let outage: OutageKind | null = null
-let normalProbePromise: Promise<OutageKind | null> | null = null
-let startupProbePromise: Promise<OutageKind | null> | null = null
-let normalProbeGeneration = 0
+let healthProbePromise: Promise<OutageKind | null> | null = null
 const listeners = new Set<Listener>()
 
-export const HEALTH_PROBE_TIMEOUT_MS = 10_000
-export const STARTUP_HEALTH_PROBE_TIMEOUT_MS = 3_000
+export const HEALTH_PROBE_TIMEOUT_MS = 1_500
 
 function healthUrl(path: string): string {
   return `${backendBaseUrl}${path}`
@@ -34,90 +31,66 @@ function isOffline(): boolean {
   return typeof navigator !== 'undefined' && navigator.onLine === false
 }
 
-async function fetchHealth(path: string, timeoutMs: number): Promise<Response> {
+function fetchHealth(path: string, signal: AbortSignal): Promise<Response> {
+  return fetch(healthUrl(path), {
+    cache: 'no-store',
+    signal,
+  })
+}
+
+async function probeHealth(timeoutMs: number): Promise<ProbeResult> {
+  if (isOffline()) return 'connectivity'
+
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
   try {
-    return await fetch(healthUrl(path), {
-      cache: 'no-store',
-      signal: controller.signal,
-    })
+    const [livenessResult, databaseResult] = await Promise.allSettled([
+      fetchHealth('/actuator/health/liveness', controller.signal),
+      fetchHealth('/actuator/health/database', controller.signal),
+    ])
+
+    if (livenessResult.status === 'rejected') return 'server-unreachable'
+    const liveness = livenessResult.value
+    if (liveness.status >= 500 && liveness.status < 600) return 'server'
+    if (!liveness.ok) return 'server-unreachable'
+
+    // A healthy liveness response proves the server is reachable. The database
+    // endpoint can still lose the race to our shorter client deadline while its
+    // pool waits for a connection, so a rejected probe is a database outage.
+    if (databaseResult.status === 'rejected') return 'database'
+    const database = databaseResult.value
+    if (database.status === 503) return 'database'
+    return database.ok ? null : 'database'
   } finally {
     window.clearTimeout(timeout)
   }
 }
 
-async function probeLiveness(timeoutMs: number): Promise<OutageKind | null> {
-  if (isOffline()) return 'connectivity'
-
-  let liveness: Response
-  try {
-    liveness = await fetchHealth('/actuator/health/liveness', timeoutMs)
-  } catch {
-    return 'server-unreachable'
+export function reportAmbiguousBackendFailure(error?: unknown): void {
+  if (error !== undefined) {
+    if (!axios.isAxiosError(error)) return
+    const status = error.response?.status
+    if (status !== undefined && status < 500) return
   }
-  if (liveness.status >= 500 && liveness.status < 600) return 'server'
-  if (!liveness.ok) return 'server-unreachable'
-
-  return null
-}
-
-async function probeHealth(timeoutMs: number): Promise<ProbeResult> {
-  const livenessResult = await probeLiveness(timeoutMs)
-  if (livenessResult !== null) return livenessResult
-
-  try {
-    const database = await fetchHealth('/actuator/health/database', timeoutMs)
-    if (database.status === 503) return 'database'
-    return database.ok ? null : undefined
-  } catch {
-    return undefined
-  }
-}
-
-export function reportAmbiguousBackendFailure(error?: AxiosError): void {
-  const status = error?.response?.status
-  if (status !== undefined && status < 500) return
   void checkHealth()
 }
 
-function checkHealthWithTimeout(timeoutMs: number, startup: boolean): Promise<OutageKind | null> {
-  const activeProbe = startup ? startupProbePromise : normalProbePromise
-  if (activeProbe === null) {
-    const normalWasInFlight = startup && normalProbePromise !== null
-    const probeGeneration = startup ? normalProbeGeneration : ++normalProbeGeneration
-    // Startup intentionally checks liveness only; database diagnosis stays on
-    // the normal API-failure path so cold starts make one short request.
-    const probe = (startup ? probeLiveness : probeHealth)(timeoutMs)
+export function checkHealth(): Promise<OutageKind | null> {
+  if (healthProbePromise === null) {
+    healthProbePromise = probeHealth(HEALTH_PROBE_TIMEOUT_MS)
       .then((result) => {
-        // An indeterminate database probe fails open on first detection and
-        // preserves an already-visible incident during a manual retry.
-        if (
-          result !== undefined
-          && (!startup || result !== null)
-          && (!startup || (!normalWasInFlight && probeGeneration === normalProbeGeneration))
-        ) {
-          setOutage(result)
-        }
-        return result === undefined ? outage : result
+        setOutage(result)
+        return result
       })
       .finally(() => {
-        if (startup) startupProbePromise = null
-        else normalProbePromise = null
+        healthProbePromise = null
       })
-    if (startup) startupProbePromise = probe
-    else normalProbePromise = probe
-    return probe
   }
-  return activeProbe
-}
-
-export function checkHealth(): Promise<OutageKind | null> {
-  return checkHealthWithTimeout(HEALTH_PROBE_TIMEOUT_MS, false)
+  return healthProbePromise
 }
 
 export function checkStartupHealth(): Promise<OutageKind | null> {
-  return checkHealthWithTimeout(STARTUP_HEALTH_PROBE_TIMEOUT_MS, true)
+  return checkHealth()
 }
 
 export function subscribeToOutage(listener: Listener): () => void {
@@ -128,8 +101,6 @@ export function subscribeToOutage(listener: Listener): () => void {
 
 export function __resetOutageMonitorForTests(): void {
   outage = null
-  normalProbePromise = null
-  startupProbePromise = null
-  normalProbeGeneration = 0
+  healthProbePromise = null
   listeners.clear()
 }

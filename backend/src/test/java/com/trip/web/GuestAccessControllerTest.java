@@ -112,6 +112,7 @@ class GuestAccessControllerTest {
         shareLink = link(TripRole.VIEWER);
 
         when(tripRepository.findByPublicId(TRIP_PUBLIC_ID)).thenReturn(Optional.of(trip));
+        when(tripRepository.findById(TRIP_PK)).thenReturn(Optional.of(trip));
         when(tripRepository.findByIdForUpdate(TRIP_PK)).thenReturn(Optional.of(trip));
         when(guestSessionRepository.findByTokenHash(shareTokenService.sha256Hex(RAW_GUEST_TOKEN)))
             .thenReturn(Optional.of(guestSession));
@@ -211,6 +212,33 @@ class GuestAccessControllerTest {
     @Test
     void revokedGuestCookieReturns401() throws Exception {
         shareLink.revoke(java.time.OffsetDateTime.now());
+
+        mvc.perform(get("/api/trips/" + TRIP_PUBLIC_ID)
+                .cookie(guestCookie()))
+            .andExpect(status().isUnauthorized())
+            .andExpect(jsonPath("$.error").value("unauthenticated"));
+    }
+
+    @Test
+    void expiredGuestCookieReturns401() throws Exception {
+        guestSession = new GuestSession(
+            SHARE_LINK_ID,
+            shareTokenService.sha256Hex(RAW_GUEST_TOKEN),
+            "Guest Alice",
+            java.time.OffsetDateTime.now().minusSeconds(1));
+        ReflectionIds.setId(guestSession, GUEST_ID);
+        when(guestSessionRepository.findByTokenHash(shareTokenService.sha256Hex(RAW_GUEST_TOKEN)))
+            .thenReturn(Optional.of(guestSession));
+
+        mvc.perform(get("/api/trips/" + TRIP_PUBLIC_ID)
+                .cookie(guestCookie()))
+            .andExpect(status().isUnauthorized())
+            .andExpect(jsonPath("$.error").value("unauthenticated"));
+    }
+
+    @Test
+    void claimedGuestCookieReturns401() throws Exception {
+        guestSession.invalidateCredential(java.time.OffsetDateTime.now());
 
         mvc.perform(get("/api/trips/" + TRIP_PUBLIC_ID)
                 .cookie(guestCookie()))

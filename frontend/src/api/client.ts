@@ -5,6 +5,7 @@ import axios, {
 } from 'axios'
 import { backendApiBaseUrl, buildApiUrl } from './baseUrl'
 import { useAuthStore } from '../auth/authStore'
+import { hasPendingLogoutIntent } from '../auth/logoutIntent'
 import type { AuthResponse } from '../types/auth'
 import { reportAmbiguousBackendFailure } from '../outage/outageMonitor'
 
@@ -40,6 +41,9 @@ const PUBLIC_PATHS = new Set<string>([
   '/auth/email/verify',
   '/auth/email/resend',
   '/auth/refresh',
+  '/auth/logout',
+  '/guest-session/bootstrap',
+  '/share/guest',
 ])
 
 const GUEST_WRITE_HEADER = 'X-Dupert-Guest-Write'
@@ -81,16 +85,50 @@ function shouldSendGuestWriteHeader(config: InternalAxiosRequestConfig): boolean
  * Reset back to null when the refresh settles (success OR failure).
  */
 let refreshPromise: Promise<AuthResponse> | null = null
+let authSessionGeneration = 0
+let terminalAuthMutationCount = 0
+
+function isTerminalAuthMutationActive(): boolean {
+  return terminalAuthMutationCount > 0
+}
+
+/**
+ * Prevents refresh work from installing a session while a terminal auth
+ * mutation is pending. The generation also invalidates refreshes that began
+ * before the marker, even after a failed mutation releases it.
+ */
+export function beginTerminalAuthMutation(): () => void {
+  authSessionGeneration += 1
+  terminalAuthMutationCount += 1
+  let released = false
+
+  return () => {
+    if (released) return
+    released = true
+    terminalAuthMutationCount -= 1
+    authSessionGeneration += 1
+  }
+}
+
+export class AuthResolutionPendingError extends Error {
+  constructor() {
+    super('Authentication must be resolved before this request can run.')
+    this.name = 'AuthResolutionPendingError'
+  }
+}
+
+export class AuthCoordinationUnavailableError extends Error {
+  constructor() {
+    super('Secure cross-context authentication coordination is unavailable.')
+    this.name = 'AuthCoordinationUnavailableError'
+  }
+}
 
 const REFRESH_LOCK_NAME = 'dupert:auth-refresh'
-const REFRESH_LOCK_STORAGE_KEY = 'dupert:auth-refresh-lock'
-const REFRESH_LOCK_TTL_MS = 10_000
-const REFRESH_LOCK_POLL_MS = 50
-// A peer may hold the lease while completing one bounded refresh request.
-// Allow that 60s request window plus one 10s lease period and one poll tick,
-// then settle startup as logged out instead of waiting forever for a lock.
-export const REFRESH_LOCK_DEADLINE_MS =
-  API_REQUEST_TIMEOUT_MS + REFRESH_LOCK_TTL_MS + REFRESH_LOCK_POLL_MS
+// A peer may hold the lock while completing one bounded refresh request.
+// Allow that request window plus a short acquisition grace period, then leave
+// authentication unresolved so the user can retry instead of waiting forever.
+export const REFRESH_LOCK_DEADLINE_MS = API_REQUEST_TIMEOUT_MS + 10_000
 
 interface LockManagerLike {
   request<T>(
@@ -100,41 +138,17 @@ interface LockManagerLike {
   ): Promise<T>
 }
 
-interface RefreshLockLease {
-  owner: string
-  expiresAt: number
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms)
-  })
-}
-
 function refreshLockTimeout(): DOMException {
-  return new DOMException('Refresh lock acquisition timed out', 'TimeoutError')
+  return new DOMException('Auth lock acquisition timed out', 'TimeoutError')
 }
 
-function createLockOwner(): string {
+function isRefreshLockTimeout(error: unknown): boolean {
   return (
-    globalThis.crypto?.randomUUID?.() ??
-    `owner-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    error.name === 'TimeoutError'
   )
-}
-
-function parseRefreshLockLease(raw: string | null): RefreshLockLease | null {
-  if (raw === null) {
-    return null
-  }
-  try {
-    const value = JSON.parse(raw) as Partial<RefreshLockLease>
-    if (typeof value.owner !== 'string' || typeof value.expiresAt !== 'number') {
-      return null
-    }
-    return { owner: value.owner, expiresAt: value.expiresAt }
-  } catch {
-    return null
-  }
 }
 
 function getWebLocks(): LockManagerLike | null {
@@ -143,130 +157,57 @@ function getWebLocks(): LockManagerLike | null {
   return locks?.request ? locks : null
 }
 
-function getRefreshLockStorage(): Storage | null {
-  try {
-    return globalThis.localStorage ?? null
-  } catch {
-    return null
-  }
-}
-
-function tryAcquireStorageRefreshLock(storage: Storage, owner: string): boolean {
-  const now = Date.now()
-  const current = parseRefreshLockLease(
-    storage.getItem(REFRESH_LOCK_STORAGE_KEY),
-  )
-  if (current !== null && current.owner !== owner && current.expiresAt > now) {
-    return false
-  }
-
-  const next: RefreshLockLease = {
-    owner,
-    expiresAt: now + REFRESH_LOCK_TTL_MS,
-  }
-  storage.setItem(REFRESH_LOCK_STORAGE_KEY, JSON.stringify(next))
-
-  return (
-    parseRefreshLockLease(storage.getItem(REFRESH_LOCK_STORAGE_KEY))?.owner ===
-    owner
-  )
-}
-
-function renewStorageRefreshLock(storage: Storage, owner: string): boolean {
-  const current = parseRefreshLockLease(
-    storage.getItem(REFRESH_LOCK_STORAGE_KEY),
-  )
-  if (current?.owner !== owner) {
-    return false
-  }
-
-  const next: RefreshLockLease = {
-    owner,
-    expiresAt: Date.now() + REFRESH_LOCK_TTL_MS,
-  }
-  storage.setItem(REFRESH_LOCK_STORAGE_KEY, JSON.stringify(next))
-  return true
-}
-
-function releaseStorageRefreshLock(storage: Storage, owner: string): void {
-  const current = parseRefreshLockLease(
-    storage.getItem(REFRESH_LOCK_STORAGE_KEY),
-  )
-  if (current?.owner === owner) {
-    storage.removeItem(REFRESH_LOCK_STORAGE_KEY)
-  }
-}
-
-async function withStorageRefreshLock<T>(callback: () => Promise<T>): Promise<T> {
-  const storage = getRefreshLockStorage()
-  if (storage === null) {
-    return callback()
-  }
-
-  const owner = createLockOwner()
-  const deadline = Date.now() + REFRESH_LOCK_DEADLINE_MS
-
-  while (Date.now() < deadline) {
-    let acquired: boolean
-    try {
-      acquired = tryAcquireStorageRefreshLock(storage, owner)
-    } catch {
-      return callback()
-    }
-
-    if (acquired) {
-      const renewTimer = window.setInterval(() => {
-        try {
-          renewStorageRefreshLock(storage, owner)
-        } catch {
-          window.clearInterval(renewTimer)
-        }
-      }, REFRESH_LOCK_TTL_MS / 2)
-      try {
-        return await callback()
-      } finally {
-        window.clearInterval(renewTimer)
-        try {
-          releaseStorageRefreshLock(storage, owner)
-        } catch {
-          // If storage becomes unavailable mid-refresh, the short lease
-          // expires by itself and contains no auth material.
-        }
-      }
-    }
-
-    await sleep(Math.min(REFRESH_LOCK_POLL_MS, deadline - Date.now()))
-  }
-  throw refreshLockTimeout()
-}
-
-function refreshWithCrossTabLock(): Promise<AuthResponse> {
+/**
+ * Serializes refresh-cookie rotation and revocation across browser contexts.
+ *
+ * The legacy refresh-oriented lock name is intentionally retained so a newly
+ * deployed tab still coordinates with older open tabs that support Web Locks.
+ * Browsers without Web Locks fail closed instead of using a racy storage lease.
+ */
+export function withAuthSessionLock<T>(
+  callback: () => Promise<T>,
+): Promise<T> {
   const locks = getWebLocks()
   if (locks !== null) {
     const controller = new AbortController()
     let granted = false
     let timeout: number | undefined
-    return new Promise<AuthResponse>((resolve, reject) => {
-      const acquisition = locks.request(REFRESH_LOCK_NAME, { mode: 'exclusive', signal: controller.signal }, () => {
-        granted = true
-        if (timeout !== undefined) window.clearTimeout(timeout)
-        return performRefresh()
-      })
+
+    return new Promise<T>((resolve, reject) => {
+      const acquisition = locks.request(
+        REFRESH_LOCK_NAME,
+        { mode: 'exclusive', signal: controller.signal },
+        () => {
+          if (controller.signal.aborted) throw refreshLockTimeout()
+          granted = true
+          if (timeout !== undefined) window.clearTimeout(timeout)
+          return callback()
+        },
+      )
       acquisition.then(resolve, (error) => {
-        if (!granted && controller.signal.aborted && (error as DOMException)?.name === 'AbortError') reject(refreshLockTimeout())
-        else reject(error)
+        if (
+          !granted &&
+          controller.signal.aborted &&
+          (error as Error)?.name === 'AbortError'
+        ) {
+          reject(refreshLockTimeout())
+        } else {
+          reject(error)
+        }
       })
-      timeout = window.setTimeout(() => {
-        if (granted) return
-        controller.abort()
-        reject(refreshLockTimeout())
-      }, REFRESH_LOCK_DEADLINE_MS)
+      if (!granted) {
+        timeout = window.setTimeout(() => {
+          if (granted) return
+          controller.abort()
+          reject(refreshLockTimeout())
+        }, REFRESH_LOCK_DEADLINE_MS)
+      }
     }).finally(() => {
       if (timeout !== undefined) window.clearTimeout(timeout)
     })
   }
 
-  return withStorageRefreshLock(() => performRefresh())
+  return Promise.reject(new AuthCoordinationUnavailableError())
 }
 
 /**
@@ -275,8 +216,8 @@ function refreshWithCrossTabLock(): Promise<AuthResponse> {
  * a 401 from refresh must surface directly to the caller, not trigger a
  * recursive refresh.
  *
- * On success, writes the new session into the auth store; on failure
- * clears the store and rethrows.
+ * On success, writes the new session into the auth store. A refresh failure
+ * clears the current session unless a terminal auth mutation superseded it.
  *
  * IMPORTANT: this is the ONLY function in the frontend that should hit the
  * refresh endpoint. Both the response interceptor (on 401) and the
@@ -288,6 +229,14 @@ function refreshWithCrossTabLock(): Promise<AuthResponse> {
  * interceptor needs the refresh primitive. Keep them split.
  */
 async function performRefresh(): Promise<AuthResponse> {
+  if (hasPendingLogoutIntent()) {
+    useAuthStore.getState().clearSession('offline-unknown')
+    throw new AuthResolutionPendingError()
+  }
+  if (isTerminalAuthMutationActive()) {
+    throw new AuthResolutionPendingError()
+  }
+  const generationAtStart = authSessionGeneration
   const accessTokenAtStart = useAuthStore.getState().accessToken
   try {
     const response = await axios.post<AuthResponse>(
@@ -299,16 +248,41 @@ async function performRefresh(): Promise<AuthResponse> {
         headers: { [AUTH_COOKIE_ACTION_HEADER]: AUTH_COOKIE_ACTION_VALUE },
       },
     )
+    if (hasPendingLogoutIntent()) {
+      useAuthStore.getState().clearSession('offline-unknown')
+      throw new AuthResolutionPendingError()
+    }
+    if (
+      isTerminalAuthMutationActive() ||
+      generationAtStart !== authSessionGeneration
+    ) {
+      throw new AuthResolutionPendingError()
+    }
     const { accessToken, expiresInSeconds, user } = response.data
     useAuthStore.getState().setSession({ accessToken, expiresInSeconds, user })
     return response.data
   } catch (err) {
-    reportAmbiguousBackendFailure(err as AxiosError)
-    if (useAuthStore.getState().accessToken === accessTokenAtStart) {
-      useAuthStore.getState().clearSession()
+    reportAmbiguousBackendFailure(err)
+    if (
+      !isTerminalAuthMutationActive() &&
+      generationAtStart === authSessionGeneration &&
+      useAuthStore.getState().accessToken === accessTokenAtStart
+    ) {
+      useAuthStore
+        .getState()
+        .clearSession(
+          isConfirmedUnauthenticated(err)
+            ? 'clearing-session'
+            : 'offline-unknown',
+        )
     }
     throw err
   }
+}
+
+/** A 401 is the only refresh response that definitively rejects the session. */
+export function isConfirmedUnauthenticated(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 401
 }
 
 /**
@@ -319,12 +293,37 @@ async function performRefresh(): Promise<AuthResponse> {
  * This is the only function callers should use to hit `/auth/refresh`.
  */
 export function refreshSession(): Promise<AuthResponse> {
+  if (hasPendingLogoutIntent()) {
+    useAuthStore.getState().clearSession('offline-unknown')
+    return Promise.reject(new AuthResolutionPendingError())
+  }
+  if (isTerminalAuthMutationActive()) {
+    return Promise.reject(new AuthResolutionPendingError())
+  }
   if (refreshPromise === null) {
-    refreshPromise = refreshWithCrossTabLock().finally(() => {
-      refreshPromise = null
-    })
+    refreshPromise = withAuthSessionLock(() => performRefresh())
+      .catch((error) => {
+        if (
+          error instanceof AuthCoordinationUnavailableError ||
+          isRefreshLockTimeout(error)
+        ) {
+          useAuthStore.getState().clearSession('offline-unknown')
+        }
+        throw error
+      })
+      .finally(() => {
+        refreshPromise = null
+      })
   }
   return refreshPromise
+}
+
+/** Lets terminal auth mutations serialize behind refresh work already in flight. */
+export async function waitForRefreshToSettle(): Promise<void> {
+  const inFlight = refreshPromise
+  if (inFlight !== null) {
+    await inFlight.catch(() => undefined)
+  }
 }
 
 type RetryableConfig = InternalAxiosRequestConfig & { _retry?: boolean }
@@ -340,6 +339,13 @@ function hasLocalSessionCandidate(): boolean {
 apiClient.interceptors.request.use(async (config) => {
   if (isPublicPath(config.url)) {
     return config
+  }
+
+  if (
+    hasPendingLogoutIntent() ||
+    useAuthStore.getState().authStatus === 'offline-unknown'
+  ) {
+    throw new AuthResolutionPendingError()
   }
 
   const startedWithSessionCandidate = hasLocalSessionCandidate()
@@ -419,5 +425,6 @@ apiClient.interceptors.response.use(
  */
 export function __resetRefreshSingletonForTests(): void {
   refreshPromise = null
-  getRefreshLockStorage()?.removeItem(REFRESH_LOCK_STORAGE_KEY)
+  authSessionGeneration = 0
+  terminalAuthMutationCount = 0
 }

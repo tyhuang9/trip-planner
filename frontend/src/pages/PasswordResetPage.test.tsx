@@ -89,7 +89,24 @@ describe('<PasswordResetPage>', () => {
     renderResetPage('/reset-password')
 
     expect(screen.getByRole('alert')).toHaveTextContent(/missing or invalid/i)
-    expect(screen.getByRole('button', { name: /reset password/i })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: /reset password/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /request a new password reset link/i })).toHaveAttribute('href', '/login?mode=password-reset')
     expect(authMocks.confirmPasswordReset).not.toHaveBeenCalled()
+  })
+
+  it('associates a password mismatch error with both password fields', async () => {
+    renderResetPage('/reset-password?token=secret-reset-token')
+    const password = screen.getByLabelText(/new password/i)
+    const confirmation = screen.getByLabelText(/confirm password/i)
+    await userEvent.type(password, 'new-password-123')
+    await userEvent.type(confirmation, 'different-password-456')
+    await userEvent.click(screen.getByRole('button', { name: /reset password/i }))
+
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveTextContent('New passwords do not match.')
+    expect(password).toHaveAttribute('aria-invalid', 'true')
+    expect(confirmation).toHaveAttribute('aria-invalid', 'true')
+    expect(password).toHaveAttribute('aria-describedby', alert.id)
+    expect(confirmation).toHaveAttribute('aria-describedby', alert.id)
   })
 })
