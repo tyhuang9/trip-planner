@@ -183,12 +183,12 @@
     box-shadow var(--transition-base);
 }
 
-.submit:hover:not(:disabled) {
+.submit:hover:not(:disabled):not([aria-disabled='true']) {
   background-color: var(--color-primary-hover);
   box-shadow: var(--shadow-sm);
 }
 
-.submit:active:not(:disabled) {
+.submit:active:not(:disabled):not([aria-disabled='true']) {
   background-color: var(--color-primary-active);
 }
 
@@ -200,6 +200,17 @@
 .submit:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.submit[aria-disabled='true'] {
+  opacity: 1;
+  background-color: var(--color-surface-2);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.submit[aria-disabled='true']:focus-visible {
+  outline-color: var(--color-primary);
 }
 
 .textButton {
