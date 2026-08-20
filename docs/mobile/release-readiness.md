@@ -106,7 +106,7 @@ a real macOS builder produces reproducible evidence.
 | Identity and versioning | BLOCKED | Unassigned | Source values agree, but signed iOS artifact metadata has not been inspected |
 | Production configuration | BLOCKED | Unassigned | Source origin policy passes; packaged iOS artifact inspection is not recorded |
 | Authentication and guest sessions | BLOCKED | Unassigned | Issue #64 templates are TEMPLATE / NOT EVIDENCE; physical-iPhone ADR and smoke evidence is unexecuted |
-| Maps | BLOCKED | Unassigned | Depends on issue #66 iOS renderer ADR and iOS-restricted-key evidence |
+| Maps | BLOCKED | Unassigned | Issue #66 iOS template is source-only; physical-iPhone renderer ADR and iOS-restricted-key evidence remain unexecuted |
 | Universal/App Links | BLOCKED | Unassigned | Issue #67 code policy is implemented, but acceptance remains blocked on issue #64 ADR, deployed iOS `/.well-known/apple-app-site-association`, Apple Team ID, and signed-iPhone cold/warm evidence |
 | Privacy and store metadata | BLOCKED | Unassigned | App-owned manifest source contract passes, but Xcode archive privacy report, App Store Connect reconciliation, disclosures, review data, and screenshots are not recorded |
 | Device install smoke | BLOCKED | Unassigned | Issue #64 device-spike template is TEMPLATE / NOT EVIDENCE; no signed iOS install or member/guest staging smoke evidence is recorded |
@@ -137,6 +137,16 @@ Issue #68 stays open until the signed iOS artifact installs and all iOS beta
 acceptance evidence is recorded. This preflight deliberately performs no signing
 and reads no release secret. Android qualification remains a separately blocked
 follow-up and is not implied by an iOS beta release.
+
+## iOS Maps evidence status
+
+Issue #66's [`ios-map-device-spike.md`](ios-map-device-spike.md) runbook,
+[`ios-map-device-evidence.template.json`](ios-map-device-evidence.template.json),
+and [`ios-map-renderer-adr-template.md`](ios-map-renderer-adr-template.md) are
+**TEMPLATE / NOT EVIDENCE**. They prove only the source contract for recording a
+future iPhone qualification; they do not select the native renderer, validate an
+external key restriction, or provide device, accessibility, lifecycle, memory, or
+network evidence. Android device qualification is deferred for this iOS-first beta.
 
 ## Universal/App Links evidence status
 
