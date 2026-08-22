@@ -21,6 +21,7 @@ const sourceFiles = [
 ]
 const resultPath = 'docs/mobile/evidence/issue-64/2026-07-29/safe-run-1/results.json'
 const iosBetaResultPath = 'docs/mobile/evidence/issue-64-ios/2026-07-29/ios-safe-run-1/results.json'
+const iosBetaReleaseResultPath = 'docs/mobile/evidence/ios-beta-release-readiness/2026-08-03/beta-run/results.json'
 
 function completed() {
   const value = JSON.parse(sources().authSessionEvidenceTemplate)
@@ -86,6 +87,22 @@ function trackedIosBeta(result = iosBetaCompleted()) {
   return candidate
 }
 
+function iosBetaReleaseCompleted() {
+  const result = JSON.parse(sources().iosBetaReleaseReadinessTemplate)
+  result.template_status = 'COMPLETED'
+  result.notice = 'COMPLETED RESULTS / CLAIM-BEARING ARTIFACT'
+  result.release_roles = { release_owner: '@release', go_no_go_approver: '@approver', support_owner: '@support', monitoring_owner: '@monitoring' }
+  result.checks = result.checks.map((check) => ({
+    ...check,
+    status: 'PASS',
+    restricted_evidence_reference: `restricted://ios-beta-release-readiness/beta-run/${check.check_id}`,
+    summary: 'Reviewed in restricted evidence.',
+  }))
+  result.go_no_go = 'GO'
+  result.redaction_policy = 'Raw material is retained only in restricted storage.'
+  return result
+}
+
 test('accepts source contract and safe completed result', () => {
   assert.deepEqual(inspectMobileReleaseReadiness(sources()), [])
   assert.deepEqual(inspectMobileReleaseReadiness(tracked()), [])
@@ -99,6 +116,15 @@ test('accepts an iOS-only beta result and rejects cross-platform or legacy drift
   const legacySchema = iosBetaCompleted()
   legacySchema.schema_version = 2
   assert.match(messages(trackedIosBeta(legacySchema)), /schema_version must be 3/)
+})
+
+test('aggregate mobile preflight rejects an invalid tracked iOS beta GO result', () => {
+  const candidate = sources()
+  const result = iosBetaReleaseCompleted()
+  result.checks[0].status = 'BLOCKED'
+  candidate.trackedFiles = [...sourceFiles, iosBetaReleaseResultPath]
+  candidate.resultCopies = { [iosBetaReleaseResultPath]: JSON.stringify(result) }
+  assert.match(messages(candidate), /iOS beta GO requires every check to PASS/)
 })
 
 test('rejects an untracked iOS beta result copy', () => {
@@ -422,20 +448,24 @@ test('tracked result loader accepts regular in-repository files and rejects outs
   const outsideRoot = mkdtempSync(join(tmpdir(), 'issue64-result-outside-'))
   try {
     const regularPath = 'docs/mobile/evidence/issue-64/2026-07-29/regular-run/results.json'
+    const betaRegularPath = 'docs/mobile/evidence/ios-beta-release-readiness/2026-08-03/beta-run/results.json'
     const symlinkPath = 'docs/mobile/evidence/issue-64/2026-07-29/symlink-run/results.json'
     const directoryPath = 'docs/mobile/evidence/issue-64/2026-07-29/directory-run/results.json'
     const escapePath = 'docs/mobile/evidence/issue-64/2026-07-29/escape-run/results.json'
     mkdirSync(dirname(join(temporaryRoot, regularPath)), { recursive: true })
+    mkdirSync(dirname(join(temporaryRoot, betaRegularPath)), { recursive: true })
     mkdirSync(dirname(join(temporaryRoot, symlinkPath)), { recursive: true })
     writeFileSync(join(temporaryRoot, regularPath), '{"safe":true}\n')
+    writeFileSync(join(temporaryRoot, betaRegularPath), '{"beta":true}\n')
     const outsideFile = join(outsideRoot, 'results.json')
     writeFileSync(outsideFile, '{"outside":true}\n')
     symlinkSync(outsideFile, join(temporaryRoot, symlinkPath))
     mkdirSync(join(temporaryRoot, directoryPath), { recursive: true })
     symlinkSync(outsideRoot, dirname(join(temporaryRoot, escapePath)), 'dir')
 
-    const loaded = loadTrackedResultCopies(temporaryRoot, [regularPath, symlinkPath, directoryPath, escapePath])
+    const loaded = loadTrackedResultCopies(temporaryRoot, [regularPath, betaRegularPath, symlinkPath, directoryPath, escapePath])
     assert.equal(loaded.copies[regularPath], '{"safe":true}\n')
+    assert.equal(loaded.copies[betaRegularPath], '{"beta":true}\n')
     assert.equal(loaded.copies[symlinkPath], undefined)
     assert.equal(loaded.copies[directoryPath], undefined)
     assert.equal(loaded.copies[escapePath], undefined)

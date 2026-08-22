@@ -2,6 +2,7 @@ import { lstatSync, readFileSync, realpathSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { inspectIosBetaReleaseReadiness, isIosBetaReleaseReadinessResultPath } from './check-ios-beta-release-readiness.mjs'
 
 const REQUIRED_GATES = ['Repository contract', 'Artifact provenance', 'Signing and secrets', 'Identity and versioning', 'Production configuration', 'Authentication and guest sessions', 'Maps', 'Universal/App Links', 'Privacy and store metadata', 'Device install smoke', 'Backward compatibility and rollback', 'Monitoring and ownership']
 const ALLOWED_GATE_STATUSES = new Set(['PASS', 'BLOCKED', 'UNVERIFIED', 'FAIL'])
@@ -353,7 +354,7 @@ export function loadTrackedResultCopies(repositoryRoot, trackedFiles = []) {
   const root = realpathSync(resolve(repositoryRoot))
   const copies = {}
   const violations = []
-  for (const path of trackedFiles.filter((entry) => RESULT_PATH.test(entry) || IOS_BETA_RESULT_PATH.test(entry))) {
+  for (const path of trackedFiles.filter((entry) => RESULT_PATH.test(entry) || IOS_BETA_RESULT_PATH.test(entry) || isIosBetaReleaseReadinessResultPath(entry))) {
     const candidate = resolve(root, path)
     try {
       if (!lstatSync(candidate).isFile()) throw new Error('not a regular file')
@@ -362,7 +363,7 @@ export function loadTrackedResultCopies(repositoryRoot, trackedFiles = []) {
       if (relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) throw new Error('outside repository')
       copies[path] = readFileSync(realPath, 'utf8')
     } catch {
-      violations.push(`tracked issue #64 result must be a readable regular non-symlink file inside the repository: ${path}`)
+      violations.push(`tracked release-readiness result must be a readable regular non-symlink file inside the repository: ${path}`)
     }
   }
   return { copies, violations }
@@ -393,6 +394,8 @@ export function loadMobileReleaseSources(repositoryRoot, trackedFiles = []) {
     iosBetaAuthSessionEvidenceTemplate: read('docs/mobile/ios-beta-auth-session-device-evidence.template.json'),
     iosBetaAuthSessionDeviceSpike: read('docs/mobile/ios-beta-auth-session-device-spike.md'),
     iosBetaAuthSessionAdrTemplate: read('docs/mobile/ios-beta-auth-session-transport-adr-template.md'),
+    iosBetaReleaseReadinessTemplate: read('docs/mobile/ios-beta-release-readiness.template.json'),
+    iosBetaReleaseReadinessRunbook: read('docs/mobile/ios-beta-release-readiness-runbook.md'),
     resultCopies: loadedResults.copies,
     sourceViolations: loadedResults.violations,
     trackedFiles,
@@ -500,6 +503,14 @@ export function inspectMobileReleaseReadiness(sources) {
   }
   inspectDeviceEvidenceContract(sources, violations)
   inspectIosBetaDeviceEvidenceContract(sources, violations)
+  violations.push(...inspectIosBetaReleaseReadiness({
+    template: sources.iosBetaReleaseReadinessTemplate,
+    runbook: sources.iosBetaReleaseReadinessRunbook,
+    trackedFiles: sources.trackedFiles,
+    resultCopies: Object.fromEntries(
+      Object.entries(sources.resultCopies ?? {}).filter(([path]) => isIosBetaReleaseReadinessResultPath(path)),
+    ),
+  }))
 
   for (const path of sources.trackedFiles ?? []) {
     if (FORBIDDEN_TRACKED_RELEASE_FILES.test(path)) {
