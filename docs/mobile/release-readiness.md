@@ -1,10 +1,13 @@
 # Mobile release-readiness preflight
 
 This document is the repository-controlled contract for Dupert mobile release
-evidence. Passing the automated preflight means only that checked-in identifiers,
-versions, toolchain pins, public production configuration, and this evidence schema
-are internally consistent. It does **not** mean an artifact was signed, installed,
-tested on a device, approved for a store, or ready for release.
+evidence. Passing the automated preflight proves only that its machine-validated
+fields—checked-in identifiers, versions, toolchain values, public production
+configuration, and this evidence schema—are internally consistent. The unsigned
+iOS runner/Xcode entry below is human-reviewed workflow inventory, not a field
+validated by `check:mobile-release-readiness`. Passing the preflight does **not**
+mean an artifact was signed, installed, tested on a device, approved for a store,
+or ready for release.
 
 <!-- issue64-release-policy
 contract_version=2
@@ -65,7 +68,7 @@ ios_deployment_target=15.0
 | Gradle / Android Gradle Plugin | `8.14.3` / `8.13.0` | Gradle wrapper and Android build file |
 | Android SDK | compile `36`, target `36`, minimum `24` | `frontend/android/variables.gradle` |
 | iOS deployment target | `15.0` | Xcode project |
-| Unsigned iOS CI Xcode and macOS builder | Runner `macos-26`; Xcode `26.4.1` (`17E202`) | `.github/workflows/ios-unsigned-build.yml`; this pin covers only the unsigned CI archive, not a controlled signed build. |
+| Unsigned iOS CI Xcode and macOS builder | Runner `macos-26`; Xcode `26.4.1` (`17E202`) | Human-reviewed workflow inventory; not validated by `check:mobile-release-readiness`. `.github/workflows/ios-unsigned-build.yml`; this pin covers only the unsigned CI archive, not a controlled signed build. |
 
 Changing a supported value requires changing its source configuration and this
 contract in the same reviewed PR. The unsigned workflow pins its hosted runner
