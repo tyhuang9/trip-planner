@@ -21,6 +21,7 @@ const sourceFiles = [
 ]
 const resultPath = 'docs/mobile/evidence/issue-64/2026-07-29/safe-run-1/results.json'
 const iosBetaResultPath = 'docs/mobile/evidence/issue-64-ios/2026-07-29/ios-safe-run-1/results.json'
+const iosBetaReleaseResultPath = 'docs/mobile/evidence/ios-beta-release-readiness/2026-08-03/beta-run/results.json'
 
 function completed() {
   const value = JSON.parse(sources().authSessionEvidenceTemplate)
@@ -86,6 +87,22 @@ function trackedIosBeta(result = iosBetaCompleted()) {
   return candidate
 }
 
+function iosBetaReleaseCompleted() {
+  const result = JSON.parse(sources().iosBetaReleaseReadinessTemplate)
+  result.template_status = 'COMPLETED'
+  result.notice = 'COMPLETED RESULTS / CLAIM-BEARING ARTIFACT'
+  result.release_roles = { release_owner: '@release', go_no_go_approver: '@approver', support_owner: '@support', monitoring_owner: '@monitoring' }
+  result.checks = result.checks.map((check) => ({
+    ...check,
+    status: 'PASS',
+    restricted_evidence_reference: `restricted://ios-beta-release-readiness/beta-run/${check.check_id}`,
+    summary: 'Reviewed in restricted evidence.',
+  }))
+  result.go_no_go = 'GO'
+  result.redaction_policy = 'Raw material is retained only in restricted storage.'
+  return result
+}
+
 test('accepts source contract and safe completed result', () => {
   assert.deepEqual(inspectMobileReleaseReadiness(sources()), [])
   assert.deepEqual(inspectMobileReleaseReadiness(tracked()), [])
@@ -99,6 +116,90 @@ test('accepts an iOS-only beta result and rejects cross-platform or legacy drift
   const legacySchema = iosBetaCompleted()
   legacySchema.schema_version = 2
   assert.match(messages(trackedIosBeta(legacySchema)), /schema_version must be 3/)
+})
+
+test('aggregate mobile preflight rejects an invalid tracked iOS beta GO result', () => {
+  const candidate = sources()
+  const result = iosBetaReleaseCompleted()
+  result.checks[0].status = 'BLOCKED'
+  candidate.trackedFiles = [...sourceFiles, iosBetaReleaseResultPath]
+  candidate.resultCopies = { [iosBetaReleaseResultPath]: JSON.stringify(result) }
+  assert.match(messages(candidate), /iOS beta GO requires every check to PASS/)
+})
+
+test('aggregate mobile preflight rejects duplicate restricted evidence references without echoing them', () => {
+  const secretSegment = ['glpat-', 'abcdefghijklmnopqrst'].join('')
+  const duplicateReference = `restricted://ios-beta-release-readiness/beta-run/${secretSegment}`
+  const candidate = sources()
+  const result = iosBetaReleaseCompleted()
+  result.checks[0].restricted_evidence_reference = duplicateReference
+  result.checks[1].restricted_evidence_reference = duplicateReference
+  candidate.trackedFiles = [...sourceFiles, iosBetaReleaseResultPath]
+  candidate.resultCopies = { [iosBetaReleaseResultPath]: JSON.stringify(result) }
+  const output = messages(candidate)
+  assert.match(output, /iOS beta check 2 \(map_renderer_and_restricted_key\) restricted_evidence_reference must not reuse an evidence reference/)
+  assert.doesNotMatch(output, new RegExp(secretSegment))
+})
+
+test('aggregate mobile preflight rejects standalone provider tokens without echoing them', () => {
+  const alphabeticPayload = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  const opaqueLegacyGithubToken = ['ghp_', 'A'.repeat(20), '_', 'B'.repeat(20)].join('')
+  const fineGrainedGithubPat = ['github', '_pat_', 'A'.repeat(22), '_', 'B'.repeat(59)].join('')
+  const statelessGithubAppToken = ['ghs_', '123456', '_', 'headerABC', '.', 'payload-with_url', '.', 'signatureABC'].join('')
+  const trailingOpaqueGithubAppTokens = ['_', '-'].map((suffix) => ['ghs_', 'A'.repeat(36), suffix].join(''))
+  const providerTokens = [
+    ['ghp_', alphabeticPayload, 'abcdef'].join(''),
+    opaqueLegacyGithubToken,
+    fineGrainedGithubPat,
+    statelessGithubAppToken,
+    ...trailingOpaqueGithubAppTokens,
+    ['glpat-', alphabeticPayload].join(''),
+    ['xoxb-', '1234567890-abcdefghijklmnop'].join(''),
+    ['sk_', 'live_', alphabeticPayload].join(''),
+    ['AK', 'IA', 'IOSFODNN7EXAMPLE'].join(''),
+  ]
+  for (const providerToken of providerTokens) {
+    const candidate = sources()
+    const result = iosBetaReleaseCompleted()
+    result.checks[0].summary = `Reviewed ${providerToken} in restricted evidence.`
+    candidate.trackedFiles = [...sourceFiles, iosBetaReleaseResultPath]
+    candidate.resultCopies = { [iosBetaReleaseResultPath]: JSON.stringify(result) }
+    const output = messages(candidate)
+    assert.match(output, /raw credential material, capture, or artifact data/)
+    assert.doesNotMatch(output, new RegExp(providerToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  }
+})
+
+test('aggregate mobile preflight allows legacy token-like substrings inside ordinary identifiers', () => {
+  const embeddedOpaqueLegacyGithubIdentifier = ['build_ghp_', 'A'.repeat(20), '_', 'B'.repeat(20), '_reference'].join('')
+  const candidate = sources()
+  const result = iosBetaReleaseCompleted()
+  result.checks[0].summary = `Build identifier ${embeddedOpaqueLegacyGithubIdentifier} was already scrubbed.`
+  candidate.trackedFiles = [...sourceFiles, iosBetaReleaseResultPath]
+  candidate.resultCopies = { [iosBetaReleaseResultPath]: JSON.stringify(result) }
+  assert.deepEqual(inspectMobileReleaseReadiness(candidate), [])
+})
+
+test('aggregate mobile preflight never echoes a secret-shaped check_id', () => {
+  const secretCheckId = ['github', '_pat_', 'C'.repeat(22), '_', 'D'.repeat(59)].join('')
+  const candidate = sources()
+  const result = iosBetaReleaseCompleted()
+  const unauthorizedPath = `docs/mobile/evidence/ios-beta-release-readiness/${secretCheckId}/results.json`
+  result.checks[0] = {
+    check_id: secretCheckId,
+    status: 'INVALID',
+    restricted_evidence_reference: 'invalid-reference',
+    summary: '',
+  }
+  candidate.trackedFiles = [...sourceFiles, iosBetaReleaseResultPath, unauthorizedPath]
+  candidate.resultCopies = { [iosBetaReleaseResultPath]: JSON.stringify(result) }
+  const output = messages(candidate)
+  assert.match(output, /iOS beta check 1 \(auth_device_matrix_and_adr\) must use its expected check_id/)
+  assert.match(output, /has invalid completed status/)
+  assert.match(output, /must be a scoped restricted evidence reference/)
+  assert.match(output, /requires a summary/)
+  assert.match(output, /tracked iOS beta evidence path is unauthorized \(position 2\)/)
+  assert.doesNotMatch(output, new RegExp(secretCheckId))
 })
 
 test('rejects an untracked iOS beta result copy', () => {
@@ -422,25 +523,34 @@ test('tracked result loader accepts regular in-repository files and rejects outs
   const outsideRoot = mkdtempSync(join(tmpdir(), 'issue64-result-outside-'))
   try {
     const regularPath = 'docs/mobile/evidence/issue-64/2026-07-29/regular-run/results.json'
+    const betaRegularPath = 'docs/mobile/evidence/ios-beta-release-readiness/2026-08-03/beta-run/results.json'
     const symlinkPath = 'docs/mobile/evidence/issue-64/2026-07-29/symlink-run/results.json'
     const directoryPath = 'docs/mobile/evidence/issue-64/2026-07-29/directory-run/results.json'
     const escapePath = 'docs/mobile/evidence/issue-64/2026-07-29/escape-run/results.json'
+    const secretRunId = ['glpat-', 'abcdefghijklmnopqrst'].join('')
+    const missingSecretPath = `docs/mobile/evidence/ios-beta-release-readiness/2026-08-03/${secretRunId}/results.json`
     mkdirSync(dirname(join(temporaryRoot, regularPath)), { recursive: true })
+    mkdirSync(dirname(join(temporaryRoot, betaRegularPath)), { recursive: true })
     mkdirSync(dirname(join(temporaryRoot, symlinkPath)), { recursive: true })
     writeFileSync(join(temporaryRoot, regularPath), '{"safe":true}\n')
+    writeFileSync(join(temporaryRoot, betaRegularPath), '{"beta":true}\n')
     const outsideFile = join(outsideRoot, 'results.json')
     writeFileSync(outsideFile, '{"outside":true}\n')
     symlinkSync(outsideFile, join(temporaryRoot, symlinkPath))
     mkdirSync(join(temporaryRoot, directoryPath), { recursive: true })
     symlinkSync(outsideRoot, dirname(join(temporaryRoot, escapePath)), 'dir')
 
-    const loaded = loadTrackedResultCopies(temporaryRoot, [regularPath, symlinkPath, directoryPath, escapePath])
+    const loaded = loadTrackedResultCopies(temporaryRoot, [regularPath, betaRegularPath, symlinkPath, directoryPath, escapePath, missingSecretPath])
     assert.equal(loaded.copies[regularPath], '{"safe":true}\n')
+    assert.equal(loaded.copies[betaRegularPath], '{"beta":true}\n')
     assert.equal(loaded.copies[symlinkPath], undefined)
     assert.equal(loaded.copies[directoryPath], undefined)
     assert.equal(loaded.copies[escapePath], undefined)
-    assert.equal(loaded.violations.length, 3)
-    assert.match(loaded.violations.join('\n'), /regular non-symlink file inside the repository/)
+    assert.equal(loaded.copies[missingSecretPath], undefined)
+    assert.equal(loaded.violations.length, 4)
+    const output = loaded.violations.join('\n')
+    assert.match(output, /tracked release-readiness result 6 must be a readable regular non-symlink file inside the repository/)
+    assert.doesNotMatch(output, new RegExp(secretRunId))
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true })
     rmSync(outsideRoot, { recursive: true, force: true })
