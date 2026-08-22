@@ -1,10 +1,13 @@
 # Mobile release-readiness preflight
 
 This document is the repository-controlled contract for Dupert mobile release
-evidence. Passing the automated preflight means only that checked-in identifiers,
-versions, toolchain pins, public production configuration, and this evidence schema
-are internally consistent. It does **not** mean an artifact was signed, installed,
-tested on a device, approved for a store, or ready for release.
+evidence. Passing the automated preflight proves only that its machine-validated
+fields—checked-in identifiers, versions, toolchain values, public production
+configuration, and this evidence schema—are internally consistent. The unsigned
+iOS runner/Xcode entry below is human-reviewed workflow inventory, not a field
+validated by `check:mobile-release-readiness`. Passing the preflight does **not**
+mean an artifact was signed, installed, tested on a device, approved for a store,
+or ready for release.
 
 <!-- issue64-release-policy
 contract_version=2
@@ -65,11 +68,12 @@ ios_deployment_target=15.0
 | Gradle / Android Gradle Plugin | `8.14.3` / `8.13.0` | Gradle wrapper and Android build file |
 | Android SDK | compile `36`, target `36`, minimum `24` | `frontend/android/variables.gradle` |
 | iOS deployment target | `15.0` | Xcode project |
-| Xcode and macOS builder | **UNVERIFIED / UNPINNED** | Must be selected from a successful controlled signed-build run; do not infer it from the iOS deployment target. |
+| Unsigned iOS CI Xcode and macOS builder | Runner `macos-26`; Xcode `26.4.1` (`17E202`) | Human-reviewed workflow inventory; not validated by `check:mobile-release-readiness`. `.github/workflows/ios-unsigned-build.yml`; this pin covers only the unsigned CI archive, not a controlled signed build. |
 
 Changing a supported value requires changing its source configuration and this
-contract in the same reviewed PR. Exact Xcode/macOS versions remain blocked until
-a real macOS builder produces reproducible evidence.
+contract in the same reviewed PR. The unsigned workflow pins its hosted runner
+and Xcode version, but the controlled signed builder and its reproducibility
+remain **UNVERIFIED** until a signed-build run records them.
 
 ## Evidence rules
 
@@ -95,7 +99,7 @@ a real macOS builder produces reproducible evidence.
 | Identity and versioning | BLOCKED | Unassigned | Source values agree, but signed artifact metadata has not been inspected |
 | Production configuration | BLOCKED | Unassigned | Source origin policy passes; packaged artifact inspection is not recorded |
 | Authentication and guest sessions | BLOCKED | Unassigned | Issue #64 templates are TEMPLATE / NOT EVIDENCE; physical iPhone and Android ADR and smoke evidence is unexecuted |
-| Maps | BLOCKED | Unassigned | Depends on issue #66 renderer ADR and restricted-key evidence |
+| Maps | BLOCKED | Unassigned | Native renderer and bridge exist in source, but issue #66 renderer ADR, restricted-key evidence, and signed physical-device map smoke are not recorded |
 | Universal/App Links | BLOCKED | Unassigned | Issue #67 code policy is implemented, but acceptance remains blocked on issue #64 ADR, deployed `/.well-known` association files, Apple Team ID, Android SHA-256 fingerprints, and signed physical-device cold/warm evidence |
 | Privacy and store metadata | BLOCKED | Unassigned | App-owned manifest source contract passes, but Xcode archive privacy report + App Store Connect reconciliation, vendor manifests, disclosures, review data, and screenshots are not recorded |
 | Device install smoke | BLOCKED | Unassigned | Issue #64 device-spike template is TEMPLATE / NOT EVIDENCE; no signed iOS and Android installs or member/guest staging smoke evidence recorded |
