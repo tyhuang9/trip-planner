@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import test from 'node:test'
-import { inspectIosBetaReleaseReadiness } from './check-ios-beta-release-readiness.mjs'
+import { assertIosBetaReleaseReadiness, inspectIosBetaReleaseReadiness } from './check-ios-beta-release-readiness.mjs'
 
 const root = resolve(import.meta.dirname, '../..')
 const read = (path) => readFile(resolve(root, path), 'utf8')
@@ -27,6 +27,11 @@ test('accepts the unexecuted iOS beta source contract', async () => {
   assert.deepEqual(inspectIosBetaReleaseReadiness(await contract()), [])
 })
 
+test('standalone enforcement requires tracked-file input', async () => {
+  const value = await contract()
+  assert.throws(() => assertIosBetaReleaseReadiness(value), /tracked-file input must not be empty/)
+})
+
 test('accepts a complete GO only when every required check is PASS', async () => {
   const value = await contract()
   const path = 'docs/mobile/evidence/ios-beta-release-readiness/2026-08-03/beta-run/results.json'
@@ -49,6 +54,43 @@ test('rejects untracked results, raw captures, and source-template claims', asyn
   value.resultCopies = { [path]: JSON.stringify(result) }
   const output = inspectIosBetaReleaseReadiness(value).join('\n')
   assert.match(output, /template must remain unexecuted/)
-  assert.match(output, /raw secret, capture, or artifact/)
+  assert.match(output, /raw credential material, capture, or artifact data/)
   assert.match(output, /evidence path is unauthorized/)
+})
+
+test('rejects credential-bearing fields and encoded credential material without echoing values', async () => {
+  const cases = [
+    (result) => { result.private_key = 'sensitive-fixture-value' },
+    (result) => { result.clientSecret = 'sensitive-fixture-value' },
+    (result) => { result.checks[0].summary = '-----BEGIN PRIVATE KEY----- sensitive-fixture-value' },
+  ]
+  for (const mutate of cases) {
+    const value = await contract()
+    const path = 'docs/mobile/evidence/ios-beta-release-readiness/2026-08-03/beta-run/results.json'
+    const result = JSON.parse(completed())
+    mutate(result)
+    value.trackedFiles = [path]
+    value.resultCopies = { [path]: JSON.stringify(result) }
+    const output = inspectIosBetaReleaseReadiness(value).join('\n')
+    assert.match(output, /raw credential material, capture, or artifact data/)
+    assert.doesNotMatch(output, /sensitive-fixture-value/)
+  }
+})
+
+test('rejects dot-segment and non-canonical restricted evidence references', async () => {
+  const references = [
+    'restricted://ios-beta-release-readiness/beta-run/check/../../outside',
+    'restricted://ios-beta-release-readiness/beta-run/check/%2e%2e/outside',
+    'restricted://ios-beta-release-readiness/beta-run/check//outside',
+    'restricted://ios-beta-release-readiness/beta-run/check?scope=outside',
+  ]
+  for (const reference of references) {
+    const value = await contract()
+    const path = 'docs/mobile/evidence/ios-beta-release-readiness/2026-08-03/beta-run/results.json'
+    const result = JSON.parse(completed())
+    result.checks[0].restricted_evidence_reference = reference
+    value.trackedFiles = [path]
+    value.resultCopies = { [path]: JSON.stringify(result) }
+    assert.match(inspectIosBetaReleaseReadiness(value).join('\n'), /must be a scoped restricted evidence reference/)
+  }
 })

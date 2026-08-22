@@ -15,7 +15,25 @@ const CHECK_IDS = [
   'previous_build_current_staging_smoke',
   'rollback_monitoring_and_escalation',
 ]
-const RAW_OR_ARTIFACT = /(?:authorization\s*[:=]|\bbearer\s+[a-z0-9._-]{12,}|\beyJ[a-z0-9_-]{10,}\.|(?:password|cookie|token|api[_-]?key)\s*[:=]|https?:\/\/[^\s"']+\/(?:reset|verify)[^\s"']*|\.xcarchive\b|\.ipa\b|\.(?:png|jpe?g|mov|mp4)\b)/i
+const RAW_OR_ARTIFACT_TEXT = /(?:authorization\s*[:=]|\bbearer\s+[a-z0-9._-]{12,}|\bbasic\s+[a-z0-9+/=]{12,}|\beyJ[a-z0-9_-]{10,}\.|(?:password|passphrase|cookie|token|api[_-]?key|private[_-]?key|client[_-]?secret|secret[_-]?access[_-]?key)\s*[:=]|-----BEGIN [A-Z0-9 -]*(?:PRIVATE KEY|CERTIFICATE(?: REQUEST)?)(?: BLOCK)?-----|https?:\/\/[^\s"']+\/(?:reset|verify|verification)[^\s"']*|\.xcarchive\b|\.ipa\b|\.(?:jks|keystore|p12|p8|pfx|pem|key|mobileprovision|png|jpe?g|mov|mp4)\b)/i
+const SENSITIVE_FIELDS = new Set([
+  'authorization',
+  'password',
+  'passphrase',
+  'cookie',
+  'set_cookie',
+  'token',
+  'access_token',
+  'refresh_token',
+  'reset_token',
+  'api_key',
+  'private_key',
+  'client_secret',
+  'client_assertion',
+  'secret_access_key',
+  'credential',
+  'credentials',
+])
 
 function parse(source, label, violations) {
   try { return JSON.parse(source) } catch { violations.push(`${label} must be valid JSON`); return null }
@@ -34,6 +52,23 @@ function date(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(value)
 }
 
+function normalizedFieldName(value) {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[^a-z0-9]+/gi, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase()
+}
+
+function containsRawSecretOrArtifact(value) {
+  if (typeof value === 'string') return RAW_OR_ARTIFACT_TEXT.test(value)
+  if (Array.isArray(value)) return value.some(containsRawSecretOrArtifact)
+  if (!value || typeof value !== 'object') return false
+  return Object.entries(value).some(([key, child]) => (
+    SENSITIVE_FIELDS.has(normalizedFieldName(key)) || containsRawSecretOrArtifact(child)
+  ))
+}
+
 function marker(source, violations) {
   const matches = [...source.matchAll(/<!-- ios-beta-readiness-policy\n([\s\S]*?)\n-->/g)]
   if (matches.length !== 1) return violations.push('ios-beta-readiness-policy marker must appear exactly once')
@@ -46,12 +81,33 @@ function marker(source, violations) {
 }
 
 function restrictedReference(value, runId, label, violations) {
-  if (typeof value !== 'string' || !new RegExp(`^restricted://ios-beta-release-readiness/${runId}/[a-z0-9][a-z0-9._/-]*$`).test(value)) violations.push(`${label} must be a scoped restricted evidence reference`)
+  const prefix = `restricted://ios-beta-release-readiness/${runId}/`
+  let parsed
+  try {
+    parsed = new URL(value)
+  } catch {
+    violations.push(`${label} must be a scoped restricted evidence reference`)
+    return
+  }
+  const suffix = typeof value === 'string' && value.startsWith(prefix) ? value.slice(prefix.length) : ''
+  const segments = suffix.split('/')
+  const canonical = `restricted://ios-beta-release-readiness${parsed.pathname}`
+  const valid = parsed.protocol === 'restricted:'
+    && parsed.hostname === 'ios-beta-release-readiness'
+    && !parsed.username
+    && !parsed.password
+    && !parsed.port
+    && !parsed.search
+    && !parsed.hash
+    && value === canonical
+    && segments.length > 0
+    && segments.every((segment) => /^[a-z0-9][a-z0-9._-]*$/.test(segment) && segment !== '.' && segment !== '..')
+  if (!valid) violations.push(`${label} must be a scoped restricted evidence reference`)
 }
 
 function validate(document, { template, runId }, violations) {
   const top = ['schema_version', 'template_status', 'notice', 'copy_results_to', 'platform', 'release_roles', 'checks', 'go_no_go', 'redaction_policy', 'references']
-  if (!template && RAW_OR_ARTIFACT.test(JSON.stringify(document))) violations.push('iOS beta result contains a raw secret, capture, or artifact')
+  if (!template && containsRawSecretOrArtifact(document)) violations.push('iOS beta result contains raw credential material, capture, or artifact data')
   if (!exactKeys(document, top, template ? 'iOS beta template' : 'iOS beta result', violations)) return
   if (document.schema_version !== 1 || document.platform !== 'ios') violations.push('iOS beta document schema or platform is invalid')
   if (document.copy_results_to !== 'docs/mobile/evidence/ios-beta-release-readiness/YYYY-MM-DD/<lowercase-run-id>/results.json') violations.push('iOS beta result path declaration is invalid')
@@ -101,7 +157,14 @@ export function inspectIosBetaReleaseReadiness(sources) {
   return violations
 }
 
+export function isIosBetaReleaseReadinessResultPath(path) {
+  return typeof path === 'string' && RESULT_PATH.test(path)
+}
+
 export function assertIosBetaReleaseReadiness(sources) {
+  if (!Array.isArray(sources.trackedFiles) || sources.trackedFiles.length === 0) {
+    throw new Error('iOS beta release-readiness contract failed:\ntracked-file input must not be empty')
+  }
   const violations = inspectIosBetaReleaseReadiness(sources)
   if (violations.length > 0) throw new Error(`iOS beta release-readiness contract failed:\n${violations.join('\n')}`)
 }
