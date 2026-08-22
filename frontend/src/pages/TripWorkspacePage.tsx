@@ -106,6 +106,7 @@ import { PlaceSearch } from '../components/PlaceSearch'
 import { TripDateRangePicker } from '../components/TripDateRangePicker'
 import {
   fetchGooglePlaceById,
+  fetchGooglePlaceNearLocation,
   fetchGooglePlaceTextSearch,
   googlePlaceCategoryTypeForQuery,
   type GooglePlaceTextSearchOptions,
@@ -766,12 +767,42 @@ function buildGoogleMapsExport(activities: Activity[], scopeLabel: string): Goog
   }
 }
 
-function googleMapsUrlForPlace(place: PlaceSelection): string | null {
+function googleMapsUrlForPlace(
+  place: PlaceSelection,
+  { isSavedActivity = false }: { isSavedActivity?: boolean } = {},
+): string | null {
+  const savedActivityQuery = [place.address, place.placeName, place.title]
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    ?.trim()
+  const query = isSavedActivity
+    ? savedActivityQuery
+    : place.placeName || place.title || place.address
+  if (isSavedActivity && place.placeId && query) {
+    const parameters = new URLSearchParams({
+      api: '1',
+      query,
+      query_place_id: place.placeId,
+    })
+    return `https://www.google.com/maps/search/?${parameters.toString()}`
+  }
+  if (isSavedActivity && query) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`
+  }
+  if (isSavedActivity && Number.isFinite(place.lat) && Number.isFinite(place.lng)) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${place.lat},${place.lng}`)}`
+  }
   if (place.googleMapsUri) return place.googleMapsUri
+  if (place.placeId && query) {
+    const parameters = new URLSearchParams({
+      api: '1',
+      query,
+      query_place_id: place.placeId,
+    })
+    return `https://www.google.com/maps/search/?${parameters.toString()}`
+  }
   if (Number.isFinite(place.lat) && Number.isFinite(place.lng)) {
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${place.lat},${place.lng}`)}`
   }
-  const query = place.address || place.placeName || place.title
   return query
     ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`
     : null
@@ -839,6 +870,16 @@ function loadingPlaceDetailsSelection(
     placeId: placeId,
     lat: location?.lat ?? null,
     lng: location?.lng ?? null,
+  }
+}
+
+function failedPlaceDetailsSelection(place: PlaceSelection): PlaceSelection {
+  return {
+    ...place,
+    title: 'Place details unavailable',
+    placeName: 'Place details unavailable',
+    isLoadingDetails: false,
+    placeDetailsError: 'We couldn\'t load details for this place. You can still open it in Google Maps.',
   }
 }
 
@@ -2759,16 +2800,27 @@ export function TripWorkspacePage() {
     selectedMapClickedPlace ??
     (mobileSearchSheetActive ? null : concretePlaceDraft) ??
     mapSearchPreview
+  const selectedMapClickedActivity = selectedMapClickedActivityId === null
+    ? null
+    : allActivities.find((activity) => activity.id === selectedMapClickedActivityId) ?? null
+  const selectedMapClickedActivityPlace = selectedMapClickedActivity
+    ? activityToPlaceSelection(selectedMapClickedActivity)
+    : null
   const mapDetailSelectedDayHours = mapDetailPlace
     ? selectedDayHours(mapDetailPlace, selectedDay)
     : null
   const mapDetailDirectionsUrl = mapDetailPlace ? directionsUrlForPlace(mapDetailPlace) : null
-  const mapDetailGoogleMapsUrl = mapDetailPlace ? googleMapsUrlForPlace(mapDetailPlace) : null
+  const mapDetailGoogleMapsUrl = mapDetailPlace
+    ? googleMapsUrlForPlace(selectedMapClickedActivityPlace ?? mapDetailPlace, {
+        isSavedActivity: selectedMapClickedActivityPlace !== null,
+      })
+    : null
   const mapDetailRating = mapDetailPlace ? formatPlaceRating(mapDetailPlace) : null
   const mapDetailFocusId = mapDetailPlace ? placeStableId(mapDetailPlace) : null
   const isMapDetailLoading = Boolean(mapDetailPlace?.isLoadingDetails)
+  const hasMapDetailError = Boolean(mapDetailPlace?.placeDetailsError)
   const canAddMapDetailPlace =
-    !isMapDetailLoading && (
+    !isMapDetailLoading && !hasMapDetailError && (
       selectedMapSearchResult !== null ||
       (selectedMapClickedPlace !== null && selectedMapClickedActivityId === null)
     )
@@ -2838,7 +2890,7 @@ export function TripWorkspacePage() {
     setMapSearchLoadMoreError(false)
   }
 
-  const closeMapSearchResults = () => {
+  const closeMapSearchResults = ({ focusSearch = true }: { focusSearch?: boolean } = {}) => {
     mapSearchRequestIdRef.current += 1
     mapTextSearchSessionRef.current = null
     setMapSearchValue('')
@@ -2852,7 +2904,7 @@ export function TripWorkspacePage() {
     setIsMapSearchSubmitting(false)
     setIsMapSearchLoadingMore(false)
     setMapSearchLoadMoreError(false)
-    if (isMobileViewport) {
+    if (isMobileViewport && focusSearch) {
       setMapSearchFocusKey((current) => (current ?? 0) + 1)
     }
   }
@@ -3176,15 +3228,23 @@ export function TripWorkspacePage() {
     setCoordinateMapMarker(null)
     setPendingMapPlace(null)
 
-    if (!activity.placeId) return
-
     setIsMapSearchSubmitting(true)
     try {
-      const details = googlePlaceToPlaceSelection(
-        await fetchGooglePlaceById({ includePhoto: true, placeId: activity.placeId }),
-      )
+      let details: PlaceSelection | null = null
+      if (activity.placeId) {
+        try {
+          details = googlePlaceToPlaceSelection(
+            await fetchGooglePlaceById({ includePhoto: true, placeId: activity.placeId }),
+          )
+        } catch {
+          // The saved event metadata still provides an exact Google Maps link.
+        }
+      }
       if (mapPlaceDetailsRequestIdRef.current !== requestId) return
-      setSelectedMapClickedPlace(mergeActivityPlaceSelection(activity, fallbackPlace, details))
+
+      if (details) {
+        setSelectedMapClickedPlace(mergeActivityPlaceSelection(activity, fallbackPlace, details))
+      }
     } catch {
       if (mapPlaceDetailsRequestIdRef.current === requestId) {
         setSelectedMapClickedPlace(fallbackPlace)
@@ -3541,11 +3601,68 @@ export function TripWorkspacePage() {
   }: MapPlaceClickEvent) => {
     const normalizedPlaceId = placeId?.trim() || null
     if (!normalizedPlaceId) {
-      const markerPlace = clickedLocationToPlaceSelection(location)
-      if (!markerPlace) return
-      setCoordinateMapMarker(markerPlace)
+      const loadingPlace = loadingPlaceDetailsSelection(null, location)
+      const coordinateFallback = clickedLocationToPlaceSelection(location)
+      if (!loadingPlace || !coordinateFallback || !location) return
+
+      const requestId = mapPlaceDetailsRequestIdRef.current + 1
+      mapPlaceDetailsRequestIdRef.current = requestId
+      mapPlaceCardTimingRef.current = {
+        clickedAtIso,
+        clickedAtMs,
+        placeId: null,
+        renderedSignatures: new Set<string>(),
+        requestId,
+        traceId,
+      }
+      logPlaceDetailsTiming('frontend_details_flow_start', {
+        clickedAtIso,
+        elapsedSinceClickMs: placeDetailsElapsedMs(clickedAtMs),
+        hasPreviewPlace: true,
+        placeId: null,
+        requestId,
+        traceId,
+      })
+      setSelectedMapSearchResult(null)
+      setSelectedMapClickedPlace(loadingPlace)
+      setSelectedMapClickedActivityId(null)
+      setCoordinateMapMarker(null)
       setMapSearchPreview(null)
       setHoveredMapSearchResultId(null)
+      setActiveActivityId(null)
+      setHoveredActivityId(null)
+      setPendingMapPlace(mapLocationTarget ? loadingPlace : null)
+      setIsMapSearchSubmitting(true)
+      try {
+        const nearbyPlace = await fetchGooglePlaceNearLocation({
+          includePhoto: true,
+          options: {
+            location,
+            radius: 75,
+            rankPreference: 'DISTANCE',
+          },
+        })
+        if (mapPlaceDetailsRequestIdRef.current !== requestId) return
+        if (nearbyPlace?.id) {
+          const resolvedPlace = googlePlaceToPlaceSelection(nearbyPlace)
+          setSelectedMapClickedPlace(resolvedPlace)
+          setPendingMapPlace(mapLocationTarget ? resolvedPlace : null)
+          return
+        }
+        setSelectedMapClickedPlace(null)
+        setCoordinateMapMarker(coordinateFallback)
+        setPendingMapPlace(mapLocationTarget ? coordinateFallback : null)
+      } catch {
+        if (mapPlaceDetailsRequestIdRef.current === requestId) {
+          setSelectedMapClickedPlace(null)
+          setCoordinateMapMarker(coordinateFallback)
+          setPendingMapPlace(mapLocationTarget ? coordinateFallback : null)
+        }
+      } finally {
+        if (mapPlaceDetailsRequestIdRef.current === requestId) {
+          setIsMapSearchSubmitting(false)
+        }
+      }
       return
     }
 
@@ -3594,8 +3711,8 @@ export function TripWorkspacePage() {
       }
     } catch {
       if (mapPlaceDetailsRequestIdRef.current === requestId) {
-        setSelectedMapClickedPlace(loadingPlace)
-        setPendingMapPlace(mapLocationTarget ? loadingPlace : null)
+        setSelectedMapClickedPlace(failedPlaceDetailsSelection(loadingPlace))
+        setPendingMapPlace(null)
       }
     } finally {
       if (mapPlaceDetailsRequestIdRef.current === requestId) {
@@ -3658,8 +3775,9 @@ export function TripWorkspacePage() {
         setPendingMapPlace(hydratedPlace)
       }
     } catch {
-      if (mapPlaceDetailsRequestIdRef.current === requestId && mapLocationTarget) {
-        setPendingMapPlace(place)
+      if (mapPlaceDetailsRequestIdRef.current === requestId) {
+        setSelectedMapSearchResult(failedPlaceDetailsSelection(place))
+        setPendingMapPlace(null)
       }
     } finally {
       if (mapPlaceDetailsRequestIdRef.current === requestId) {
@@ -3774,7 +3892,7 @@ export function TripWorkspacePage() {
 
   const closeMapPlaceDetails = () => {
     clearMapSelection()
-    closeMapSearchResults()
+    closeMapSearchResults({ focusSearch: false })
   }
 
   const handleActiveActivityChange = (activityId: number | null) => {
@@ -4097,6 +4215,7 @@ export function TripWorkspacePage() {
       setMapSearchFocusKey(undefined)
       setExpandedActivityId(null)
       clearPlaceDraft()
+      clearMapSelection()
     }
   }
 
@@ -4820,11 +4939,13 @@ export function TripWorkspacePage() {
                   <section
                     className={[
                       styles.placeDetailCard,
+                      isMapDetailLoading ? styles.placeDetailCardLoading : '',
                       !isMobileViewport && mapSearchResults.length > 0
                         ? styles.placeDetailCardRaised
                         : '',
                     ].filter(Boolean).join(' ')}
                     aria-labelledby="map-place-detail-title map-place-detail-label"
+                    aria-busy={isMapDetailLoading}
                   >
                     <span id="map-place-detail-label" className="sr-only">Selected map place</span>
                     <div className={styles.placeHero}>
@@ -4879,6 +5000,9 @@ export function TripWorkspacePage() {
                           <span className={styles.placeLoadingText}>Fetching data...</span>
                         </div>
                       )}
+                      {hasMapDetailError && (
+                        <p role="alert">{mapDetailPlace.placeDetailsError}</p>
+                      )}
                       {!isMapDetailLoading && mapDetailSelectedDayHours && (
                         <p className={styles.placeHours}>
                           {mapDetailSelectedDayHours}
@@ -4897,7 +5021,7 @@ export function TripWorkspacePage() {
                         </p>
                       )}
                       <div className={styles.placeDetailActions}>
-                        {!isMapDetailLoading && mapLocationTarget && pendingMapPlace ? (
+                        {!isMapDetailLoading && !hasMapDetailError && mapLocationTarget && pendingMapPlace ? (
                           <button
                             type="button"
                             className={styles.primaryAction}
@@ -4906,7 +5030,7 @@ export function TripWorkspacePage() {
                           >
                             Confirm Update
                           </button>
-                        ) : !isMapDetailLoading && canAddMapDetailPlace ? (
+                        ) : !isMapDetailLoading && !hasMapDetailError && canAddMapDetailPlace ? (
                           <button
                             type="button"
                             className={styles.primaryAction}
@@ -4914,7 +5038,7 @@ export function TripWorkspacePage() {
                           >
                             Add to Trip
                           </button>
-                        ) : !isMapDetailLoading && placeDraft ? (
+                        ) : !isMapDetailLoading && !hasMapDetailError && placeDraft ? (
                           <button
                             type="button"
                             className={styles.primaryAction}
@@ -4936,7 +5060,7 @@ export function TripWorkspacePage() {
                             <span className={styles.placeActionLabel}>Directions</span>
                           </a>
                         )}
-                        {mapDetailGoogleMapsUrl && (
+                        {!isMapDetailLoading && mapDetailGoogleMapsUrl && (
                           <a
                             className={styles.placeMapsAction}
                             href={mapDetailGoogleMapsUrl}

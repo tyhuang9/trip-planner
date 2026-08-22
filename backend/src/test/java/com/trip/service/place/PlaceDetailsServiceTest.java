@@ -29,7 +29,7 @@ import com.trip.repo.PlaceDetailsCacheRepository;
 
 class PlaceDetailsServiceTest {
     private static final String DEFAULT_MASK =
-        "id,displayName,formattedAddress,location,rating,userRatingCount,types,websiteUri,nationalPhoneNumber";
+        "id,displayName,formattedAddress,googleMapsUri,location,rating,userRatingCount,types,websiteUri,nationalPhoneNumber";
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Clock clock = Clock.fixed(Instant.parse("2026-06-30T12:00:00Z"), ZoneOffset.UTC);

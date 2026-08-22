@@ -531,6 +531,18 @@ function withoutDayDate(activity: Activity): Omit<Activity, 'dayDate'> {
   return response
 }
 
+function expectGoogleMapsPlaceLink(
+  link: HTMLElement,
+  { placeId, query }: { placeId: string; query: string },
+) {
+  const url = new URL(link.getAttribute('href') ?? '')
+  expect(url.origin).toBe('https://www.google.com')
+  expect(url.pathname).toBe('/maps/search/')
+  expect(url.searchParams.get('api')).toBe('1')
+  expect(url.searchParams.get('query')).toBe(query)
+  expect(url.searchParams.get('query_place_id')).toBe(placeId)
+}
+
 function mockWorkspace(
   activities: ActivityApiFixture[] = [],
   trip: Trip = SAMPLE_TRIP,
@@ -859,6 +871,34 @@ describe('<TripWorkspacePage>', () => {
       expect(screen.queryByRole('dialog', { name: /tokyo 2026/i })).not.toBeInTheDocument()
       expect(menuButton).toHaveFocus()
     })
+  })
+
+  it('opens the Map tab without carrying an activity place card into it', async () => {
+    mockViewport(true)
+    mockWorkspace([{
+      ...SAMPLE_ACTIVITY,
+      placeId: 'google.tsukiji',
+      placeName: 'Tsukiji sushi',
+      address: 'Tsukiji, Chuo City, Tokyo',
+      lat: 35.6654,
+      lng: 139.7707,
+    }])
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+
+    const activityCard = await screen.findByRole('article', { name: /expand tsukiji sushi/i })
+    await userEvent.click(activityCard)
+    await waitFor(() => {
+      expect(googlePlacesMockState.fetchGooglePlaceById).toHaveBeenCalledWith({
+        includePhoto: true,
+        placeId: 'google.tsukiji',
+      })
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /^map$/i }))
+
+    expect(await screen.findByTestId('trip-map')).toBeInTheDocument()
+    expect(screen.queryByLabelText(/selected map place/i)).not.toBeInTheDocument()
   })
 
   it('uses a bounded mobile day navigator and a floating activity action', async () => {
@@ -2396,9 +2436,12 @@ describe('<TripWorkspacePage>', () => {
     expect(screen.getByTestId('active-map-activity')).toHaveTextContent('22')
     expect(screen.getByRole('button', { name: /^timeline$/i })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('heading', { name: /full trip timeline/i })).toBeInTheDocument()
-    expect(within(screen.getByLabelText(/selected map place/i)).getByRole('heading', {
-      name: /tokyo tower/i,
-    })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(within(screen.getByLabelText(/selected map place/i)).getByRole('heading', {
+        name: /tokyo tower/i,
+      })).toBeInTheDocument()
+    })
+    expect(googlePlacesMockState.fetchGooglePlaceNearLocation).not.toHaveBeenCalled()
   })
 
   it('lists only active mobile map days while preserving trip-day numbers and filters', async () => {
@@ -2648,7 +2691,7 @@ describe('<TripWorkspacePage>', () => {
       title: 'Tokyo Tower',
       placeId: 'google.tokyo-tower',
       placeName: 'Tokyo Tower',
-      address: '4 Chome-2-8 Shibakoen, Minato City, Tokyo',
+      address: 'Saved Tokyo Tower address',
       lat: 35.6586,
       lng: 139.7454,
       orderIndex: 0,
@@ -2669,7 +2712,7 @@ describe('<TripWorkspacePage>', () => {
       businessStatus: 'OPERATIONAL',
       currentOpeningHours: null,
       displayName: 'Tokyo Tower',
-      formattedAddress: '4 Chome-2-8 Shibakoen, Minato City, Tokyo',
+      formattedAddress: 'Enriched Google address',
       googleMapsUri: 'https://maps.google.com/?cid=tokyo-tower',
       id: 'google.tokyo-tower',
       lat: 35.6586,
@@ -2680,7 +2723,7 @@ describe('<TripWorkspacePage>', () => {
       rating: 4.5,
       regularOpeningHours: null,
       reviews: [],
-      text: 'Tokyo Tower, 4 Chome-2-8 Shibakoen, Minato City, Tokyo',
+      text: 'Tokyo Tower, Enriched Google address',
       types: ['tourist_attraction'],
       userRatingCount: 10000,
       websiteUri: null,
@@ -2734,13 +2777,18 @@ describe('<TripWorkspacePage>', () => {
     expect(within(screen.getByLabelText(/selected map place/i)).getByRole('img', {
       name: /tokyo tower/i,
     })).toHaveAttribute('src', 'https://example.com/tokyo-tower-marker.webp')
+    expect(within(screen.getByLabelText(/selected map place/i)).getByText('Enriched Google address'))
+      .toBeInTheDocument()
     expect(within(screen.getByLabelText(/selected map place/i)).getByText(/4\.5 \(10,000 reviews\)/i))
       .toBeInTheDocument()
     const selectedMapPlace = screen.getByLabelText(/selected map place/i)
     const googleMapsLink = within(selectedMapPlace).getByRole('link', {
       name: /open in google maps/i,
     })
-    expect(googleMapsLink).toHaveAttribute('href', 'https://maps.google.com/?cid=tokyo-tower')
+    expectGoogleMapsPlaceLink(googleMapsLink, {
+      placeId: 'google.tokyo-tower',
+      query: 'Saved Tokyo Tower address',
+    })
     expect(googleMapsLink).not.toHaveTextContent(/open in google maps/i)
     expect(screen.getByTestId('preview-map-place')).toHaveTextContent('none')
 
@@ -3634,7 +3682,112 @@ describe('<TripWorkspacePage>', () => {
     expect(screen.queryByLabelText(/selected map place/i)).not.toBeInTheDocument()
     expect(screen.queryByLabelText(/map search results/i)).not.toBeInTheDocument()
     expect(screen.getByTestId('place-search-value')).toHaveTextContent('')
-    expect(screen.getByRole('textbox', { name: /map place search/i })).toHaveFocus()
+    expect(screen.getByRole('textbox', { name: /map place search/i })).not.toHaveFocus()
+  })
+
+  it('keeps a saved event without a Place ID and uses its address for Maps', async () => {
+    const activity = {
+      ...SAMPLE_ACTIVITY,
+      address: 'Saved address',
+      lat: 35.7,
+      lng: 139.8,
+      placeName: 'Saved venue name',
+      title: 'Saved event title',
+    }
+    mockWorkspace([activity])
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+
+    await screen.findByTestId('trip-map')
+    await userEvent.click(screen.getByRole('button', { name: /mock activate marker/i }))
+
+    const placeCard = await screen.findByLabelText(/selected map place/i)
+    expect(googlePlacesMockState.fetchGooglePlaceNearLocation).not.toHaveBeenCalled()
+    expect(googlePlacesMockState.fetchGooglePlaceById).not.toHaveBeenCalled()
+    expect(within(placeCard).getByRole('heading', { name: /saved venue name/i })).toBeInTheDocument()
+    expect(within(placeCard).getByText('Saved address')).toBeInTheDocument()
+    expect(within(placeCard).getByRole('link', { name: /directions/i })).toHaveAttribute(
+      'href',
+      'https://www.google.com/maps/dir/?api=1&destination=35.7%2C139.8',
+    )
+    expect(within(placeCard).getByRole('link', { name: /open in google maps/i })).toHaveAttribute(
+      'href',
+      'https://www.google.com/maps/search/?api=1&query=Saved%20address',
+    )
+  })
+
+  it('uses a saved place name before coordinates when an event has no address', async () => {
+    const activity = {
+      ...SAMPLE_ACTIVITY,
+      address: null,
+      lat: 35.7,
+      lng: 139.8,
+      placeName: 'Saved venue name',
+      title: 'Saved event title',
+    }
+    mockWorkspace([activity])
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+
+    await screen.findByTestId('trip-map')
+    await userEvent.click(screen.getByRole('button', { name: /mock activate marker/i }))
+
+    const placeCard = await screen.findByLabelText(/selected map place/i)
+    expect(googlePlacesMockState.fetchGooglePlaceNearLocation).not.toHaveBeenCalled()
+    expect(within(placeCard).getByRole('heading', { name: /saved venue name/i })).toBeInTheDocument()
+    expect(within(placeCard).getByRole('link', { name: /open in google maps/i })).toHaveAttribute(
+      'href',
+      'https://www.google.com/maps/search/?api=1&query=Saved%20venue%20name',
+    )
+  })
+
+  it('uses a saved title before coordinates when an event has no address or place name', async () => {
+    const activity = {
+      ...SAMPLE_ACTIVITY,
+      address: null,
+      lat: 35.7,
+      lng: 139.8,
+      placeName: null,
+      title: 'Saved event title',
+    }
+    mockWorkspace([activity])
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+
+    await screen.findByTestId('trip-map')
+    await userEvent.click(screen.getByRole('button', { name: /mock activate marker/i }))
+
+    const placeCard = await screen.findByLabelText(/selected map place/i)
+    expect(googlePlacesMockState.fetchGooglePlaceNearLocation).not.toHaveBeenCalled()
+    expect(within(placeCard).getByRole('heading', { name: /saved event title/i })).toBeInTheDocument()
+    expect(within(placeCard).getByRole('link', { name: /open in google maps/i })).toHaveAttribute(
+      'href',
+      'https://www.google.com/maps/search/?api=1&query=Saved%20event%20title',
+    )
+  })
+
+  it('uses coordinates only when a saved event has no usable location text', async () => {
+    const activity = {
+      ...SAMPLE_ACTIVITY,
+      address: null,
+      lat: 35.7,
+      lng: 139.8,
+      placeName: null,
+      title: '   ',
+    }
+    mockWorkspace([activity])
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+
+    await screen.findByTestId('trip-map')
+    await userEvent.click(screen.getByRole('button', { name: /mock activate marker/i }))
+
+    const placeCard = await screen.findByLabelText(/selected map place/i)
+    expect(googlePlacesMockState.fetchGooglePlaceNearLocation).not.toHaveBeenCalled()
+    expect(within(placeCard).getByRole('link', { name: /open in google maps/i })).toHaveAttribute(
+      'href',
+      'https://www.google.com/maps/search/?api=1&query=35.7%2C139.8',
+    )
   })
 
   it('preserves the active mobile place details when a text search fails', async () => {
@@ -3898,6 +4051,7 @@ describe('<TripWorkspacePage>', () => {
     expect(within(screen.getByLabelText(/selected map place/i)).getByRole('heading', {
       name: /fetching place details/i,
     })).toBeInTheDocument()
+    expect(screen.getByLabelText(/selected map place/i)).toHaveAttribute('aria-busy', 'true')
     expect(screen.getByText(/fetching data/i)).toBeInTheDocument()
     await waitFor(() => {
       expect(googlePlacesMockState.fetchGooglePlaceById).toHaveBeenCalledWith({
@@ -3910,12 +4064,9 @@ describe('<TripWorkspacePage>', () => {
     expect(within(screen.getByLabelText(/selected map place/i)).queryByRole('button', {
       name: /add to trip/i,
     })).not.toBeInTheDocument()
-    expect(within(screen.getByLabelText(/selected map place/i)).getByRole('link', {
+    expect(within(screen.getByLabelText(/selected map place/i)).queryByRole('link', {
       name: /open in google maps/i,
-    })).toHaveAttribute(
-      'href',
-      'https://www.google.com/maps/search/?api=1&query=35.7%2C139.8',
-    )
+    })).not.toBeInTheDocument()
 
     resolvePlaceDetails(basicPlace)
 
@@ -3934,22 +4085,27 @@ describe('<TripWorkspacePage>', () => {
     })).toHaveAttribute('href', 'https://maps.google.com/?cid=clicked')
   })
 
-  it('drops a coordinate-only marker without resolving nearby place details', async () => {
-    mockWorkspace()
-
-    renderWorkspace('/trips/abc234def567/d/2026-05-01')
-
-    await screen.findByTestId('trip-map')
-    await userEvent.click(screen.getByRole('button', { name: /mock map location click/i }))
-
-    expect(googlePlacesMockState.fetchGooglePlaceNearLocation).not.toHaveBeenCalled()
-    expect(googlePlacesMockState.fetchGooglePlaceById).not.toHaveBeenCalled()
-    expect(screen.getByTestId('coordinate-preview-map-place')).toHaveTextContent('Selected location')
-    expect(screen.getByTestId('preview-map-place')).toHaveTextContent('none')
-    expect(screen.queryByLabelText(/selected map place/i)).not.toBeInTheDocument()
-  })
-
-  it('keeps an active place details card when a coordinate-only marker is dropped', async () => {
+  it('uses an exact place ID Google Maps URL when native details omit googleMapsUri', async () => {
+    googlePlacesMockState.fetchGooglePlaceById.mockResolvedValueOnce({
+      businessStatus: 'OPERATIONAL',
+      currentOpeningHours: null,
+      displayName: 'Clicked Place',
+      formattedAddress: 'Clicked address',
+      googleMapsUri: null,
+      id: 'google.poi-clicked',
+      lat: 35.7,
+      lng: 139.8,
+      photoUrl: null,
+      primaryType: 'tourist_attraction',
+      primaryTypeDisplayName: 'Tourist attraction',
+      rating: null,
+      regularOpeningHours: null,
+      reviews: [],
+      text: 'Clicked Place, Clicked address',
+      types: ['tourist_attraction'],
+      userRatingCount: null,
+      websiteUri: null,
+    })
     mockWorkspace()
 
     renderWorkspace('/trips/abc234def567/d/2026-05-01')
@@ -3957,25 +4113,252 @@ describe('<TripWorkspacePage>', () => {
     await screen.findByTestId('trip-map')
     await userEvent.click(screen.getByRole('button', { name: /mock map place click/i }))
 
-    await waitFor(() => {
-      expect(googlePlacesMockState.fetchGooglePlaceById).toHaveBeenCalledWith({
-        includePhoto: true,
-        placeId: 'google.poi-clicked',
-        traceId: 'test-map-place-click',
+    const mapsLink = await within(screen.getByLabelText(/selected map place/i)).findByRole('link', {
+      name: /open in google maps/i,
+    })
+    expect(mapsLink).toHaveAttribute(
+      'href',
+      'https://www.google.com/maps/search/?api=1&query=Clicked+Place&query_place_id=google.poi-clicked',
+    )
+  })
+
+  it('shows a terminal error and suppresses Add to Trip when search-result details fail', async () => {
+    googlePlacesMockState.fetchGooglePlaceTextSearch.mockResolvedValueOnce({
+      nextPageToken: null,
+      places: [{
+        businessStatus: 'OPERATIONAL',
+        currentOpeningHours: null,
+        displayName: 'Search Result Cafe',
+        formattedAddress: '100 Example Avenue',
+        googleMapsUri: 'https://maps.google.com/?cid=search-result',
+        id: 'google.search-result',
+        lat: 35.7,
+        lng: 139.8,
+        photoUrl: null,
+        primaryType: 'cafe',
+        primaryTypeDisplayName: 'Cafe',
+        rating: null,
+        regularOpeningHours: null,
+        reviews: [],
+        text: 'Search Result Cafe, 100 Example Avenue',
+        types: ['cafe'],
+        userRatingCount: null,
+        websiteUri: null,
+      }],
+    })
+    googlePlacesMockState.fetchGooglePlaceById.mockRejectedValueOnce(new Error('details failed'))
+    mockWorkspace()
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+
+    await screen.findByTestId('trip-map')
+    await userEvent.click(screen.getByRole('button', { name: /mock type ramen search/i }))
+    await userEvent.click(screen.getByRole('button', { name: /mock submit place search/i }))
+    expect(await within(screen.getByTestId('search-map-results')).findByText('Search Result Cafe'))
+      .toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /mock select search result/i }))
+
+    const detailCard = screen.getByLabelText(/selected map place/i)
+    expect(await within(detailCard).findByRole('alert')).toHaveTextContent(
+      /couldn't load details for this place/i,
+    )
+    expect(detailCard).toHaveAttribute('aria-busy', 'false')
+    expect(within(detailCard).queryByRole('button', { name: /add to trip/i })).not.toBeInTheDocument()
+    expect(within(detailCard).queryByRole('button', { name: /confirm update/i })).not.toBeInTheDocument()
+    expect(within(detailCard).getByRole('button', { name: /close place details/i })).toBeInTheDocument()
+    expect(within(detailCard).getByRole('link', { name: /open in google maps/i })).toHaveAttribute(
+      'href',
+      'https://maps.google.com/?cid=search-result',
+    )
+  })
+
+  it('clears a pending activity location update when search-result details fail', async () => {
+    const placedActivity = {
+      ...SAMPLE_ACTIVITY,
+      address: 'Saved activity address',
+      lat: 35.65,
+      lng: 139.75,
+      placeName: 'Saved activity place',
+    }
+    googlePlacesMockState.fetchGooglePlaceTextSearch.mockResolvedValueOnce({
+      nextPageToken: null,
+      places: [{
+        businessStatus: 'OPERATIONAL',
+        currentOpeningHours: null,
+        displayName: 'Replacement Cafe',
+        formattedAddress: '200 Example Avenue',
+        googleMapsUri: 'https://maps.google.com/?cid=replacement',
+        id: 'google.replacement',
+        lat: 35.71,
+        lng: 139.81,
+        photoUrl: null,
+        primaryType: 'cafe',
+        primaryTypeDisplayName: 'Cafe',
+        rating: null,
+        regularOpeningHours: null,
+        reviews: [],
+        text: 'Replacement Cafe, 200 Example Avenue',
+        types: ['cafe'],
+        userRatingCount: null,
+        websiteUri: null,
+      }],
+    })
+    googlePlacesMockState.fetchGooglePlaceById.mockRejectedValueOnce(new Error('details failed'))
+    mockWorkspace([placedActivity])
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+
+    const activityCard = (await screen.findByRole('heading', {
+      name: /tsukiji sushi/i,
+    })).closest('article')
+    expect(activityCard).not.toBeNull()
+    await userEvent.click(activityCard as HTMLElement)
+    await userEvent.click(screen.getByRole('button', { name: /change on map/i }))
+    await userEvent.click(screen.getByRole('button', { name: /mock type ramen search/i }))
+    await userEvent.click(screen.getByRole('button', { name: /mock submit place search/i }))
+    expect(await within(screen.getByTestId('search-map-results')).findByText('Replacement Cafe'))
+      .toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /mock select search result/i }))
+
+    const detailCard = screen.getByLabelText(/selected map place/i)
+    expect(await within(detailCard).findByRole('alert')).toHaveTextContent(
+      /couldn't load details for this place/i,
+    )
+    expect(within(detailCard).queryByRole('button', { name: /confirm update/i })).not.toBeInTheDocument()
+    expect(within(detailCard).queryByRole('button', { name: /add to trip/i })).not.toBeInTheDocument()
+    expect(apiMock.history.patch).toHaveLength(0)
+  })
+
+  it('shows an accessible terminal card when exact native place details fail', async () => {
+    googlePlacesMockState.fetchGooglePlaceById.mockRejectedValueOnce(new Error('details failed'))
+    mockWorkspace()
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+
+    await screen.findByTestId('trip-map')
+    await userEvent.click(screen.getByRole('button', { name: /mock map place click/i }))
+
+    const detailCard = screen.getByLabelText(/selected map place/i)
+    expect(await within(detailCard).findByRole('alert')).toHaveTextContent(
+      /couldn't load details for this place/i,
+    )
+    expect(detailCard).toHaveAttribute('aria-busy', 'false')
+    expect(within(detailCard).queryByText(/fetching data/i)).not.toBeInTheDocument()
+    expect(within(detailCard).getByRole('heading', {
+      name: /place details unavailable/i,
+    })).toBeInTheDocument()
+    expect(within(detailCard).queryByRole('button', { name: /add to trip/i })).not.toBeInTheDocument()
+    expect(within(detailCard).queryByRole('button', { name: /confirm update/i })).not.toBeInTheDocument()
+    expect(within(detailCard).getByRole('button', { name: /close place details/i })).toBeInTheDocument()
+    expect(within(detailCard).getByRole('link', {
+      name: /open in google maps/i,
+    })).toHaveAttribute(
+      'href',
+      'https://www.google.com/maps/search/?api=1&query=Place+details+unavailable&query_place_id=google.poi-clicked',
+    )
+  })
+
+  it('does not let a stale exact-place failure replace a later successful selection', async () => {
+    let rejectFirst!: (error: Error) => void
+    let resolveSecond!: (place: Record<string, unknown>) => void
+    googlePlacesMockState.fetchGooglePlaceById
+      .mockReturnValueOnce(new Promise((_resolve, reject) => {
+        rejectFirst = reject
+      }))
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveSecond = resolve
+      }))
+    mockWorkspace()
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+
+    await screen.findByTestId('trip-map')
+    await userEvent.click(screen.getByRole('button', { name: /mock map place click/i }))
+    await userEvent.click(screen.getByRole('button', { name: /mock map place click/i }))
+
+    await act(async () => {
+      resolveSecond({
+        businessStatus: 'OPERATIONAL',
+        currentOpeningHours: null,
+        displayName: 'Later Place',
+        formattedAddress: 'Later address',
+        googleMapsUri: 'https://maps.google.com/?cid=later',
+        id: 'google.poi-clicked',
+        lat: 35.7,
+        lng: 139.8,
+        photoUrl: null,
+        primaryType: 'tourist_attraction',
+        primaryTypeDisplayName: 'Tourist attraction',
+        rating: null,
+        regularOpeningHours: null,
+        reviews: [],
+        text: 'Later Place, Later address',
+        types: ['tourist_attraction'],
+        userRatingCount: null,
+        websiteUri: null,
       })
     })
-    expect(within(screen.getByLabelText(/selected map place/i)).getByRole('heading', {
-      name: /clicked place/i,
+    expect(await within(screen.getByLabelText(/selected map place/i)).findByRole('heading', {
+      name: /later place/i,
     })).toBeInTheDocument()
 
+    await act(async () => {
+      rejectFirst(new Error('stale failure'))
+    })
+    expect(within(screen.getByLabelText(/selected map place/i)).getByRole('heading', {
+      name: /later place/i,
+    })).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('resolves a coordinate-only native map tap to the nearest real place', async () => {
+    mockWorkspace()
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+
+    await screen.findByTestId('trip-map')
     await userEvent.click(screen.getByRole('button', { name: /mock map location click/i }))
 
-    expect(googlePlacesMockState.fetchGooglePlaceNearLocation).not.toHaveBeenCalled()
-    expect(googlePlacesMockState.fetchGooglePlaceById).toHaveBeenCalledTimes(1)
-    expect(screen.getByTestId('coordinate-preview-map-place')).toHaveTextContent('Selected location')
-    expect(within(screen.getByLabelText(/selected map place/i)).getByRole('heading', {
-      name: /clicked place/i,
-    })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(googlePlacesMockState.fetchGooglePlaceNearLocation).toHaveBeenCalledWith({
+        includePhoto: true,
+        options: {
+          location: { lat: 35.7, lng: 139.8 },
+          radius: 75,
+          rankPreference: 'DISTANCE',
+        },
+      })
+    })
+    expect(googlePlacesMockState.fetchGooglePlaceById).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(within(screen.getByLabelText(/selected map place/i)).getByRole('heading', {
+        name: /nearby cafe/i,
+      })).toBeInTheDocument()
+    })
+    expect(screen.getByLabelText(/selected map place/i)).toHaveAttribute('aria-busy', 'false')
+    expect(screen.getByTestId('coordinate-preview-map-place')).toHaveTextContent('none')
+    expect(within(screen.getByLabelText(/selected map place/i)).getByRole('link', {
+      name: /open in google maps/i,
+    })).toHaveAttribute('href', 'https://maps.google.com/?cid=nearby')
+  })
+
+  it('falls back to a coordinate marker only when a native map tap has no nearby place', async () => {
+    googlePlacesMockState.fetchGooglePlaceNearLocation.mockResolvedValueOnce(null)
+    mockWorkspace()
+
+    renderWorkspace('/trips/abc234def567/d/2026-05-01')
+
+    await screen.findByTestId('trip-map')
+    await userEvent.click(screen.getByRole('button', { name: /mock map location click/i }))
+
+    await waitFor(() => {
+      expect(googlePlacesMockState.fetchGooglePlaceNearLocation).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('coordinate-preview-map-place')).toHaveTextContent('Selected location')
+    })
+    expect(screen.getByTestId('preview-map-place')).toHaveTextContent('none')
+    expect(screen.queryByLabelText(/selected map place/i)).not.toBeInTheDocument()
   })
 
   it('keeps the active place details card when text search results open', async () => {

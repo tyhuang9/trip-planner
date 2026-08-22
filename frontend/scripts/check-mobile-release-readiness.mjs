@@ -8,7 +8,10 @@ const ALLOWED_GATE_STATUSES = new Set(['PASS', 'BLOCKED', 'UNVERIFIED', 'FAIL'])
 const FORBIDDEN_TRACKED_RELEASE_FILES = /(?:^|\/)(?:[^/]+\.(?:jks|keystore|p12|p8|pfx|pem|key|cer|crt|mobileprovision|provisionprofile)|keystore\.properties)$/i
 const RESULT_PATH = /^docs\/mobile\/evidence\/issue-64\/(\d{4}-\d{2}-\d{2})\/([a-z0-9]+(?:-[a-z0-9]+)*)\/results\.json$/
 const RESULT_SHAPE = /^docs\/mobile\/evidence\/issue-64\/([^/]+)\/([^/]+)\/results\.json$/
+const IOS_BETA_RESULT_PATH = /^docs\/mobile\/evidence\/issue-64-ios\/(\d{4}-\d{2}-\d{2})\/([a-z0-9]+(?:-[a-z0-9]+)*)\/results\.json$/
+const IOS_BETA_RESULT_SHAPE = /^docs\/mobile\/evidence\/issue-64-ios\/([^/]+)\/([^/]+)\/results\.json$/
 const REQUIRED_SOURCE_FILES = ['docs/mobile/auth-session-device-evidence.catalog.json', 'docs/mobile/auth-session-device-evidence.template.json', 'docs/mobile/auth-session-device-spike.md', 'docs/mobile/auth-session-transport-adr-template.md']
+const REQUIRED_IOS_BETA_SOURCE_FILES = ['docs/mobile/ios-beta-auth-session-evidence.catalog.json', 'docs/mobile/ios-beta-auth-session-device-evidence.template.json', 'docs/mobile/ios-beta-auth-session-device-spike.md', 'docs/mobile/ios-beta-auth-session-transport-adr-template.md']
 const EVIDENCE_KEYS = ['safe_reference', 'observed_result', 'network_trace_reference', 'artifact_identity_checksum', 'redaction_notes']
 const CASE_KEYS = ['case_id', 'preconditions', 'actions', 'expected_outcome', 'cleanup', 'status', 'evidence']
 const RAW_SECRET = /(?:authorization\s*[:=]\s*(?:bearer|basic)|x[-_]api[-_]key\s*[:=]|\bbearer\s+[a-z0-9._-]{20,}|\bbasic\s+[a-z0-9+/=]{12,}|\beyJ[a-z0-9_-]{10,}\.[a-z0-9_-]+\.|(?:access|refresh|guest|reset)[_-]?token\s*[:=]|verification[-_]code\s*[:=]|api[-_]?key\s*[:=]|(?:set-)?cookie\s*[:=]|password\s*[:=]\s*[^\s"']+|https?:\/\/[^\s"']+\/(?:reset|verify|verification)[^\s"']*|[?&](?:token|secret|api[-_]?key|password|code|reset[-_]?token|verification[-_]?code)=)/i
@@ -16,6 +19,18 @@ const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A
 const IMMUTABLE_DOCUMENT_HASHES = {
   'auth-session-device-spike.md': '7df8881bb4f581926fd99dc71a01ddeec80af5ff47300ad1057242c85a381a11',
   'auth-session-transport-adr-template.md': '9d8da67a404a53fa0e23b47915c1790d635493454b3d2150789c42955f8a8d81',
+  'ios-beta-auth-session-device-spike.md': '55612ea5bd075322f09080a16fa53d3eb07b92a7571013be33b70861bd7ce113',
+  'ios-beta-auth-session-transport-adr-template.md': '7cecb8ae11c25318c46a7b6bbd6588de147554cda0022651ec3d78961f27f312',
+}
+const IOS_BETA_EVIDENCE_CONTRACT = {
+  schemaVersion: 3,
+  releaseTrack: 'ios_beta',
+  copyResultsTo: 'docs/mobile/evidence/issue-64-ios/YYYY-MM-DD/<lowercase-run-id>/results.json',
+  references: {
+    catalog: 'docs/mobile/ios-beta-auth-session-evidence.catalog.json',
+    spike: 'docs/mobile/ios-beta-auth-session-device-spike.md',
+    adr: 'docs/mobile/ios-beta-auth-session-transport-adr-template.md',
+  },
 }
 
 function capture(text, pattern, label, violations) { const match = text.match(pattern); if (!match) { violations.push(`${label} is missing`); return null }; return match[1] }
@@ -30,11 +45,17 @@ function isRfc3339(value) { const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):
 
 function inspectCatalog(catalog, violations) {
   const violationCount = violations.length
-  if (!requireExactKeys(catalog, ['schema_version', 'platforms', 'contexts', 'adr'], 'device evidence catalog', violations)) return false
-  if (catalog.schema_version !== 2) violations.push('device evidence catalog schema_version must be 2')
-  if (!requireExactKeys(catalog.platforms, ['ios', 'android'], 'device evidence catalog platforms', violations)) return false
+  const isIosBeta = catalog.schema_version === IOS_BETA_EVIDENCE_CONTRACT.schemaVersion
+  const catalogKeys = isIosBeta ? ['schema_version', 'release_track', 'platforms', 'contexts', 'adr'] : ['schema_version', 'platforms', 'contexts', 'adr']
+  if (!requireExactKeys(catalog, catalogKeys, 'device evidence catalog', violations)) return false
+  if (catalog.schema_version !== 2 && !isIosBeta) violations.push('device evidence catalog schema_version must be 2 or 3')
+  if (isIosBeta && catalog.release_track !== IOS_BETA_EVIDENCE_CONTRACT.releaseTrack) violations.push('iOS beta device evidence catalog release_track is invalid')
+  const platformSpecs = isIosBeta
+    ? [['ios', 'physical_iphone', 'ios_webview_domain_configuration']]
+    : [['ios', 'physical_iphone', 'ios_webview_domain_configuration'], ['android', 'physical_android', 'android_third_party_cookie_behavior']]
+  if (!requireExactKeys(catalog.platforms, platformSpecs.map(([platform]) => platform), 'device evidence catalog platforms', violations)) return false
   if (!requireExactKeys(catalog.contexts, ['member', 'guest'], 'device evidence catalog contexts', violations)) return false
-  for (const [platform, deviceType, platformCase] of [['ios', 'physical_iphone', 'ios_webview_domain_configuration'], ['android', 'physical_android', 'android_third_party_cookie_behavior']]) {
+  for (const [platform, deviceType, platformCase] of platformSpecs) {
     if (requireExactKeys(catalog.platforms[platform], ['device_type', 'platform_case'], `catalog ${platform}`, violations) && (catalog.platforms[platform].device_type !== deviceType || catalog.platforms[platform].platform_case !== platformCase)) violations.push(`catalog ${platform} semantics are invalid`)
   }
   for (const context of ['member', 'guest']) if (requireExactKeys(catalog.contexts[context], ['cases', 'credential_lifecycle'], `catalog ${context}`, violations)) {
@@ -69,7 +90,8 @@ function inspectCase(entry, expectedId, label, contextId, options, violations) {
   const keys = expectedId === 'offline_loss_reconnect_each_session_boundary' ? [...CASE_KEYS, 'session_boundaries'] : CASE_KEYS
   if (!requireExactKeys(entry, keys, label, violations)) return
   if (entry.case_id !== expectedId) violations.push(`${label} case_id must be ${expectedId}`)
-  if (options.template ? entry.status !== 'UNEXECUTED' : entry.status !== 'PASS') violations.push(`${label} status must be PASS for a selected ADR decision`)
+  if (options.template ? entry.status !== 'UNEXECUTED' : !['PASS', 'FAIL'].includes(entry.status)) violations.push(`${label} status must be PASS or FAIL for a selected ADR decision`)
+  if (!options.template) options.completedStatuses.push(entry.status)
   for (const key of ['preconditions', 'actions', 'expected_outcome', 'cleanup']) if (options.template ? entry[key] !== 'UNEXECUTED' : typeof entry[key] !== 'string' || !entry[key].trim() || entry[key] === 'UNEXECUTED') violations.push(`${label} ${key} must be completed text`)
   inspectEvidence(entry.evidence, `${label} evidence`, { ...options, context: contextId }, violations)
   if (expectedId === 'offline_loss_reconnect_each_session_boundary') {
@@ -78,22 +100,26 @@ function inspectCase(entry, expectedId, label, contextId, options, violations) {
     exactIds(entry.session_boundaries, 'boundary', expected, `${label} session boundaries`, violations)
     for (const boundary of entry.session_boundaries) {
       if (!requireExactKeys(boundary, ['boundary', 'status', 'evidence'], `${label} boundary`, violations)) continue
-      if (options.template ? boundary.status !== 'UNEXECUTED' : boundary.status !== 'PASS') violations.push(`${label} boundary status must be PASS for a selected ADR decision`)
+      if (options.template ? boundary.status !== 'UNEXECUTED' : !['PASS', 'FAIL'].includes(boundary.status)) violations.push(`${label} boundary status must be PASS or FAIL for a selected ADR decision`)
+      if (!options.template) options.completedStatuses.push(boundary.status)
       inspectEvidence(boundary.evidence, `${label} boundary evidence`, { ...options, context: contextId }, violations)
     }
   }
 }
 
 function inspectResults(document, label, template, violations, catalog, resultInfo = {}) {
+  const contract = resultInfo.contract
   if (!template && RAW_SECRET.test(JSON.stringify(document))) violations.push(`${label} contains a raw credential or capture`)
-  const topKeys = ['schema_version', 'template_status', 'notice', 'copy_results_to', 'result_status_vocabulary', 'platforms', 'redaction_policy', 'adr_contract', 'references']
+  const topKeys = ['schema_version', 'template_status', 'notice', 'copy_results_to', 'result_status_vocabulary', 'platforms', 'redaction_policy', 'adr_contract', 'references', ...(contract ? ['release_track'] : [])]
   if (!requireExactKeys(document, topKeys, label, violations)) return
-  if (document.schema_version !== 2) { violations.push(`${label} schema_version must be 2`); return }
+  const expectedSchemaVersion = contract?.schemaVersion ?? 2
+  if (document.schema_version !== expectedSchemaVersion) { violations.push(`${label} schema_version must be ${expectedSchemaVersion}`); return }
+  if (contract && document.release_track !== contract.releaseTrack) violations.push(`${label} release_track is invalid`)
   if (template && document.template_status !== 'UNEXECUTED') violations.push('device evidence template status must remain UNEXECUTED')
   if (!template && document.template_status !== 'COMPLETED') violations.push(`${label} template_status must be COMPLETED`)
   const expectedNotice = template ? 'TEMPLATE / NOT EVIDENCE — immutable source; JSON results are the sole claim-bearing artifact.' : 'COMPLETED RESULTS / CLAIM-BEARING ARTIFACT'
   if (document.notice !== expectedNotice) violations.push(`${label} notice must exactly match its contract marker`)
-  if (document.copy_results_to !== 'docs/mobile/evidence/issue-64/YYYY-MM-DD/<lowercase-run-id>/results.json') violations.push(`${label} copy_results_to is invalid`)
+  if (document.copy_results_to !== (contract?.copyResultsTo ?? 'docs/mobile/evidence/issue-64/YYYY-MM-DD/<lowercase-run-id>/results.json')) violations.push(`${label} copy_results_to is invalid`)
   if (JSON.stringify(document.result_status_vocabulary) !== JSON.stringify(['UNEXECUTED', 'PASS', 'FAIL', 'BLOCKED', 'UNVERIFIED'])) violations.push(`${label} result status vocabulary is invalid`)
   if (!Array.isArray(document.platforms)) return violations.push(`${label} platforms must be an array`)
   const platformNames = Object.keys(catalog.platforms)
@@ -102,6 +128,7 @@ function inspectResults(document, label, template, violations, catalog, resultIn
   const platformChecksums = new Set()
   const runCommits = new Set()
   const runVersions = new Set()
+  const completedStatuses = []
   for (const platform of document.platforms) {
     const name = platform?.platform
     if (!catalog.platforms[name]) continue
@@ -144,18 +171,18 @@ function inspectResults(document, label, template, violations, catalog, resultIn
     for (const context of platform.contexts) {
       const id = context?.context_id
       if (!catalog.contexts[id] || !requireExactKeys(context, ['context_id', 'cases', 'credential_lifecycle'], `${label} ${name} ${id}`, violations)) continue
-      const options = { template, platform: name, runId: resultInfo.runId, platformChecksum: platform.metadata?.artifact_identity_checksum, usedReferences, catalog }
+      const options = { template, platform: name, runId: resultInfo.runId, platformChecksum: platform.metadata?.artifact_identity_checksum, usedReferences, catalog, completedStatuses }
       if (!Array.isArray(context.cases)) { violations.push(`${label} ${name} ${id} cases must be an array`); continue }
       exactIds(context.cases, 'case_id', catalog.contexts[id].cases, `${label} ${name} ${id} cases`, violations)
       for (const caseId of catalog.contexts[id].cases) { const entry = context.cases.find((x) => x?.case_id === caseId); if (entry) inspectCase(entry, caseId, `${label} ${name} ${id} ${caseId}`, id, options, violations) }
       if (!Array.isArray(context.credential_lifecycle)) { violations.push(`${label} ${name} ${id} lifecycle must be an array`); continue }
       exactIds(context.credential_lifecycle, 'stage_id', catalog.contexts[id].credential_lifecycle, `${label} ${name} ${id} lifecycle`, violations)
-      for (const stage of context.credential_lifecycle) { if (!requireExactKeys(stage, ['stage_id', 'status', 'evidence'], `${label} ${name} ${id} lifecycle stage`, violations)) continue; if (template ? stage.status !== 'UNEXECUTED' : stage.status !== 'PASS') violations.push(`${label} ${name} ${id} lifecycle stage status must be PASS for a selected ADR decision`); inspectEvidence(stage.evidence, `${label} ${name} ${id} lifecycle evidence`, { ...options, context: id }, violations) }
+      for (const stage of context.credential_lifecycle) { if (!requireExactKeys(stage, ['stage_id', 'status', 'evidence'], `${label} ${name} ${id} lifecycle stage`, violations)) continue; if (template ? stage.status !== 'UNEXECUTED' : !['PASS', 'FAIL'].includes(stage.status)) violations.push(`${label} ${name} ${id} lifecycle stage status must be PASS or FAIL for a selected ADR decision`); if (!template) completedStatuses.push(stage.status); inspectEvidence(stage.evidence, `${label} ${name} ${id} lifecycle evidence`, { ...options, context: id }, violations) }
     }
     if (!Array.isArray(platform.platform_cases)) { violations.push(`${label} ${name} platform_cases must be an array`); continue }
     const platformCase = catalog.platforms[name].platform_case
     exactIds(platform.platform_cases, 'case_id', [platformCase], `${label} ${name} platform cases`, violations)
-    if (platform.platform_cases[0]) inspectCase(platform.platform_cases[0], platformCase, `${label} ${name} platform case`, 'platform', { template, platform: name, runId: resultInfo.runId, platformChecksum: platform.metadata?.artifact_identity_checksum, usedReferences, catalog }, violations)
+    if (platform.platform_cases[0]) inspectCase(platform.platform_cases[0], platformCase, `${label} ${name} platform case`, 'platform', { template, platform: name, runId: resultInfo.runId, platformChecksum: platform.metadata?.artifact_identity_checksum, usedReferences, catalog, completedStatuses }, violations)
   }
   if (!template && runCommits.size !== 1) violations.push(`${label} platforms must use the same commit_or_tag`)
   if (!template && runVersions.size !== 1) violations.push(`${label} platforms must use the same app_version`)
@@ -168,9 +195,12 @@ function inspectResults(document, label, template, violations, catalog, resultIn
     } else {
       if (typeof document.adr_contract.selected_outcome !== 'string' || !catalog.adr.allowed_outcomes.includes(document.adr_contract.selected_outcome)) violations.push(`${label} ADR selected_outcome must be exactly one approved scalar`)
       if (document.adr_contract.decision_artifact_reference !== `restricted://issue-64/${resultInfo.runId}/decision`) violations.push(`${label} ADR decision_artifact_reference must match the result run`)
+      if (document.adr_contract.selected_outcome === 'cookie_only_proven' && completedStatuses.some((status) => status !== 'PASS')) violations.push(`${label} cookie_only_proven requires every executed check to PASS`)
+      if (document.adr_contract.selected_outcome === 'native_credential_transport' && !completedStatuses.includes('FAIL')) violations.push(`${label} native_credential_transport requires at least one executed FAIL`)
     }
   }
-  if (!requireExactKeys(document.references, ['catalog', 'spike', 'adr'], `${label} references`, violations) || document.references.catalog !== 'docs/mobile/auth-session-device-evidence.catalog.json' || document.references.spike !== 'docs/mobile/auth-session-device-spike.md' || document.references.adr !== 'docs/mobile/auth-session-transport-adr-template.md') violations.push(`${label} references are invalid`)
+  const expectedReferences = contract?.references ?? { catalog: 'docs/mobile/auth-session-device-evidence.catalog.json', spike: 'docs/mobile/auth-session-device-spike.md', adr: 'docs/mobile/auth-session-transport-adr-template.md' }
+  if (!requireExactKeys(document.references, ['catalog', 'spike', 'adr'], `${label} references`, violations) || Object.entries(expectedReferences).some(([key, value]) => document.references[key] !== value)) violations.push(`${label} references are invalid`)
 }
 function inspectDeviceEvidenceContract(sources, violations) {
   const catalog = parseJsonDocument(sources.authSessionEvidenceCatalog, 'auth-session-device-evidence.catalog.json', violations)
@@ -189,9 +219,31 @@ function inspectDeviceEvidenceContract(sources, violations) {
     for (const source of REQUIRED_SOURCE_FILES) if (!sources.trackedFiles.includes(source)) violations.push(`immutable issue #64 source must be tracked: ${source}`)
     for (const path of sources.trackedFiles) { const match = path.match(RESULT_PATH); const shape = path.match(RESULT_SHAPE); if (shape && (!isCalendarDate(shape[1]) || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(shape[2]))) violations.push(`tracked issue #64 evidence path has invalid date or run ID: ${path}`); else if (path.startsWith('docs/mobile/evidence/issue-64/') && !match) violations.push(`tracked issue #64 evidence path is unauthorized: ${path}`) }
     for (const path of sources.trackedFiles.filter((path) => RESULT_PATH.test(path))) if (!(path in (sources.resultCopies ?? {}))) violations.push(`tracked issue #64 result copy could not be safely read: ${path}`)
-    for (const [path, raw] of Object.entries(sources.resultCopies ?? {})) { const match = path.match(RESULT_PATH); if (!match || !sources.trackedFiles.includes(path)) { violations.push(`result copy must be tracked at an authorized path: ${path}`); continue }; const result = parseJsonDocument(raw, path, violations); if (result) inspectResults(result, path, false, violations, catalog, { date: match[1], runId: match[2] }) }
+    for (const [path, raw] of Object.entries(sources.resultCopies ?? {}).filter(([path]) => RESULT_PATH.test(path))) { const match = path.match(RESULT_PATH); if (!match || !sources.trackedFiles.includes(path)) { violations.push(`result copy must be tracked at an authorized path: ${path}`); continue }; const result = parseJsonDocument(raw, path, violations); if (result) inspectResults(result, path, false, violations, catalog, { date: match[1], runId: match[2] }) }
   } else if (Object.keys(sources.resultCopies ?? {}).length) {
     for (const path of Object.keys(sources.resultCopies)) violations.push(`result copy must be tracked at an authorized path: ${path}`)
+  }
+}
+function inspectIosBetaDeviceEvidenceContract(sources, violations) {
+  const catalog = parseJsonDocument(sources.iosBetaAuthSessionEvidenceCatalog, 'ios-beta-auth-session-evidence.catalog.json', violations)
+  if (!catalog || !inspectCatalog(catalog, violations)) return
+  const document = parseJsonDocument(sources.iosBetaAuthSessionEvidenceTemplate, 'ios-beta-auth-session-device-evidence.template.json', violations)
+  if (document) inspectResults(document, 'iOS beta device evidence template', true, violations, catalog, { contract: IOS_BETA_EVIDENCE_CONTRACT })
+  marker(sources.iosBetaAuthSessionDeviceSpike, 'issue64-ios-beta-spike-policy', { contract_version: '1', claim_bearing_artifact: 'results_json_only', immutable_template: 'true', raw_captures: 'external_restricted_only' }, violations)
+  marker(sources.iosBetaAuthSessionAdrTemplate, 'issue64-ios-beta-adr-policy', { contract_version: '1', allowed_outcomes: 'cookie_only_proven,native_credential_transport', forbidden_fallbacks: 'endpoint_only_fallback,web_storage_refresh_or_guest_token_workaround', decision_artifact: 'results_json_only' }, violations)
+  for (const [name, contents, notice] of [['ios-beta-auth-session-device-spike.md', sources.iosBetaAuthSessionDeviceSpike, '> **TEMPLATE / NOT EVIDENCE** — This runbook carries no status, result, or decision.'], ['ios-beta-auth-session-transport-adr-template.md', sources.iosBetaAuthSessionAdrTemplate, '> **TEMPLATE / NOT EVIDENCE** — This document is instruction-only and records no decision.']]) {
+    if (contents.split(notice).length !== 2) violations.push(`${name} must contain its exact immutable notice once`)
+    if (RAW_SECRET.test(contents)) violations.push(`${name} contains a raw credential`)
+    if (createHash('sha256').update(contents).digest('hex') !== IMMUTABLE_DOCUMENT_HASHES[name]) violations.push(`${name} must remain the canonical instruction-only document`)
+  }
+  if (!sources.releaseDocument.includes('ios-beta-auth-session-device-evidence.template.json')) violations.push('release-readiness must reference iOS beta issue #64 template')
+  if ((sources.trackedFiles ?? []).length) {
+    for (const source of REQUIRED_IOS_BETA_SOURCE_FILES) if (!sources.trackedFiles.includes(source)) violations.push(`immutable iOS beta issue #64 source must be tracked: ${source}`)
+    for (const path of sources.trackedFiles) { const match = path.match(IOS_BETA_RESULT_PATH); const shape = path.match(IOS_BETA_RESULT_SHAPE); if (shape && (!isCalendarDate(shape[1]) || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(shape[2]))) violations.push(`tracked iOS beta issue #64 evidence path has invalid date or run ID: ${path}`); else if (path.startsWith('docs/mobile/evidence/issue-64-ios/') && !match) violations.push(`tracked iOS beta issue #64 evidence path is unauthorized: ${path}`) }
+    for (const path of sources.trackedFiles.filter((path) => IOS_BETA_RESULT_PATH.test(path))) if (!(path in (sources.resultCopies ?? {}))) violations.push(`tracked iOS beta issue #64 result copy could not be safely read: ${path}`)
+    for (const [path, raw] of Object.entries(sources.resultCopies ?? {}).filter(([path]) => IOS_BETA_RESULT_PATH.test(path))) { const match = path.match(IOS_BETA_RESULT_PATH); if (!match || !sources.trackedFiles.includes(path)) { violations.push(`iOS beta result copy must be tracked at an authorized path: ${path}`); continue }; const result = parseJsonDocument(raw, path, violations); if (result) inspectResults(result, path, false, violations, catalog, { date: match[1], runId: match[2], contract: IOS_BETA_EVIDENCE_CONTRACT }) }
+  } else if (Object.keys(sources.resultCopies ?? {}).some((path) => IOS_BETA_RESULT_PATH.test(path))) {
+    for (const path of Object.keys(sources.resultCopies).filter((path) => IOS_BETA_RESULT_PATH.test(path))) violations.push(`iOS beta result copy must be tracked at an authorized path: ${path}`)
   }
 }
 function parseContract(document, violations) {
@@ -301,7 +353,7 @@ export function loadTrackedResultCopies(repositoryRoot, trackedFiles = []) {
   const root = realpathSync(resolve(repositoryRoot))
   const copies = {}
   const violations = []
-  for (const path of trackedFiles.filter((entry) => RESULT_PATH.test(entry))) {
+  for (const path of trackedFiles.filter((entry) => RESULT_PATH.test(entry) || IOS_BETA_RESULT_PATH.test(entry))) {
     const candidate = resolve(root, path)
     try {
       if (!lstatSync(candidate).isFile()) throw new Error('not a regular file')
@@ -337,6 +389,10 @@ export function loadMobileReleaseSources(repositoryRoot, trackedFiles = []) {
     authSessionEvidenceTemplate: read('docs/mobile/auth-session-device-evidence.template.json'),
     authSessionDeviceSpike: read('docs/mobile/auth-session-device-spike.md'),
     authSessionAdrTemplate: read('docs/mobile/auth-session-transport-adr-template.md'),
+    iosBetaAuthSessionEvidenceCatalog: read('docs/mobile/ios-beta-auth-session-evidence.catalog.json'),
+    iosBetaAuthSessionEvidenceTemplate: read('docs/mobile/ios-beta-auth-session-device-evidence.template.json'),
+    iosBetaAuthSessionDeviceSpike: read('docs/mobile/ios-beta-auth-session-device-spike.md'),
+    iosBetaAuthSessionAdrTemplate: read('docs/mobile/ios-beta-auth-session-transport-adr-template.md'),
     resultCopies: loadedResults.copies,
     sourceViolations: loadedResults.violations,
     trackedFiles,
@@ -436,12 +492,14 @@ export function inspectMobileReleaseReadiness(sources) {
 
   inspectProductionBackend(sources.nativeProductionEnvironment, violations)
   const gateRows = inspectGateTable(sources.releaseDocument, violations)
+  marker(sources.releaseDocument, 'ios-beta-release-scope', { contract_version: '1', primary_platform: 'ios', android_device_parity: 'deferred' }, violations)
   marker(sources.releaseDocument, 'issue64-release-policy', { contract_version: '2', claim_bearing_artifact: 'results_json_only' }, violations)
   for (const requiredBlockedGate of ['Authentication and guest sessions', 'Device install smoke']) {
     const row = gateRows.find(([gate]) => gate === requiredBlockedGate)
     if (row && row[1] !== 'BLOCKED') violations.push(`${requiredBlockedGate} must remain BLOCKED until physical-device evidence is reviewed`)
   }
   inspectDeviceEvidenceContract(sources, violations)
+  inspectIosBetaDeviceEvidenceContract(sources, violations)
 
   for (const path of sources.trackedFiles ?? []) {
     if (FORBIDDEN_TRACKED_RELEASE_FILES.test(path)) {

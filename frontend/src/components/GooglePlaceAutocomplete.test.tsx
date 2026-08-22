@@ -12,6 +12,7 @@ import {
   buildGooglePlacesNearbySearchRequest,
   buildGooglePlacesTextSearchRequest,
   fetchGooglePlaceNearLocation,
+  fetchGooglePlaceDetails,
   fetchGooglePlaceSelection,
   fetchGooglePlaceTextSearch,
   fetchGooglePlaceSuggestions,
@@ -217,6 +218,8 @@ describe('<GooglePlaceAutocomplete>', () => {
     })
     expect(GOOGLE_PLACE_DETAILS_FIELD_MASK).not.toContain('reviews')
     expect(GOOGLE_PLACE_DETAILS_WITHOUT_PHOTOS_FIELD_MASK).not.toContain('reviews')
+    expect(GOOGLE_PLACE_DETAILS_FIELD_MASK).toContain('googleMapsUri')
+    expect(GOOGLE_PLACE_DETAILS_WITHOUT_PHOTOS_FIELD_MASK).toContain('googleMapsUri')
     expect(placeDetailsCall()).toBeDefined()
 
     const photoCall = apiMock.history.post.find((request) => request.url === '/places/photo-url')
@@ -447,6 +450,80 @@ describe('Google place normalization', () => {
     const detailsCall = placeDetailsCall()
     expect(detailsCall?.params).toEqual({ sessionToken: 'session-one' })
     expect(apiMock.history.post.filter((request) => request.url === '/places/photo-url')).toHaveLength(0)
+  })
+
+  it('retries legacy backends once without googleMapsUri', async () => {
+    const requestedFieldMask = `${GOOGLE_PLACE_DETAILS_FIELD_MASK},reviews`
+    const fallbackFieldMask = requestedFieldMask
+      .split(',')
+      .filter((field) => field !== 'googleMapsUri')
+      .join(',')
+    apiMock.resetHandlers()
+    apiMock
+      .onGet('/places/google.tokyo-tower/details')
+      .replyOnce(400, { error: 'invalid_place_detail_fields' })
+      .onGet('/places/google.tokyo-tower/details')
+      .replyOnce(200, {
+        placeId: 'google.tokyo-tower',
+        fieldMask: fallbackFieldMask,
+        source: 'google',
+        stale: false,
+        details: tokyoTowerDetails,
+      })
+
+    await expect(fetchGooglePlaceDetails({
+      fields: 'reviews',
+      includePhoto: true,
+      placeId: 'google.tokyo-tower',
+      sessionToken: 'legacy-session',
+      traceId: 'legacy-trace',
+    })).resolves.toMatchObject({ displayName: { text: 'Tokyo Tower' } })
+
+    const calls = apiMock.history.get.filter((request) =>
+      request.url === '/places/google.tokyo-tower/details')
+    expect(calls).toHaveLength(2)
+    expect(calls[0]?.params).toEqual({
+      clientTraceId: 'legacy-trace',
+      fields: requestedFieldMask,
+      sessionToken: 'legacy-session',
+    })
+    expect(calls[1]?.params).toEqual({
+      clientTraceId: 'legacy-trace',
+      fields: fallbackFieldMask,
+      sessionToken: 'legacy-session',
+    })
+  })
+
+  it('does not retry place detail failures with another backend slug', async () => {
+    apiMock.resetHandlers()
+    apiMock
+      .onGet('/places/google.tokyo-tower/details')
+      .reply(400, { error: 'malformed_request' })
+
+    await expect(fetchGooglePlaceDetails({
+      fields: 'reviews',
+      placeId: 'google.tokyo-tower',
+    })).rejects.toBeDefined()
+
+    expect(apiMock.history.get.filter((request) =>
+      request.url === '/places/google.tokyo-tower/details')).toHaveLength(1)
+  })
+
+  it('surfaces failure after the single legacy field retry fails', async () => {
+    apiMock.resetHandlers()
+    apiMock
+      .onGet('/places/google.tokyo-tower/details')
+      .replyOnce(400, { error: 'invalid_place_detail_fields' })
+      .onGet('/places/google.tokyo-tower/details')
+      .replyOnce(503, { error: 'place_details_unavailable' })
+
+    await expect(fetchGooglePlaceDetails({
+      fields: 'reviews',
+      placeId: 'google.tokyo-tower',
+    })).rejects.toBeDefined()
+
+    expect(apiMock.history.get.filter((request) =>
+      request.url === '/places/google.tokyo-tower/details')).toHaveLength(2)
   })
 
   it('deduplicates simultaneous backend place detail requests for the same field mask', async () => {

@@ -9,8 +9,18 @@ import { assertMobileReleaseReadiness, inspectMobileReleaseReadiness, loadMobile
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const sources = () => loadMobileReleaseSources(root)
 const messages = (candidate) => inspectMobileReleaseReadiness(candidate).join('\n')
-const sourceFiles = ['docs/mobile/auth-session-device-evidence.catalog.json', 'docs/mobile/auth-session-device-evidence.template.json', 'docs/mobile/auth-session-device-spike.md', 'docs/mobile/auth-session-transport-adr-template.md']
+const sourceFiles = [
+  'docs/mobile/auth-session-device-evidence.catalog.json',
+  'docs/mobile/auth-session-device-evidence.template.json',
+  'docs/mobile/auth-session-device-spike.md',
+  'docs/mobile/auth-session-transport-adr-template.md',
+  'docs/mobile/ios-beta-auth-session-evidence.catalog.json',
+  'docs/mobile/ios-beta-auth-session-device-evidence.template.json',
+  'docs/mobile/ios-beta-auth-session-device-spike.md',
+  'docs/mobile/ios-beta-auth-session-transport-adr-template.md',
+]
 const resultPath = 'docs/mobile/evidence/issue-64/2026-07-29/safe-run-1/results.json'
+const iosBetaResultPath = 'docs/mobile/evidence/issue-64-ios/2026-07-29/ios-safe-run-1/results.json'
 
 function completed() {
   const value = JSON.parse(sources().authSessionEvidenceTemplate)
@@ -53,9 +63,48 @@ function trackedAt(runId, result = completed(), date = '2026-07-29') {
   return candidate
 }
 
+function iosBetaCompleted() {
+  const result = JSON.parse(JSON.stringify(completed()).replaceAll('safe-run-1', 'ios-safe-run-1'))
+  return {
+    ...result,
+    schema_version: 3,
+    release_track: 'ios_beta',
+    copy_results_to: 'docs/mobile/evidence/issue-64-ios/YYYY-MM-DD/<lowercase-run-id>/results.json',
+    platforms: [result.platforms.find((platform) => platform.platform === 'ios')],
+    references: {
+      catalog: 'docs/mobile/ios-beta-auth-session-evidence.catalog.json',
+      spike: 'docs/mobile/ios-beta-auth-session-device-spike.md',
+      adr: 'docs/mobile/ios-beta-auth-session-transport-adr-template.md',
+    },
+  }
+}
+
+function trackedIosBeta(result = iosBetaCompleted()) {
+  const candidate = sources()
+  candidate.trackedFiles = [...sourceFiles, iosBetaResultPath]
+  candidate.resultCopies = { [iosBetaResultPath]: JSON.stringify(result) }
+  return candidate
+}
+
 test('accepts source contract and safe completed result', () => {
   assert.deepEqual(inspectMobileReleaseReadiness(sources()), [])
   assert.deepEqual(inspectMobileReleaseReadiness(tracked()), [])
+})
+
+test('accepts an iOS-only beta result and rejects cross-platform or legacy drift', () => {
+  assert.deepEqual(inspectMobileReleaseReadiness(trackedIosBeta()), [])
+  const crossPlatform = iosBetaCompleted()
+  crossPlatform.platforms.push(completed().platforms.find((platform) => platform.platform === 'android'))
+  assert.match(messages(trackedIosBeta(crossPlatform)), /platforms must contain exactly: ios/)
+  const legacySchema = iosBetaCompleted()
+  legacySchema.schema_version = 2
+  assert.match(messages(trackedIosBeta(legacySchema)), /schema_version must be 3/)
+})
+
+test('rejects an untracked iOS beta result copy', () => {
+  const candidate = sources()
+  candidate.resultCopies = { [iosBetaResultPath]: JSON.stringify(iosBetaCompleted()) }
+  assert.match(messages(candidate), /iOS beta result copy must be tracked at an authorized path/)
 })
 
 test('rejects native identifier and version drift', () => {
@@ -100,6 +149,12 @@ test('keeps both issue 64 release gates blocked', () => {
     candidate.releaseDocument = candidate.releaseDocument.replace(`| ${gate} | BLOCKED |`, `| ${gate} | PASS |`)
     assert.match(messages(candidate), new RegExp(`${gate} must remain BLOCKED`))
   }
+})
+
+test('rejects iOS beta scope-marker drift', () => {
+  const candidate = sources()
+  candidate.releaseDocument = candidate.releaseDocument.replace('primary_platform=ios', 'primary_platform=android')
+  assert.match(messages(candidate), /ios-beta-release-scope marker primary_platform must equal ios/)
 })
 
 test('rejects missing iOS and Android platform entries', () => {
@@ -260,23 +315,38 @@ test('unrelated release violations do not suppress device-contract violations', 
 })
 
 test('rejects an all-FAIL completed result with cookie-only selected', () => {
-  const result = completed(); const fail = (value) => { if (Array.isArray(value)) value.forEach(fail); else if (value && typeof value === 'object') { for (const [key, child] of Object.entries(value)) { if (key === 'status') value[key] = 'FAIL'; else fail(child) } } }; fail(result.platforms); assert.match(messages(tracked(result)), /must be PASS for a selected ADR decision/)
+  const result = completed(); const fail = (value) => { if (Array.isArray(value)) value.forEach(fail); else if (value && typeof value === 'object') { for (const [key, child] of Object.entries(value)) { if (key === 'status') value[key] = 'FAIL'; else fail(child) } } }; fail(result.platforms); assert.match(messages(tracked(result)), /cookie_only_proven requires every executed check to PASS/)
 })
 
-test('rejects a non-PASS required case', () => {
-  const result = completed(); result.platforms[0].contexts[0].cases[0].status = 'BLOCKED'; assert.match(messages(tracked(result)), /status must be PASS/)
+test('rejects incomplete evidence statuses', () => {
+  const result = completed(); result.platforms[0].contexts[0].cases[0].status = 'BLOCKED'; assert.match(messages(tracked(result)), /status must be PASS or FAIL/)
 })
 
-test('rejects a non-PASS offline boundary', () => {
-  const result = completed(); result.platforms[0].contexts[0].cases.find((x) => x.session_boundaries).session_boundaries[0].status = 'UNVERIFIED'; assert.match(messages(tracked(result)), /boundary status must be PASS/)
+test('rejects incomplete offline-boundary evidence', () => {
+  const result = completed(); result.platforms[0].contexts[0].cases.find((x) => x.session_boundaries).session_boundaries[0].status = 'UNVERIFIED'; assert.match(messages(tracked(result)), /boundary status must be PASS or FAIL/)
 })
 
-test('rejects a non-PASS credential lifecycle stage', () => {
-  const result = completed(); result.platforms[1].contexts[1].credential_lifecycle[0].status = 'FAIL'; assert.match(messages(tracked(result)), /lifecycle stage status must be PASS/)
+test('requires a failure before selecting native credential transport', () => {
+  const result = completed(); result.adr_contract.selected_outcome = 'native_credential_transport'; assert.match(messages(tracked(result)), /requires at least one executed FAIL/)
+  result.platforms[1].contexts[1].credential_lifecycle[0].status = 'FAIL'; assert.deepEqual(inspectMobileReleaseReadiness(tracked(result)), [])
 })
 
-test('rejects a non-PASS platform case while accepting the all-PASS control', () => {
-  assert.deepEqual(inspectMobileReleaseReadiness(tracked()), []); const result = completed(); result.platforms[1].platform_cases[0].status = 'BLOCKED'; assert.match(messages(tracked(result)), /platform case status must be PASS/)
+test('accepts native credential transport for each completed auth evidence failure shape', () => {
+  const markFailures = [
+    (result) => { result.platforms[0].contexts[0].cases[0].status = 'FAIL' },
+    (result) => { result.platforms[0].contexts[0].cases.find((entry) => entry.session_boundaries).session_boundaries[0].status = 'FAIL' },
+    (result) => { result.platforms[1].platform_cases[0].status = 'FAIL' },
+  ]
+  for (const markFailure of markFailures) {
+    const result = completed()
+    result.adr_contract.selected_outcome = 'native_credential_transport'
+    markFailure(result)
+    assert.deepEqual(inspectMobileReleaseReadiness(tracked(result)), [])
+  }
+})
+
+test('requires all checks to pass before selecting cookie-only transport', () => {
+  assert.deepEqual(inspectMobileReleaseReadiness(tracked()), []); const result = completed(); result.platforms[1].platform_cases[0].status = 'FAIL'; assert.match(messages(tracked(result)), /cookie_only_proven requires every executed check to PASS/)
 })
 
 test('rejects reset_token keyed values', () => {

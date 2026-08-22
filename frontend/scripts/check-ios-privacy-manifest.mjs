@@ -10,7 +10,7 @@ const FILE_REF = '7B31F0F7A1B2C3D4E5F60708'
 const BUILD_FILE = '7B31F0F8A1B2C3D4E5F60708'
 const RESOURCES_PHASE = '504EC3021FED79650016851F'
 const APP_TARGET = '504EC3031FED79650016851F'
-const PRIVACY_GATE_ROW = '| Privacy and store metadata | BLOCKED | Unassigned | App-owned manifest source contract passes, but Xcode archive privacy report + App Store Connect reconciliation, vendor manifests, disclosures, review data, and screenshots are not recorded |'
+const PRIVACY_GATE_ROW = '| Privacy and store metadata | BLOCKED | Unassigned | App-owned manifest source contract passes, but Xcode archive privacy report, App Store Connect reconciliation, disclosures, review data, and screenshots are not recorded |'
 const XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8"?>'
 const PLIST_DOCTYPE = '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
 const DATA_TYPES = [
