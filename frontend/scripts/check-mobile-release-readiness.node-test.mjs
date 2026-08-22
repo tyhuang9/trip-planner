@@ -127,6 +127,27 @@ test('aggregate mobile preflight rejects an invalid tracked iOS beta GO result',
   assert.match(messages(candidate), /iOS beta GO requires every check to PASS/)
 })
 
+test('aggregate mobile preflight rejects standalone provider tokens without echoing them', () => {
+  const alphabeticPayload = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  const providerTokens = [
+    ['ghp_', alphabeticPayload, 'abcdef'].join(''),
+    ['glpat-', alphabeticPayload].join(''),
+    ['xoxb-', '1234567890-abcdefghijklmnop'].join(''),
+    ['sk_', 'live_', alphabeticPayload].join(''),
+    ['AK', 'IA', 'IOSFODNN7EXAMPLE'].join(''),
+  ]
+  for (const providerToken of providerTokens) {
+    const candidate = sources()
+    const result = iosBetaReleaseCompleted()
+    result.checks[0].summary = `Reviewed ${providerToken} in restricted evidence.`
+    candidate.trackedFiles = [...sourceFiles, iosBetaReleaseResultPath]
+    candidate.resultCopies = { [iosBetaReleaseResultPath]: JSON.stringify(result) }
+    const output = messages(candidate)
+    assert.match(output, /raw credential material, capture, or artifact data/)
+    assert.doesNotMatch(output, new RegExp(providerToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  }
+})
+
 test('rejects an untracked iOS beta result copy', () => {
   const candidate = sources()
   candidate.resultCopies = { [iosBetaResultPath]: JSON.stringify(iosBetaCompleted()) }

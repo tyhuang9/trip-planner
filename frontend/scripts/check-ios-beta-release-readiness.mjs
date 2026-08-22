@@ -16,6 +16,7 @@ const CHECK_IDS = [
   'rollback_monitoring_and_escalation',
 ]
 const RAW_OR_ARTIFACT_TEXT = /(?:authorization\s*[:=]|\bbearer\s+[a-z0-9._-]{12,}|\bbasic\s+[a-z0-9+/=]{12,}|\beyJ[a-z0-9_-]{10,}\.|(?:password|passphrase|cookie|token|api[_-]?key|private[_-]?key|client[_-]?secret|secret[_-]?access[_-]?key)\s*[:=]|-----BEGIN [A-Z0-9 -]*(?:PRIVATE KEY|CERTIFICATE(?: REQUEST)?)(?: BLOCK)?-----|https?:\/\/[^\s"']+\/(?:reset|verify|verification)[^\s"']*|\.xcarchive\b|\.ipa\b|\.(?:jks|keystore|p12|p8|pfx|pem|key|mobileprovision|png|jpe?g|mov|mp4)\b)/i
+const PROVIDER_TOKEN_TEXT = /(?<![A-Za-z0-9_-])(?:gh[pousr]_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|sk_(?:live|test)_[A-Za-z0-9]{16,}|(?:AKIA|ASIA)[A-Z0-9]{16})(?![A-Za-z0-9_-])/
 const SENSITIVE_FIELDS = new Set([
   'authorization',
   'password',
@@ -61,7 +62,7 @@ function normalizedFieldName(value) {
 }
 
 function containsRawSecretOrArtifact(value) {
-  if (typeof value === 'string') return RAW_OR_ARTIFACT_TEXT.test(value)
+  if (typeof value === 'string') return RAW_OR_ARTIFACT_TEXT.test(value) || PROVIDER_TOKEN_TEXT.test(value)
   if (Array.isArray(value)) return value.some(containsRawSecretOrArtifact)
   if (!value || typeof value !== 'object') return false
   return Object.entries(value).some(([key, child]) => (

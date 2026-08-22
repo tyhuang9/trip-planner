@@ -77,6 +77,51 @@ test('rejects credential-bearing fields and encoded credential material without 
   }
 })
 
+test('rejects standalone provider token shapes without echoing them', async () => {
+  const alphabeticPayload = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  const githubPayload = `${alphabeticPayload}abcdef`
+  const providerTokens = [
+    ...['p', 'o', 'u', 's', 'r'].map((kind) => `gh${kind}_${githubPayload}`),
+    ['glpat-', alphabeticPayload].join(''),
+    ...['b', 'a', 'p', 'r', 's'].map((kind) => `xox${kind}-1234567890-abcdefghijklmnop`),
+    ['sk_', 'live_', alphabeticPayload].join(''),
+    ['sk_', 'test_', alphabeticPayload].join(''),
+    ['AK', 'IA', 'IOSFODNN7EXAMPLE'].join(''),
+    ['AS', 'IA', 'IOSFODNN7EXAMPLE'].join(''),
+  ]
+  for (const providerToken of providerTokens) {
+    const value = await contract()
+    const path = 'docs/mobile/evidence/ios-beta-release-readiness/2026-08-03/beta-run/results.json'
+    const result = JSON.parse(completed())
+    result.checks[0].summary = `Reviewed ${providerToken} in restricted evidence.`
+    value.trackedFiles = [path]
+    value.resultCopies = { [path]: JSON.stringify(result) }
+    const output = inspectIosBetaReleaseReadiness(value).join('\n')
+    assert.match(output, /raw credential material, capture, or artifact data/)
+    assert.doesNotMatch(output, new RegExp(providerToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  }
+})
+
+test('allows provider prefix prose and token-like substrings inside ordinary identifiers', async () => {
+  const embeddedGithubIdentifier = ['build_ghp_', 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef', '_reference'].join('')
+  const embeddedAwsIdentifier = ['fixture_AK', 'IAIOSFODNN7EXAMPLE_reference'].join('')
+  const summaries = [
+    'The ghp_, glpat-, xoxb-, and sk_test_ prefixes are prohibited here.',
+    'The AWS access-key prefixes are AKIA and ASIA.',
+    `Build identifier ${embeddedGithubIdentifier} was already scrubbed.`,
+    `Fixture identifier ${embeddedAwsIdentifier} is not a standalone credential.`,
+  ]
+  for (const summary of summaries) {
+    const value = await contract()
+    const path = 'docs/mobile/evidence/ios-beta-release-readiness/2026-08-03/beta-run/results.json'
+    const result = JSON.parse(completed())
+    result.checks[0].summary = summary
+    value.trackedFiles = [path]
+    value.resultCopies = { [path]: JSON.stringify(result) }
+    assert.deepEqual(inspectIosBetaReleaseReadiness(value), [])
+  }
+})
+
 test('rejects dot-segment and non-canonical restricted evidence references', async () => {
   const references = [
     'restricted://ios-beta-release-readiness/beta-run/check/../../outside',
