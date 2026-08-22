@@ -88,7 +88,7 @@ function restrictedReference(value, runId, label, violations) {
     parsed = new URL(value)
   } catch {
     violations.push(`${label} must be a scoped restricted evidence reference`)
-    return
+    return false
   }
   const suffix = typeof value === 'string' && value.startsWith(prefix) ? value.slice(prefix.length) : ''
   const segments = suffix.split('/')
@@ -104,6 +104,7 @@ function restrictedReference(value, runId, label, violations) {
     && segments.length > 0
     && segments.every((segment) => /^[a-z0-9][a-z0-9._-]*$/.test(segment) && segment !== '.' && segment !== '..')
   if (!valid) violations.push(`${label} must be a scoped restricted evidence reference`)
+  return valid
 }
 
 function validate(document, { template, runId }, violations) {
@@ -126,6 +127,7 @@ function validate(document, { template, runId }, violations) {
     const value = document.release_roles[role]
     if (template ? value !== 'UNEXECUTED' : typeof value !== 'string' || !value.trim() || value === 'UNEXECUTED') violations.push(`iOS beta release role ${role} is invalid`)
   }
+  const usedReferences = new Set()
   if (!Array.isArray(document.checks) || document.checks.length !== CHECK_IDS.length) violations.push('iOS beta checks must contain the complete ordered checklist')
   else for (const [index, check] of document.checks.entries()) {
     const expectedId = CHECK_IDS[index]
@@ -136,7 +138,11 @@ function validate(document, { template, runId }, violations) {
       for (const key of ['status', 'restricted_evidence_reference', 'summary']) if (check[key] !== 'UNEXECUTED') violations.push(`${label} ${key} must remain unexecuted`)
     } else {
       if (!['PASS', 'FAIL', 'BLOCKED', 'UNVERIFIED'].includes(check.status)) violations.push(`${label} has invalid completed status`)
-      restrictedReference(check.restricted_evidence_reference, runId, label, violations)
+      const validReference = restrictedReference(check.restricted_evidence_reference, runId, label, violations)
+      if (validReference) {
+        if (usedReferences.has(check.restricted_evidence_reference)) violations.push(`${label} restricted_evidence_reference must not reuse an evidence reference`)
+        else usedReferences.add(check.restricted_evidence_reference)
+      }
       if (typeof check.summary !== 'string' || !check.summary.trim() || check.summary === 'UNEXECUTED') violations.push(`${label} requires a summary`)
     }
   }

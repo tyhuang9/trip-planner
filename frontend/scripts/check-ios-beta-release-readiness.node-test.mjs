@@ -4,9 +4,10 @@ import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { assertIosBetaReleaseReadiness, inspectIosBetaReleaseReadiness, loadIosBetaReleaseReadinessResultCopies } from './check-ios-beta-release-readiness.mjs'
 
-const root = resolve(import.meta.dirname, '../..')
+const root = resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const read = (path) => readFile(resolve(root, path), 'utf8')
 
 async function contract() {
@@ -44,6 +45,28 @@ test('accepts a complete GO only when every required check is PASS', async () =>
   rejected.checks[0].status = 'BLOCKED'
   value.resultCopies = { [path]: JSON.stringify(rejected) }
   assert.ok(inspectIosBetaReleaseReadiness(value).some((entry) => /GO requires every check/.test(entry)))
+})
+
+test('rejects duplicate valid restricted evidence references without echoing them', async () => {
+  const value = await contract()
+  const path = 'docs/mobile/evidence/ios-beta-release-readiness/2026-08-03/beta-run/results.json'
+  const secretSegment = ['glpat-', 'abcdefghijklmnopqrst'].join('')
+  const duplicateReference = `restricted://ios-beta-release-readiness/beta-run/${secretSegment}`
+  const result = JSON.parse(completed())
+  result.checks[0].restricted_evidence_reference = duplicateReference
+  result.checks[1].restricted_evidence_reference = duplicateReference
+  value.trackedFiles = [path]
+  value.resultCopies = { [path]: JSON.stringify(result) }
+  const output = inspectIosBetaReleaseReadiness(value).join('\n')
+  assert.match(output, /iOS beta check 2 \(map_renderer_and_restricted_key\) restricted_evidence_reference must not reuse an evidence reference/)
+  assert.doesNotMatch(output, new RegExp(secretSegment))
+
+  result.checks[0].restricted_evidence_reference = 'invalid-reference'
+  result.checks[1].restricted_evidence_reference = 'invalid-reference'
+  value.resultCopies = { [path]: JSON.stringify(result) }
+  const invalidOutput = inspectIosBetaReleaseReadiness(value).join('\n')
+  assert.match(invalidOutput, /must be a scoped restricted evidence reference/)
+  assert.doesNotMatch(invalidOutput, /must not reuse an evidence reference/)
 })
 
 test('rejects untracked results, raw captures, and source-template claims', async () => {

@@ -27,7 +27,7 @@ raw device/network captures.
 
 Run the latest signed build and immediately preceding iOS build against the
 current staging backend using separate disposable member and guest data. A
-failed, blocked, or unverified check is `NO_GO`; do not close #64, #66, #67, or
-#68 or claim an iOS beta until every required check has a reviewed `PASS`.
+failed, blocked, or unverified check is `NO_GO`; do not close #64, #66, #67,
+or #68 or claim an iOS beta until every required check has a reviewed `PASS`.
 Android source, build, and CI compatibility remain supported, but Android
 physical-device parity is explicitly deferred for this iOS-first beta cycle.

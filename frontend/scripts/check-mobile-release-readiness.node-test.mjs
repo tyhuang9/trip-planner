@@ -127,6 +127,20 @@ test('aggregate mobile preflight rejects an invalid tracked iOS beta GO result',
   assert.match(messages(candidate), /iOS beta GO requires every check to PASS/)
 })
 
+test('aggregate mobile preflight rejects duplicate restricted evidence references without echoing them', () => {
+  const secretSegment = ['glpat-', 'abcdefghijklmnopqrst'].join('')
+  const duplicateReference = `restricted://ios-beta-release-readiness/beta-run/${secretSegment}`
+  const candidate = sources()
+  const result = iosBetaReleaseCompleted()
+  result.checks[0].restricted_evidence_reference = duplicateReference
+  result.checks[1].restricted_evidence_reference = duplicateReference
+  candidate.trackedFiles = [...sourceFiles, iosBetaReleaseResultPath]
+  candidate.resultCopies = { [iosBetaReleaseResultPath]: JSON.stringify(result) }
+  const output = messages(candidate)
+  assert.match(output, /iOS beta check 2 \(map_renderer_and_restricted_key\) restricted_evidence_reference must not reuse an evidence reference/)
+  assert.doesNotMatch(output, new RegExp(secretSegment))
+})
+
 test('aggregate mobile preflight rejects standalone provider tokens without echoing them', () => {
   const alphabeticPayload = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
   const opaqueLegacyGithubToken = ['ghp_', 'A'.repeat(20), '_', 'B'.repeat(20)].join('')
