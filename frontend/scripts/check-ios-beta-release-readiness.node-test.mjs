@@ -80,8 +80,12 @@ test('rejects credential-bearing fields and encoded credential material without 
 test('rejects standalone provider token shapes without echoing them', async () => {
   const alphabeticPayload = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
   const githubPayload = `${alphabeticPayload}abcdef`
+  const fineGrainedGithubPat = ['github', '_pat_', 'A'.repeat(22), '_', 'B'.repeat(59)].join('')
+  const statelessGithubAppToken = ['ghs_', '123456', '_', 'headerABC', '.', 'payload-with_url', '.', 'signatureABC'].join('')
   const providerTokens = [
     ...['p', 'o', 'u', 's', 'r'].map((kind) => `gh${kind}_${githubPayload}`),
+    fineGrainedGithubPat,
+    statelessGithubAppToken,
     ['glpat-', alphabeticPayload].join(''),
     ...['b', 'a', 'p', 'r', 's'].map((kind) => `xox${kind}-1234567890-abcdefghijklmnop`),
     ['sk_', 'live_', alphabeticPayload].join(''),
@@ -104,11 +108,15 @@ test('rejects standalone provider token shapes without echoing them', async () =
 
 test('allows provider prefix prose and token-like substrings inside ordinary identifiers', async () => {
   const embeddedGithubIdentifier = ['build_ghp_', 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef', '_reference'].join('')
+  const embeddedFineGrainedIdentifier = ['build_', 'github_pat_', 'A'.repeat(22), '_', 'B'.repeat(59), '_reference'].join('')
+  const embeddedStatelessIdentifier = ['build_ghs_', '123456_headerABC.payload-with_url.signatureABC', '_reference'].join('')
   const embeddedAwsIdentifier = ['fixture_AK', 'IAIOSFODNN7EXAMPLE_reference'].join('')
   const summaries = [
-    'The ghp_, glpat-, xoxb-, and sk_test_ prefixes are prohibited here.',
+    'The ghp_, ghs_, github_pat_, glpat-, xoxb-, and sk_test_ prefixes are prohibited here.',
     'The AWS access-key prefixes are AKIA and ASIA.',
     `Build identifier ${embeddedGithubIdentifier} was already scrubbed.`,
+    `Build identifier ${embeddedFineGrainedIdentifier} was already scrubbed.`,
+    `Build identifier ${embeddedStatelessIdentifier} was already scrubbed.`,
     `Fixture identifier ${embeddedAwsIdentifier} is not a standalone credential.`,
   ]
   for (const summary of summaries) {
@@ -120,6 +128,40 @@ test('allows provider prefix prose and token-like substrings inside ordinary ide
     value.resultCopies = { [path]: JSON.stringify(result) }
     assert.deepEqual(inspectIosBetaReleaseReadiness(value), [])
   }
+})
+
+test('never echoes a secret-shaped check_id through secondary violations', async () => {
+  const secretCheckId = ['github', '_pat_', 'C'.repeat(22), '_', 'D'.repeat(59)].join('')
+  const value = await contract()
+  const path = 'docs/mobile/evidence/ios-beta-release-readiness/2026-08-03/beta-run/results.json'
+  const unauthorizedPath = `docs/mobile/evidence/ios-beta-release-readiness/${secretCheckId}/results.json`
+  const result = JSON.parse(completed())
+  result.checks[0] = {
+    check_id: secretCheckId,
+    status: 'INVALID',
+    restricted_evidence_reference: 'invalid-reference',
+    summary: '',
+  }
+  value.trackedFiles = [path, unauthorizedPath]
+  value.resultCopies = { [path]: JSON.stringify(result), [unauthorizedPath]: '{}' }
+  const output = inspectIosBetaReleaseReadiness(value).join('\n')
+  assert.match(output, /iOS beta check 1 \(auth_device_matrix_and_adr\) must use its expected check_id/)
+  assert.match(output, /has invalid completed status/)
+  assert.match(output, /must be a scoped restricted evidence reference/)
+  assert.match(output, /requires a summary/)
+  assert.match(output, /iOS beta result copy 2 must be tracked at an authorized dated path/)
+  assert.match(output, /tracked iOS beta evidence path is unauthorized \(position 2\)/)
+  assert.doesNotMatch(output, new RegExp(secretCheckId))
+})
+
+test('uses a positional parse label instead of echoing a result path', async () => {
+  const value = await contract()
+  const path = 'docs/mobile/evidence/ios-beta-release-readiness/2026-08-03/parse-label-run/results.json'
+  value.trackedFiles = [path]
+  value.resultCopies = { [path]: '{ invalid json' }
+  const output = inspectIosBetaReleaseReadiness(value).join('\n')
+  assert.match(output, /iOS beta result copy 1 must be valid JSON/)
+  assert.doesNotMatch(output, /docs\/mobile\/evidence/)
 })
 
 test('rejects dot-segment and non-canonical restricted evidence references', async () => {

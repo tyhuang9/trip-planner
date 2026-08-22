@@ -129,8 +129,12 @@ test('aggregate mobile preflight rejects an invalid tracked iOS beta GO result',
 
 test('aggregate mobile preflight rejects standalone provider tokens without echoing them', () => {
   const alphabeticPayload = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  const fineGrainedGithubPat = ['github', '_pat_', 'A'.repeat(22), '_', 'B'.repeat(59)].join('')
+  const statelessGithubAppToken = ['ghs_', '123456', '_', 'headerABC', '.', 'payload-with_url', '.', 'signatureABC'].join('')
   const providerTokens = [
     ['ghp_', alphabeticPayload, 'abcdef'].join(''),
+    fineGrainedGithubPat,
+    statelessGithubAppToken,
     ['glpat-', alphabeticPayload].join(''),
     ['xoxb-', '1234567890-abcdefghijklmnop'].join(''),
     ['sk_', 'live_', alphabeticPayload].join(''),
@@ -146,6 +150,28 @@ test('aggregate mobile preflight rejects standalone provider tokens without echo
     assert.match(output, /raw credential material, capture, or artifact data/)
     assert.doesNotMatch(output, new RegExp(providerToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }
+})
+
+test('aggregate mobile preflight never echoes a secret-shaped check_id', () => {
+  const secretCheckId = ['github', '_pat_', 'C'.repeat(22), '_', 'D'.repeat(59)].join('')
+  const candidate = sources()
+  const result = iosBetaReleaseCompleted()
+  const unauthorizedPath = `docs/mobile/evidence/ios-beta-release-readiness/${secretCheckId}/results.json`
+  result.checks[0] = {
+    check_id: secretCheckId,
+    status: 'INVALID',
+    restricted_evidence_reference: 'invalid-reference',
+    summary: '',
+  }
+  candidate.trackedFiles = [...sourceFiles, iosBetaReleaseResultPath, unauthorizedPath]
+  candidate.resultCopies = { [iosBetaReleaseResultPath]: JSON.stringify(result) }
+  const output = messages(candidate)
+  assert.match(output, /iOS beta check 1 \(auth_device_matrix_and_adr\) must use its expected check_id/)
+  assert.match(output, /has invalid completed status/)
+  assert.match(output, /must be a scoped restricted evidence reference/)
+  assert.match(output, /requires a summary/)
+  assert.match(output, /tracked iOS beta evidence path is unauthorized \(position 2\)/)
+  assert.doesNotMatch(output, new RegExp(secretCheckId))
 })
 
 test('rejects an untracked iOS beta result copy', () => {

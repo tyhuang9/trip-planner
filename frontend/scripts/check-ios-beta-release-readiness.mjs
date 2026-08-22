@@ -16,7 +16,7 @@ const CHECK_IDS = [
   'rollback_monitoring_and_escalation',
 ]
 const RAW_OR_ARTIFACT_TEXT = /(?:authorization\s*[:=]|\bbearer\s+[a-z0-9._-]{12,}|\bbasic\s+[a-z0-9+/=]{12,}|\beyJ[a-z0-9_-]{10,}\.|(?:password|passphrase|cookie|token|api[_-]?key|private[_-]?key|client[_-]?secret|secret[_-]?access[_-]?key)\s*[:=]|-----BEGIN [A-Z0-9 -]*(?:PRIVATE KEY|CERTIFICATE(?: REQUEST)?)(?: BLOCK)?-----|https?:\/\/[^\s"']+\/(?:reset|verify|verification)[^\s"']*|\.xcarchive\b|\.ipa\b|\.(?:jks|keystore|p12|p8|pfx|pem|key|mobileprovision|png|jpe?g|mov|mp4)\b)/i
-const PROVIDER_TOKEN_TEXT = /(?<![A-Za-z0-9_-])(?:gh[pousr]_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|sk_(?:live|test)_[A-Za-z0-9]{16,}|(?:AKIA|ASIA)[A-Z0-9]{16})(?![A-Za-z0-9_-])/
+const PROVIDER_TOKEN_TEXT = /(?<![A-Za-z0-9_-])(?:gh[pour]_[A-Za-z0-9]{20,}|ghs_[A-Za-z0-9._-]{19,}[A-Za-z0-9]|github_pat_[A-Za-z0-9_-]{39,}[A-Za-z0-9]|glpat-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|sk_(?:live|test)_[A-Za-z0-9]{16,}|(?:AKIA|ASIA)[A-Z0-9]{16})(?![A-Za-z0-9_-])/
 const SENSITIVE_FIELDS = new Set([
   'authorization',
   'password',
@@ -128,18 +128,20 @@ function validate(document, { template, runId }, violations) {
   }
   if (!Array.isArray(document.checks) || document.checks.length !== CHECK_IDS.length) violations.push('iOS beta checks must contain the complete ordered checklist')
   else for (const [index, check] of document.checks.entries()) {
-    if (!exactKeys(check, ['check_id', 'status', 'restricted_evidence_reference', 'summary'], `iOS beta check ${index}`, violations)) continue
-    if (check.check_id !== CHECK_IDS[index]) violations.push(`iOS beta check ${index} is incorrect`)
+    const expectedId = CHECK_IDS[index]
+    const label = `iOS beta check ${index + 1} (${expectedId})`
+    if (!exactKeys(check, ['check_id', 'status', 'restricted_evidence_reference', 'summary'], label, violations)) continue
+    if (check.check_id !== expectedId) violations.push(`${label} must use its expected check_id`)
     if (template) {
-      for (const key of ['status', 'restricted_evidence_reference', 'summary']) if (check[key] !== 'UNEXECUTED') violations.push(`iOS beta check ${check.check_id} must remain unexecuted`)
+      for (const key of ['status', 'restricted_evidence_reference', 'summary']) if (check[key] !== 'UNEXECUTED') violations.push(`${label} ${key} must remain unexecuted`)
     } else {
-      if (!['PASS', 'FAIL', 'BLOCKED', 'UNVERIFIED'].includes(check.status)) violations.push(`iOS beta check ${check.check_id} has invalid completed status`)
-      restrictedReference(check.restricted_evidence_reference, runId, `iOS beta check ${check.check_id}`, violations)
-      if (typeof check.summary !== 'string' || !check.summary.trim() || check.summary === 'UNEXECUTED') violations.push(`iOS beta check ${check.check_id} requires a summary`)
+      if (!['PASS', 'FAIL', 'BLOCKED', 'UNVERIFIED'].includes(check.status)) violations.push(`${label} has invalid completed status`)
+      restrictedReference(check.restricted_evidence_reference, runId, label, violations)
+      if (typeof check.summary !== 'string' || !check.summary.trim() || check.summary === 'UNEXECUTED') violations.push(`${label} requires a summary`)
     }
   }
   if (!exactKeys(document.references, ['runbook'], 'iOS beta references', violations) || document.references.runbook !== RUNBOOK_PATH) violations.push('iOS beta references are invalid')
-  if (!template && document.go_no_go === 'GO' && document.checks.some((check) => check?.status !== 'PASS')) violations.push('iOS beta GO requires every check to PASS')
+  if (!template && document.go_no_go === 'GO' && (!Array.isArray(document.checks) || document.checks.some((check) => check?.status !== 'PASS'))) violations.push('iOS beta GO requires every check to PASS')
 }
 
 export function inspectIosBetaReleaseReadiness(sources) {
@@ -148,13 +150,15 @@ export function inspectIosBetaReleaseReadiness(sources) {
   if (template) validate(template, { template: true }, violations)
   marker(sources.runbook, violations)
   if (!sources.runbook.includes('> **TEMPLATE / NOT EVIDENCE**')) violations.push('iOS beta runbook must be instruction-only')
-  for (const [path, source] of Object.entries(sources.resultCopies ?? {})) {
+  for (const [index, [path, source]] of Object.entries(sources.resultCopies ?? {}).entries()) {
+    const label = `iOS beta result copy ${index + 1}`
     const match = path.match(RESULT_PATH)
-    if (!match || !sources.trackedFiles?.includes(path) || !date(match[1])) { violations.push(`iOS beta result is not at an authorized dated path: ${path}`); continue }
-    const result = parse(source, path, violations)
+    if (!match || !sources.trackedFiles?.includes(path) || !date(match[1])) { violations.push(`${label} must be tracked at an authorized dated path`); continue }
+    const result = parse(source, label, violations)
     if (result) validate(result, { template: false, runId: match[2] }, violations)
   }
-  for (const path of sources.trackedFiles ?? []) if (path.startsWith('docs/mobile/evidence/ios-beta-release-readiness/') && !RESULT_PATH.test(path)) violations.push(`iOS beta evidence path is unauthorized: ${path}`)
+  const betaEvidencePaths = (sources.trackedFiles ?? []).filter((path) => path.startsWith('docs/mobile/evidence/ios-beta-release-readiness/'))
+  for (const [index, path] of betaEvidencePaths.entries()) if (!RESULT_PATH.test(path)) violations.push(`tracked iOS beta evidence path is unauthorized (position ${index + 1})`)
   return violations
 }
 
