@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { lstatSync, readFileSync, realpathSync } from 'node:fs'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)))
@@ -16,7 +16,7 @@ const CHECK_IDS = [
   'rollback_monitoring_and_escalation',
 ]
 const RAW_OR_ARTIFACT_TEXT = /(?:authorization\s*[:=]|\bbearer\s+[a-z0-9._-]{12,}|\bbasic\s+[a-z0-9+/=]{12,}|\beyJ[a-z0-9_-]{10,}\.|(?:password|passphrase|cookie|token|api[_-]?key|private[_-]?key|client[_-]?secret|secret[_-]?access[_-]?key)\s*[:=]|-----BEGIN [A-Z0-9 -]*(?:PRIVATE KEY|CERTIFICATE(?: REQUEST)?)(?: BLOCK)?-----|https?:\/\/[^\s"']+\/(?:reset|verify|verification)[^\s"']*|\.xcarchive\b|\.ipa\b|\.(?:jks|keystore|p12|p8|pfx|pem|key|mobileprovision|png|jpe?g|mov|mp4)\b)/i
-const PROVIDER_TOKEN_TEXT = /(?<![A-Za-z0-9_-])(?:gh[pour]_[A-Za-z0-9]{20,}|ghs_[A-Za-z0-9._-]{19,}[A-Za-z0-9]|github_pat_[A-Za-z0-9_-]{39,}[A-Za-z0-9]|glpat-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|sk_(?:live|test)_[A-Za-z0-9]{16,}|(?:AKIA|ASIA)[A-Z0-9]{16})(?![A-Za-z0-9_-])/
+const PROVIDER_TOKEN_TEXT = /(?<![A-Za-z0-9_-])(?:gh[pour]_[A-Za-z0-9_]{20,}|ghs_[A-Za-z0-9._-]{36,}|github_pat_[A-Za-z0-9_-]{39,}[A-Za-z0-9]|glpat-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|sk_(?:live|test)_[A-Za-z0-9]{16,}|(?:AKIA|ASIA)[A-Z0-9]{16})(?![A-Za-z0-9_-])/
 const SENSITIVE_FIELDS = new Set([
   'authorization',
   'password',
@@ -145,7 +145,7 @@ function validate(document, { template, runId }, violations) {
 }
 
 export function inspectIosBetaReleaseReadiness(sources) {
-  const violations = []
+  const violations = [...(sources.sourceViolations ?? [])]
   const template = parse(sources.template, TEMPLATE_PATH, violations)
   if (template) validate(template, { template: true }, violations)
   marker(sources.runbook, violations)
@@ -166,6 +166,26 @@ export function isIosBetaReleaseReadinessResultPath(path) {
   return typeof path === 'string' && RESULT_PATH.test(path)
 }
 
+export function loadIosBetaReleaseReadinessResultCopies(repositoryRoot, trackedFiles = []) {
+  const root = realpathSync(resolve(repositoryRoot))
+  const resultCopies = {}
+  const sourceViolations = []
+  const resultPaths = trackedFiles.filter(isIosBetaReleaseReadinessResultPath)
+  for (const [index, path] of resultPaths.entries()) {
+    const candidate = resolve(root, path)
+    try {
+      if (!lstatSync(candidate).isFile()) throw new Error('not a regular file')
+      const realPath = realpathSync(candidate)
+      const relativePath = relative(root, realPath)
+      if (relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) throw new Error('outside repository')
+      resultCopies[path] = readFileSync(realPath, 'utf8')
+    } catch {
+      sourceViolations.push(`iOS beta result copy ${index + 1} must be a readable regular non-symlink file inside the repository`)
+    }
+  }
+  return { resultCopies, sourceViolations }
+}
+
 export function assertIosBetaReleaseReadiness(sources) {
   if (!Array.isArray(sources.trackedFiles) || sources.trackedFiles.length === 0) {
     throw new Error('iOS beta release-readiness contract failed:\ntracked-file input must not be empty')
@@ -177,7 +197,12 @@ export function assertIosBetaReleaseReadiness(sources) {
 function loadSources() {
   const read = (path) => readFileSync(resolve(ROOT, path), 'utf8')
   const trackedFiles = process.argv.includes('--tracked-files-stdin') ? readFileSync(0, 'utf8').split('\0').filter(Boolean) : []
-  return { template: read(TEMPLATE_PATH), runbook: read(RUNBOOK_PATH), trackedFiles, resultCopies: Object.fromEntries(trackedFiles.filter((path) => RESULT_PATH.test(path)).map((path) => [path, read(path)])) }
+  return {
+    template: read(TEMPLATE_PATH),
+    runbook: read(RUNBOOK_PATH),
+    trackedFiles,
+    ...loadIosBetaReleaseReadinessResultCopies(ROOT, trackedFiles),
+  }
 }
 
 const invokedPath = process.argv[1] && resolve(process.argv[1])

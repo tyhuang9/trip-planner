@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import test from 'node:test'
-import { assertIosBetaReleaseReadiness, inspectIosBetaReleaseReadiness } from './check-ios-beta-release-readiness.mjs'
+import { assertIosBetaReleaseReadiness, inspectIosBetaReleaseReadiness, loadIosBetaReleaseReadinessResultCopies } from './check-ios-beta-release-readiness.mjs'
 
 const root = resolve(import.meta.dirname, '../..')
 const read = (path) => readFile(resolve(root, path), 'utf8')
@@ -80,12 +82,16 @@ test('rejects credential-bearing fields and encoded credential material without 
 test('rejects standalone provider token shapes without echoing them', async () => {
   const alphabeticPayload = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
   const githubPayload = `${alphabeticPayload}abcdef`
+  const opaqueLegacyGithubTokens = ['p', 'o', 'u', 'r'].map((kind) => [`gh${kind}_`, 'A'.repeat(20), '_', 'B'.repeat(20)].join(''))
   const fineGrainedGithubPat = ['github', '_pat_', 'A'.repeat(22), '_', 'B'.repeat(59)].join('')
   const statelessGithubAppToken = ['ghs_', '123456', '_', 'headerABC', '.', 'payload-with_url', '.', 'signatureABC'].join('')
+  const trailingOpaqueGithubAppTokens = ['_', '-'].map((suffix) => ['ghs_', 'A'.repeat(36), suffix].join(''))
   const providerTokens = [
-    ...['p', 'o', 'u', 's', 'r'].map((kind) => `gh${kind}_${githubPayload}`),
+    ...['p', 'o', 'u', 'r'].map((kind) => `gh${kind}_${githubPayload}`),
+    ...opaqueLegacyGithubTokens,
     fineGrainedGithubPat,
     statelessGithubAppToken,
+    ...trailingOpaqueGithubAppTokens,
     ['glpat-', alphabeticPayload].join(''),
     ...['b', 'a', 'p', 'r', 's'].map((kind) => `xox${kind}-1234567890-abcdefghijklmnop`),
     ['sk_', 'live_', alphabeticPayload].join(''),
@@ -108,15 +114,19 @@ test('rejects standalone provider token shapes without echoing them', async () =
 
 test('allows provider prefix prose and token-like substrings inside ordinary identifiers', async () => {
   const embeddedGithubIdentifier = ['build_ghp_', 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef', '_reference'].join('')
+  const embeddedOpaqueLegacyGithubIdentifier = ['build_ghp_', 'A'.repeat(20), '_', 'B'.repeat(20), '_reference'].join('')
   const embeddedFineGrainedIdentifier = ['build_', 'github_pat_', 'A'.repeat(22), '_', 'B'.repeat(59), '_reference'].join('')
   const embeddedStatelessIdentifier = ['build_ghs_', '123456_headerABC.payload-with_url.signatureABC', '_reference'].join('')
+  const embeddedTrailingOpaqueIdentifier = ['build_ghs_', 'A'.repeat(36), '-_reference'].join('')
   const embeddedAwsIdentifier = ['fixture_AK', 'IAIOSFODNN7EXAMPLE_reference'].join('')
   const summaries = [
     'The ghp_, ghs_, github_pat_, glpat-, xoxb-, and sk_test_ prefixes are prohibited here.',
     'The AWS access-key prefixes are AKIA and ASIA.',
     `Build identifier ${embeddedGithubIdentifier} was already scrubbed.`,
+    `Build identifier ${embeddedOpaqueLegacyGithubIdentifier} was already scrubbed.`,
     `Build identifier ${embeddedFineGrainedIdentifier} was already scrubbed.`,
     `Build identifier ${embeddedStatelessIdentifier} was already scrubbed.`,
+    `Build identifier ${embeddedTrailingOpaqueIdentifier} was already scrubbed.`,
     `Fixture identifier ${embeddedAwsIdentifier} is not a standalone credential.`,
   ]
   for (const summary of summaries) {
@@ -162,6 +172,37 @@ test('uses a positional parse label instead of echoing a result path', async () 
   const output = inspectIosBetaReleaseReadiness(value).join('\n')
   assert.match(output, /iOS beta result copy 1 must be valid JSON/)
   assert.doesNotMatch(output, /docs\/mobile\/evidence/)
+})
+
+test('standalone result loader accepts regular files and rejects symlink escapes without echoing paths', () => {
+  const temporaryRoot = mkdtempSync(join(tmpdir(), 'ios-beta-result-loader-'))
+  const outsideRoot = mkdtempSync(join(tmpdir(), 'ios-beta-result-outside-'))
+  try {
+    const regularPath = 'docs/mobile/evidence/ios-beta-release-readiness/2026-08-03/regular-run/results.json'
+    const symlinkPath = 'docs/mobile/evidence/ios-beta-release-readiness/2026-08-03/symlink-run/results.json'
+    const escapePath = 'docs/mobile/evidence/ios-beta-release-readiness/2026-08-03/escape-run/results.json'
+    mkdirSync(dirname(join(temporaryRoot, regularPath)), { recursive: true })
+    mkdirSync(dirname(join(temporaryRoot, symlinkPath)), { recursive: true })
+    mkdirSync(dirname(dirname(join(temporaryRoot, escapePath))), { recursive: true })
+    writeFileSync(join(temporaryRoot, regularPath), '{"safe":true}\n')
+    const outsideFile = join(outsideRoot, 'results.json')
+    writeFileSync(outsideFile, '{"outside":true}\n')
+    symlinkSync(outsideFile, join(temporaryRoot, symlinkPath))
+    symlinkSync(outsideRoot, dirname(join(temporaryRoot, escapePath)), 'dir')
+
+    const loaded = loadIosBetaReleaseReadinessResultCopies(temporaryRoot, [regularPath, symlinkPath, escapePath])
+    assert.equal(loaded.resultCopies[regularPath], '{"safe":true}\n')
+    assert.equal(loaded.resultCopies[symlinkPath], undefined)
+    assert.equal(loaded.resultCopies[escapePath], undefined)
+    assert.equal(loaded.sourceViolations.length, 2)
+    const output = loaded.sourceViolations.join('\n')
+    assert.match(output, /iOS beta result copy 2 must be a readable regular non-symlink file inside the repository/)
+    assert.match(output, /iOS beta result copy 3 must be a readable regular non-symlink file inside the repository/)
+    assert.doesNotMatch(output, /symlink-run|escape-run|ios-beta-result-outside/)
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true })
+    rmSync(outsideRoot, { recursive: true, force: true })
+  }
 })
 
 test('rejects dot-segment and non-canonical restricted evidence references', async () => {

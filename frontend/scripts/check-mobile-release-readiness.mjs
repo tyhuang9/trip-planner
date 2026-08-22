@@ -354,7 +354,8 @@ export function loadTrackedResultCopies(repositoryRoot, trackedFiles = []) {
   const root = realpathSync(resolve(repositoryRoot))
   const copies = {}
   const violations = []
-  for (const path of trackedFiles.filter((entry) => RESULT_PATH.test(entry) || IOS_BETA_RESULT_PATH.test(entry) || isIosBetaReleaseReadinessResultPath(entry))) {
+  const trackedResultPaths = trackedFiles.filter((entry) => RESULT_PATH.test(entry) || IOS_BETA_RESULT_PATH.test(entry) || isIosBetaReleaseReadinessResultPath(entry))
+  for (const [index, path] of trackedResultPaths.entries()) {
     const candidate = resolve(root, path)
     try {
       if (!lstatSync(candidate).isFile()) throw new Error('not a regular file')
@@ -363,7 +364,7 @@ export function loadTrackedResultCopies(repositoryRoot, trackedFiles = []) {
       if (relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) throw new Error('outside repository')
       copies[path] = readFileSync(realPath, 'utf8')
     } catch {
-      violations.push(`tracked release-readiness result must be a readable regular non-symlink file inside the repository: ${path}`)
+      violations.push(`tracked release-readiness result ${index + 1} must be a readable regular non-symlink file inside the repository`)
     }
   }
   return { copies, violations }

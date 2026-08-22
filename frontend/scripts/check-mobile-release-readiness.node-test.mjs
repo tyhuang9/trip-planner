@@ -129,12 +129,16 @@ test('aggregate mobile preflight rejects an invalid tracked iOS beta GO result',
 
 test('aggregate mobile preflight rejects standalone provider tokens without echoing them', () => {
   const alphabeticPayload = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  const opaqueLegacyGithubToken = ['ghp_', 'A'.repeat(20), '_', 'B'.repeat(20)].join('')
   const fineGrainedGithubPat = ['github', '_pat_', 'A'.repeat(22), '_', 'B'.repeat(59)].join('')
   const statelessGithubAppToken = ['ghs_', '123456', '_', 'headerABC', '.', 'payload-with_url', '.', 'signatureABC'].join('')
+  const trailingOpaqueGithubAppTokens = ['_', '-'].map((suffix) => ['ghs_', 'A'.repeat(36), suffix].join(''))
   const providerTokens = [
     ['ghp_', alphabeticPayload, 'abcdef'].join(''),
+    opaqueLegacyGithubToken,
     fineGrainedGithubPat,
     statelessGithubAppToken,
+    ...trailingOpaqueGithubAppTokens,
     ['glpat-', alphabeticPayload].join(''),
     ['xoxb-', '1234567890-abcdefghijklmnop'].join(''),
     ['sk_', 'live_', alphabeticPayload].join(''),
@@ -150,6 +154,16 @@ test('aggregate mobile preflight rejects standalone provider tokens without echo
     assert.match(output, /raw credential material, capture, or artifact data/)
     assert.doesNotMatch(output, new RegExp(providerToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }
+})
+
+test('aggregate mobile preflight allows legacy token-like substrings inside ordinary identifiers', () => {
+  const embeddedOpaqueLegacyGithubIdentifier = ['build_ghp_', 'A'.repeat(20), '_', 'B'.repeat(20), '_reference'].join('')
+  const candidate = sources()
+  const result = iosBetaReleaseCompleted()
+  result.checks[0].summary = `Build identifier ${embeddedOpaqueLegacyGithubIdentifier} was already scrubbed.`
+  candidate.trackedFiles = [...sourceFiles, iosBetaReleaseResultPath]
+  candidate.resultCopies = { [iosBetaReleaseResultPath]: JSON.stringify(result) }
+  assert.deepEqual(inspectMobileReleaseReadiness(candidate), [])
 })
 
 test('aggregate mobile preflight never echoes a secret-shaped check_id', () => {
@@ -499,6 +513,8 @@ test('tracked result loader accepts regular in-repository files and rejects outs
     const symlinkPath = 'docs/mobile/evidence/issue-64/2026-07-29/symlink-run/results.json'
     const directoryPath = 'docs/mobile/evidence/issue-64/2026-07-29/directory-run/results.json'
     const escapePath = 'docs/mobile/evidence/issue-64/2026-07-29/escape-run/results.json'
+    const secretRunId = ['glpat-', 'abcdefghijklmnopqrst'].join('')
+    const missingSecretPath = `docs/mobile/evidence/ios-beta-release-readiness/2026-08-03/${secretRunId}/results.json`
     mkdirSync(dirname(join(temporaryRoot, regularPath)), { recursive: true })
     mkdirSync(dirname(join(temporaryRoot, betaRegularPath)), { recursive: true })
     mkdirSync(dirname(join(temporaryRoot, symlinkPath)), { recursive: true })
@@ -510,14 +526,17 @@ test('tracked result loader accepts regular in-repository files and rejects outs
     mkdirSync(join(temporaryRoot, directoryPath), { recursive: true })
     symlinkSync(outsideRoot, dirname(join(temporaryRoot, escapePath)), 'dir')
 
-    const loaded = loadTrackedResultCopies(temporaryRoot, [regularPath, betaRegularPath, symlinkPath, directoryPath, escapePath])
+    const loaded = loadTrackedResultCopies(temporaryRoot, [regularPath, betaRegularPath, symlinkPath, directoryPath, escapePath, missingSecretPath])
     assert.equal(loaded.copies[regularPath], '{"safe":true}\n')
     assert.equal(loaded.copies[betaRegularPath], '{"beta":true}\n')
     assert.equal(loaded.copies[symlinkPath], undefined)
     assert.equal(loaded.copies[directoryPath], undefined)
     assert.equal(loaded.copies[escapePath], undefined)
-    assert.equal(loaded.violations.length, 3)
-    assert.match(loaded.violations.join('\n'), /regular non-symlink file inside the repository/)
+    assert.equal(loaded.copies[missingSecretPath], undefined)
+    assert.equal(loaded.violations.length, 4)
+    const output = loaded.violations.join('\n')
+    assert.match(output, /tracked release-readiness result 6 must be a readable regular non-symlink file inside the repository/)
+    assert.doesNotMatch(output, new RegExp(secretRunId))
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true })
     rmSync(outsideRoot, { recursive: true, force: true })
