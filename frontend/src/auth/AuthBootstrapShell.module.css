@@ -46,8 +46,8 @@
 }
 
 .retryButton:focus-visible {
-  outline: 3px solid var(--color-focus-ring);
-  outline-offset: 2px;
+  outline: 3px solid var(--color-primary);
+  outline-offset: 4px;
 }
 
 .spinner {

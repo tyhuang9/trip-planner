@@ -4,4 +4,16 @@
       Add suppressions here as dependencyCheckAnalyze flags false positives.
       Each entry should document why the suppression is justified.
     -->
+    <suppress>
+        <notes><![CDATA[
+          CVE-2026-66299 is confined to Tomcat's WebSocket chat example under
+          webapps/examples. Dupert is packaged as a Spring Boot bootJar and does
+          not include the examples webapp, ChatAnnotation, or websocket/chat.
+          Apache advisory: https://tomcat.apache.org/security-10.html#Fixed_in_Apache_Tomcat_10.1.58
+          Apache fix: https://github.com/apache/tomcat/commit/446efef55c69b0cabde1f7e582382cb26e651022
+          Remove this exact-version suppression after upgrading beyond 10.1.57.
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/org\.apache\.tomcat\.embed/tomcat-embed-(?:core|websocket)@10\.1\.57$</packageUrl>
+        <cve>CVE-2026-66299</cve>
+    </suppress>
 </suppressions>

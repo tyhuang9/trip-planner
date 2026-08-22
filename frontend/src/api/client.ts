@@ -125,13 +125,30 @@ export class AuthCoordinationUnavailableError extends Error {
 }
 
 const REFRESH_LOCK_NAME = 'dupert:auth-refresh'
+// A peer may hold the lock while completing one bounded refresh request.
+// Allow that request window plus a short acquisition grace period, then leave
+// authentication unresolved so the user can retry instead of waiting forever.
+export const REFRESH_LOCK_DEADLINE_MS = API_REQUEST_TIMEOUT_MS + 10_000
 
 interface LockManagerLike {
   request<T>(
     name: string,
-    options: { mode: 'exclusive' },
+    options: { mode: 'exclusive'; signal?: AbortSignal },
     callback: () => T | Promise<T>,
   ): Promise<T>
+}
+
+function refreshLockTimeout(): DOMException {
+  return new DOMException('Auth lock acquisition timed out', 'TimeoutError')
+}
+
+function isRefreshLockTimeout(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    error.name === 'TimeoutError'
+  )
 }
 
 function getWebLocks(): LockManagerLike | null {
@@ -152,7 +169,42 @@ export function withAuthSessionLock<T>(
 ): Promise<T> {
   const locks = getWebLocks()
   if (locks !== null) {
-    return locks.request(REFRESH_LOCK_NAME, { mode: 'exclusive' }, callback)
+    const controller = new AbortController()
+    let granted = false
+    let timeout: number | undefined
+
+    return new Promise<T>((resolve, reject) => {
+      const acquisition = locks.request(
+        REFRESH_LOCK_NAME,
+        { mode: 'exclusive', signal: controller.signal },
+        () => {
+          if (controller.signal.aborted) throw refreshLockTimeout()
+          granted = true
+          if (timeout !== undefined) window.clearTimeout(timeout)
+          return callback()
+        },
+      )
+      acquisition.then(resolve, (error) => {
+        if (
+          !granted &&
+          controller.signal.aborted &&
+          (error as Error)?.name === 'AbortError'
+        ) {
+          reject(refreshLockTimeout())
+        } else {
+          reject(error)
+        }
+      })
+      if (!granted) {
+        timeout = window.setTimeout(() => {
+          if (granted) return
+          controller.abort()
+          reject(refreshLockTimeout())
+        }, REFRESH_LOCK_DEADLINE_MS)
+      }
+    }).finally(() => {
+      if (timeout !== undefined) window.clearTimeout(timeout)
+    })
   }
 
   return Promise.reject(new AuthCoordinationUnavailableError())
@@ -251,7 +303,10 @@ export function refreshSession(): Promise<AuthResponse> {
   if (refreshPromise === null) {
     refreshPromise = withAuthSessionLock(() => performRefresh())
       .catch((error) => {
-        if (error instanceof AuthCoordinationUnavailableError) {
+        if (
+          error instanceof AuthCoordinationUnavailableError ||
+          isRefreshLockTimeout(error)
+        ) {
           useAuthStore.getState().clearSession('offline-unknown')
         }
         throw error
